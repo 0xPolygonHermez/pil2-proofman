@@ -31,7 +31,6 @@ pub fn build_starkinfo_output(
     circuit_type: Option<u64>,
     air_name: &str,
     c_exp_id: usize,
-    deep_exp_id: usize,
     q_deg: i64,
 ) -> StarkInfoOutput {
     // The query counts and grinding bits are the solved values, not the settings.
@@ -215,33 +214,24 @@ pub fn build_starkinfo_output(
         })
         .collect();
 
-    // Build challengesMap from setup + FRI challenges.
-    let mut challenges_map: Vec<ChallengeMapEntryOutput> = setup
+    // challengesMap: the setup's, then the DEEP challenges (std_vf1, std_vf2).
+    let challenges_map: Vec<ChallengeMapEntryOutput> = setup
         .challenges_map
         .iter()
+        .filter(|s| !s.name.is_empty())
         .map(|s| ChallengeMapEntryOutput {
             name: s.name.clone(),
             stage: s.stage.unwrap_or(0),
             dim: s.dim,
             stage_id: s.stage_id.unwrap_or(0),
         })
+        .chain(pil_code.challenges_map.iter().map(|ch| ChallengeMapEntryOutput {
+            name: ch.name.clone(),
+            stage: ch.stage,
+            dim: ch.dim,
+            stage_id: ch.stage_id,
+        }))
         .collect();
-    // Merge FRI challenges (std_vf1, std_vf2) by index position.
-    for (i, ch) in pil_code.challenges_map.iter().enumerate() {
-        if ch.name.is_empty() {
-            continue;
-        }
-        let entry =
-            ChallengeMapEntryOutput { name: ch.name.clone(), stage: ch.stage, dim: ch.dim, stage_id: ch.stage_id };
-        while challenges_map.len() <= i {
-            challenges_map.push(ChallengeMapEntryOutput::default());
-        }
-        challenges_map[i] = entry;
-    }
-    while challenges_map.last().is_some_and(|e| e.name.is_empty()) {
-        challenges_map.pop();
-    }
-    challenges_map.retain(|e| !e.name.is_empty());
 
     // Build publicsMap
     let publics_map: Vec<PublicMapEntry> = setup
@@ -307,7 +297,6 @@ pub fn build_starkinfo_output(
         n_constraints: setup.constraints.len(),
         n_commitments_stage1,
         ev_map,
-        deep_exp_id,
         fri_batch_size: pil_code.fri_batch_size,
         security: Some(SecurityInfo {
             proximity_gap: ldt.proximity_gap(),

@@ -26,7 +26,6 @@ struct PreparedExpressionsBin {
 /// Prepared verifier binary data.
 struct PreparedVerifierBin {
     q_code: ExpsInfo,
-    query_code: ExpsInfo,
     numbers_exps: Vec<String>,
     max_tmp1: u64,
     max_tmp3: u64,
@@ -92,7 +91,6 @@ fn prepare_expressions_bin(
 
         // Check if dest should be redirected to tmp
         let is_special = exp_code.exp_id == stark_info.c_exp_id
-            || exp_code.exp_id == stark_info.deep_exp_id
             || stark_info.cm_pols_map.iter().any(|c| c.exp_id == exp_code.exp_id);
 
         if is_special {
@@ -143,12 +141,7 @@ fn prepare_verifier_expressions_bin(
     stark_info: &StarkInfo,
     verifier_info: &VerifierInfo,
 ) -> Result<PreparedVerifierBin> {
-    let mut max_tmp1: u64 = 0;
-    let mut max_tmp3: u64 = 0;
-    let mut max_args: u64 = 0;
-    let mut max_ops: u64 = 0;
     let mut numbers_exps: Vec<String> = Vec::new();
-
     let q_result =
         get_parser_args(stark_info, &verifier_info.q_verifier.code, &mut numbers_exps, false, true, None, "")?;
     let mut q_code = q_result.exps_info;
@@ -156,40 +149,14 @@ fn prepare_verifier_expressions_bin(
     q_code.stage = stark_info.n_stages + 1;
     q_code.line = String::new();
 
-    if q_code.n_temp1 > max_tmp1 {
-        max_tmp1 = q_code.n_temp1;
-    }
-    if q_code.n_temp3 > max_tmp3 {
-        max_tmp3 = q_code.n_temp3;
-    }
-    if q_code.args.len() as u64 > max_args {
-        max_args = q_code.args.len() as u64;
-    }
-    if q_code.ops.len() as u64 > max_ops {
-        max_ops = q_code.ops.len() as u64;
-    }
-
-    let query_result =
-        get_parser_args(stark_info, &verifier_info.query_verifier.code, &mut numbers_exps, false, true, None, "")?;
-    let mut query_code = query_result.exps_info;
-    query_code.exp_id = stark_info.deep_exp_id;
-    query_code.stage = stark_info.n_stages + 2;
-    query_code.line = String::new();
-
-    if query_code.n_temp1 > max_tmp1 {
-        max_tmp1 = query_code.n_temp1;
-    }
-    if query_code.n_temp3 > max_tmp3 {
-        max_tmp3 = query_code.n_temp3;
-    }
-    if query_code.args.len() as u64 > max_args {
-        max_args = query_code.args.len() as u64;
-    }
-    if query_code.ops.len() as u64 > max_ops {
-        max_ops = query_code.ops.len() as u64;
-    }
-
-    Ok(PreparedVerifierBin { q_code, query_code, numbers_exps, max_tmp1, max_tmp3, max_args, max_ops })
+    Ok(PreparedVerifierBin {
+        max_tmp1: q_code.n_temp1,
+        max_tmp3: q_code.n_temp3,
+        max_args: q_code.args.len() as u64,
+        max_ops: q_code.ops.len() as u64,
+        q_code,
+        numbers_exps,
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -430,7 +397,7 @@ pub fn write_expressions_bin_file(
     Ok(())
 }
 
-/// Writes the verifier expressions binary file (1 section: expressions for q and query).
+/// Writes the verifier expressions binary file (1 section: the expression for q).
 pub fn write_verifier_expressions_bin_file(
     path: &str,
     stark_info: &StarkInfo,
@@ -440,7 +407,7 @@ pub fn write_verifier_expressions_bin_file(
 
     let bin = prepare_verifier_expressions_bin(stark_info, verifier_info)?;
 
-    let ver_exps = vec![bin.q_code, bin.query_code];
+    let ver_exps = vec![bin.q_code];
 
     let mut writer = BinFileWriter::new(path, "chps", 1, 1)?;
 

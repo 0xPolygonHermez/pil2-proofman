@@ -216,16 +216,14 @@ void genProof(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t 
 
     TimerStart(STARK_STEP_EVALS);
 
-    uint64_t xiChallengeIndex = 0;
     for (uint64_t i = 0; i < setupCtx.starkInfo.challengesMap.size(); i++)
     {
         if(setupCtx.starkInfo.challengesMap[i].stage == setupCtx.starkInfo.nStages + 2) {
-            if(setupCtx.starkInfo.challengesMap[i].stageId == 0) xiChallengeIndex = i;
             starks.getChallenge(transcript, params.challenges[i * FIELD_EXTENSION]);
         }
     }
 
-    Goldilocks::Element *xiChallenge = &params.challenges[xiChallengeIndex * FIELD_EXTENSION];
+    Goldilocks::Element *xiChallenge = &params.challenges[setupCtx.starkInfo.deepTables->xiIdx * FIELD_EXTENSION];
     Goldilocks::Element* LEv = &params.aux_trace[setupCtx.starkInfo.mapOffsets[make_pair("lev", false)]];
 
     starks.computeLEv(xiChallenge, LEv, ntt);

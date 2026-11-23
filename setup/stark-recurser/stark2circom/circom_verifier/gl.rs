@@ -9,13 +9,11 @@
 //! (`circuits.gl/stark_verifier.circom.tera`) that handles all structural loops,
 //! conditionals and signal declarations.
 
-use std::collections::HashSet;
-
 use anyhow::{bail, Result};
 use serde_json::Value;
 use tera::Tera;
 
-use super::expressions_chunks::{get_expressions_chunks, get_expressions_chunks_ext, split_query_independent};
+use super::expressions_chunks::get_expressions_chunks;
 use super::gl_field::{gl_exp, gl_inv, GL_INV_W, GL_SHIFT, GL_W};
 use crate::stark2circom::transcript::Transcript;
 use super::unroll_code::{unroll_code, UnrollCtx};
@@ -497,7 +495,6 @@ fn build_tera_context(
     let unroll_ctx = UnrollCtx {
         q_stage: q_stage as u64,
         evals_stage: (q_stage + 1) as u64,
-        fri_stage: (q_stage + 2) as u64,
         cm_pols_map: &cm_pols_map,
         custom_commits: &custom_commits_json,
         custom_commits_map: &custom_commits_map_json,
@@ -531,13 +528,23 @@ fn build_tera_context(
     let eval_p_raw = get_expressions_chunks(&q_verifier_code);
     let mut eval_p_chunks = build_chunk_list(&eval_p_raw)?;
 
-    // ── Eval Q chunks ─────────────────────────────────────────────────────────
-    let query_verifier_code: Vec<Value> = vi["queryVerifier"]["code"].as_array().map_or(vec![], |a| a.clone());
-    let (fri_once_code, query_code, fri_consts) = split_query_independent(&query_verifier_code, (q_stage + 2) as u64);
-    let fri_once_raw = get_expressions_chunks_ext(&fri_once_code, &[], &fri_consts.iter().map(|&(id, _)| id).collect());
-    let mut fri_once_chunks = build_chunk_list(&fri_once_raw)?;
-    let eval_q_raw = get_expressions_chunks_ext(&query_code, &fri_consts, &HashSet::new());
-    let mut eval_q_chunks = build_chunk_list(&eval_q_raw)?;
+    // ── DEEP polynomial, from the opening groups ─────────────────────────────
+    let deep = super::deep::plan(si)?;
+    let opening_points = deep.ranked_openings(&opening_points);
+    let deep_once_code = super::deep::render_gl(&deep.once);
+    let deep_const_assign: String = deep
+        .const_outputs
+        .iter()
+        .enumerate()
+        .map(|(i, o)| {
+            if o.dim == 1 {
+                format!("    friConsts[{i}] <== [{}, 0, 0];\n", o.name)
+            } else {
+                format!("    friConsts[{i}] <== {};\n", o.name)
+            }
+        })
+        .collect();
+    let deep_query_code = super::deep::render_gl(&deep.query);
 
     // ── inputsP — for VerifyEvaluations chunk calls ───────────────────────────
     let mut inputs_p: Vec<String> = Vec::new();
@@ -572,21 +579,6 @@ fn build_tera_context(
         inputs_p.push(format!("Zframe{fi}"));
     }
 
-    // ── inputsQ — for CalculateDeepPolChunks calls ─────────────────────────────
-    let mut inputs_q: Vec<String> = vec!["challengesDeep".into(), "evals".into()];
-    for stage in 1..=n_stages {
-        if sec_len(&format!("cm{stage}")) > 0 {
-            inputs_q.push(format!("cm{stage}"));
-        }
-    }
-    inputs_q.push(format!("cm{q_stage}"));
-    inputs_q.push("consts".into());
-    for cc in &custom_commits_json {
-        let name = cc["name"].as_str().unwrap_or("");
-        inputs_q.push(format!("custom_{name}_0"));
-    }
-    inputs_q.push("xDivXSubXi".into());
-
     // Annotate chunks with call-site strings
     for (i, chunk) in eval_p_chunks.iter_mut().enumerate() {
         let raw = &eval_p_raw.chunks[i];
@@ -596,31 +588,6 @@ fn build_tera_context(
         chunk["call_inputs"] = serde_json::Value::String(call_ins.join(","));
         chunk["call_outputs"] = serde_json::Value::String(call_outs.join(","));
     }
-    for (i, chunk) in fri_once_chunks.iter_mut().enumerate() {
-        let raw = &fri_once_raw.chunks[i];
-        let call_ins: Vec<String> = ["challengesDeep".to_string(), "evals".to_string()]
-            .into_iter()
-            .chain(raw.inputs.iter().map(|id| format!("tmp_{id}")))
-            .collect();
-        let call_outs: Vec<String> = raw.outputs.iter().map(|id| format!("tmp_{id}")).collect();
-        chunk["call_inputs"] = serde_json::Value::String(call_ins.join(","));
-        chunk["call_outputs"] = serde_json::Value::String(call_outs.join(","));
-    }
-    // friConsts: challengesDeep, then the query-independent tmps the queries read.
-    let fri_consts_json: Vec<Value> = fri_consts
-        .iter()
-        .enumerate()
-        .map(|(i, &(id, dim))| serde_json::json!({ "idx": i + 2, "id": id, "dim": dim }))
-        .collect();
-    for (i, chunk) in eval_q_chunks.iter_mut().enumerate() {
-        let raw = &eval_q_raw.chunks[i];
-        let mut call_ins = inputs_q.clone();
-        call_ins.extend(raw.inputs.iter().map(|id| format!("tmp_{id}")));
-        let call_outs: Vec<String> = raw.outputs.iter().map(|id| format!("tmp_{id}")).collect();
-        chunk["call_inputs"] = serde_json::Value::String(call_ins.join(","));
-        chunk["call_outputs"] = serde_json::Value::String(call_outs.join(","));
-    }
-
     // ── Q polynomial ev_id ────────────────────────────────────────────────────
     let ev_map: Vec<Value> = si["evMap"].as_array().map_or(vec![], |a| a.clone());
     let q_index = cm_pols_map
@@ -633,7 +600,6 @@ fn build_tera_context(
         .unwrap_or(0);
     let last_dest_id_p =
         vi["qVerifier"]["code"].as_array().and_then(|a| a.last()).and_then(|i| i["dest"]["id"].as_u64()).unwrap_or(0);
-    let last_dest_id_q = query_code.last().and_then(|i| i["dest"]["id"].as_u64()).unwrap_or(0);
 
     // ── constRoot string ──────────────────────────────────────────────────────
     let const_root_str = const_root.map(|r| r.join(",")).unwrap_or_else(|| "0,0,0,0".to_string());
@@ -978,7 +944,6 @@ fn build_tera_context(
     ctx.insert("zlast_root", &zlast_root);
     ctx.insert("q_pol_ev_id", &q_pol_ev_id);
     ctx.insert("last_dest_id_p", &last_dest_id_p);
-    ctx.insert("last_dest_id_q", &last_dest_id_q);
     ctx.insert("next_step0_bits", &next_step0_bits);
     ctx.insert("next_vals_pol_0", &next_vals_pol_0);
     let q_stage_cm_section_len: u64 = sec_len(&format!("cm{q_stage}"));
@@ -1019,10 +984,8 @@ fn build_tera_context(
     ctx.insert("cm_pols_by_stage", &cm_pols_by_stage);
     ctx.insert("custom_commits", &custom_commits);
     ctx.insert("eval_p_chunks", &eval_p_chunks);
-    ctx.insert("eval_q_chunks", &eval_q_chunks);
-    ctx.insert("fri_once_chunks", &fri_once_chunks);
-    ctx.insert("fri_consts", &fri_consts_json);
-    ctx.insert("n_fri_consts", &(fri_consts.len() + 2));
+    deep.insert_ctx(&mut ctx, &deep_once_code, &deep_const_assign, &deep_query_code);
+    ctx.insert("deep_constants_name", &mk("DeepConstants"));
     ctx.insert("fri_steps_info", &fri_steps_info);
     ctx.insert("is_stir", &is_stir);
     ctx.insert("stir_m", &stir_m);
@@ -1054,11 +1017,18 @@ mod tests {
                 "lastLevelVerification": 0,
                 "splitLinearHash": false,
                 "hashCommits": false,
+                "transcriptArity": 4,
+                "foldingFactors": [],
+                "logDegrees": [],
+                "merkleTreeCustom": false,
                 "logDomainSizes": [step0_bits]
             },
             "nStages": n_stages,
+            "qDim": 3,
+            "cExpId": 0,
+            "security": {"regime": "test"},
             "nPublics": 0,
-            "evMap": [],
+            "evMap": [{"type": "const", "id": 0, "prime": 0, "openingPos": 0}],
             "cmPolsMap": [],
             "customCommits": [],
             "customCommitsMap": [],
@@ -1068,16 +1038,15 @@ mod tests {
             "airValuesMap": [],
             "proofValuesMap": [],
             "mapSectionsN": {},
-            "openingPoints": [],
-            "nConstants": 0,
+            "openingPoints": [0],
+            "nConstants": 1,
             "qDeg": 1,
         })
     }
 
     fn minimal_verifier_info() -> Value {
         json!({
-            "qVerifier": { "code": [] },
-            "queryVerifier": { "code": [] }
+            "qVerifier": { "code": [] }
         })
     }
 
@@ -1090,7 +1059,10 @@ mod tests {
         si["starkStruct"]["hashCommits"] = json!(true);
         si["starkStruct"]["merkleTreeArity"] = json!(2);
         si["nPublics"] = json!(3);
-        si["evMap"] = json!([{"type": "cm", "id": 0, "prime": 0}]);
+        si["evMap"] = json!([{"type": "cm", "id": 0, "prime": 0, "openingPos": 0}]);
+        si["openingPoints"] = json!([0]);
+        si["cmPolsMap"] = json!([{"name": "a", "stage": 1, "stageId": 0, "stagePos": 0, "dim": 1}]);
+        si["mapSectionsN"] = json!({"cm1": 1});
         let vi = minimal_verifier_info();
         let opts = Pil2CircomOptions { hash: "blake3".to_string(), ..Default::default() };
         let out = gen_stark_verifier_gl(None, &si, &vi, &opts).unwrap();
@@ -1307,6 +1279,8 @@ mod tests {
                 "lastLevelVerification": 0,
                 "splitLinearHash": false,
                 "hashCommits": false,
+                "transcriptArity": 4,
+                "merkleTreeCustom": false,
                 "foldingFactors": [3, 3],
                 "logDegrees": [8, 5, 2],
                 "logDomainSizes": [9, 8, 7],
@@ -1314,8 +1288,11 @@ mod tests {
                 "grindingBitsQueries": [4, 4]
             },
             "nStages": n_stages,
+            "qDim": 3,
+            "cExpId": 0,
+            "security": {"regime": "test"},
             "nPublics": 0,
-            "evMap": [],
+            "evMap": [{"type": "const", "id": 0, "prime": 0, "openingPos": 0}],
             "cmPolsMap": [],
             "customCommits": [],
             "customCommitsMap": [],
@@ -1325,8 +1302,8 @@ mod tests {
             "airValuesMap": [],
             "proofValuesMap": [],
             "mapSectionsN": {},
-            "openingPoints": [],
-            "nConstants": 0,
+            "openingPoints": [0],
+            "nConstants": 1,
             "qDeg": 1,
         })
     }
@@ -1348,6 +1325,23 @@ mod tests {
         assert!(out.contains("signal input nonces[2];"), "one nonce per query message");
         assert!(out.contains("StirFoldCoset("), "missing the fold");
         assert!(out.contains("EvalPol(4)(finalPol"), "final polynomial evaluated from d_M = 4 coefficients");
+    }
+
+    /// STIR checks f_0 with the same VerifyQuery, so the grouped DEEP code renders there too.
+    #[test]
+    fn stir_deep_from_groups_renders() {
+        let mut si = minimal_stir_stark_info(2);
+        let deep = super::super::deep::tests::sample_stark_info();
+        for k in ["openingPoints", "cmPolsMap", "customCommits", "customCommitsMap", "evMap", "nPublics", "nConstants"]
+        {
+            si[k] = deep[k].clone();
+        }
+        si["mapSectionsN"] = deep["mapSectionsN"].clone();
+        let opts = Pil2CircomOptions { hash: "Poseidon2".to_string(), ..Default::default() };
+        let out = gen_stark_verifier_gl(None, &si, &json!({ "qVerifier": { "code": [] } }), &opts).unwrap();
+        assert!(out.contains("<== DeepConstants()(challengesDeep, evals);"), "no DEEP constants:\n{out}");
+        assert!(out.contains("signal queryVals[3] <== deepQ_"), "no DEEP value:\n{out}");
+        assert!(out.contains("StirFoldCoset("), "not a STIR verifier");
     }
 
     /// Render a STIR verifier from real starkinfo/verifierinfo files, for manual circom checks:

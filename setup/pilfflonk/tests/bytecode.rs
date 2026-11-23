@@ -87,7 +87,6 @@ fn code_ref(ref_type: &str, id: usize) -> CodeRef {
         stage: None,
         stage_id: None,
         commit_id: None,
-        opening: None,
         boundary_id: None,
         airgroup_id: None,
         exp_id: None,
@@ -522,7 +521,6 @@ fn code_the_format_cannot_hold_is_refused() {
     refused(two(number(R), cm()), "not a canonical Fr");
     refused(two(number("0x10"), cm()), "not a canonical Fr");
     refused(two(column("custom", 0, 0), cm()), "custom is not an operand");
-    refused(two(code_ref("xDivXSubXi", 0), cm()), "xDivXSubXi is not an operand");
     refused(two(column("cm", 0, 2), cm()), "which is not an opening point");
     refused(two(column("cm", 9, 0), cm()), "cm 9 is not in cmPolsMap");
     refused(Vec::new(), "no ops");

@@ -2,7 +2,7 @@
 //! `circuits.gl/stark_verifier.circom.ejs`.
 //!
 //! `unroll_code` translates a slice of FPM "instructions" (from
-//! `verifierInfo.qVerifier.code` or `verifierInfo.queryVerifier.code`) into
+//! `verifierInfo.qVerifier.code`) into
 //! Circom signal-assignment lines.  It appends those lines to a `Vec<String>`
 //! and returns the signal name of the last destination (matching the JS
 //! `return ref(code[code.length-1].dest)` at the end of `unrollCode`).
@@ -23,7 +23,6 @@
 //! | `"public"`      | `id`                               |
 //! | `"x"`           | —                                  |
 //! | `"Zi"`          | `boundaryId`, `dim` (forced 3)     |
-//! | `"xDivXSubXi"`  | `id`                               |
 //! | `"tmp"`         | `id`, `dim`                        |
 //! | `"cm"`          | `id`  (→ cmPolsMap lookup)         |
 //! | `"custom"`      | `commitId`, `id` (→ customCommitsMap) |
@@ -44,8 +43,6 @@ pub struct UnrollCtx<'a> {
     pub q_stage: u64,
     /// `starkInfo.nStages + 2` — the evals/xi stage.
     pub evals_stage: u64,
-    /// `starkInfo.nStages + 3` — the FRI stage.
-    pub fri_stage: u64,
     /// `starkInfo.cmPolsMap` array.
     pub cm_pols_map: &'a [Value],
     /// `starkInfo.customCommits` array (for name lookup).
@@ -77,8 +74,6 @@ pub fn ref_operand(r: &Value, is_dest: bool, initialized: &[u64], ctx: &UnrollCt
                 Ok("challengeQ".into())
             } else if stage == ctx.evals_stage {
                 Ok("challengeOut".into())
-            } else if stage == ctx.fri_stage {
-                Ok(format!("challengesDeep[{stage_id}]"))
             } else {
                 Ok(format!("challengesStage{stage}[{stage_id}]"))
             }
@@ -117,10 +112,6 @@ pub fn ref_operand(r: &Value, is_dest: bool, initialized: &[u64], ctx: &UnrollCt
                 }
                 other => bail!("Zi: unknown boundary name '{other}'"),
             }
-        }
-        "xDivXSubXi" => {
-            let id = r["id"].as_u64().unwrap_or(0);
-            Ok(format!("xDivXSubXi[{id}]"))
         }
         "tmp" => {
             let id = r["id"].as_u64().unwrap_or(0);
@@ -333,13 +324,8 @@ fn normalise_gl_number(raw: &str) -> u128 {
 /// EJS does, with `{maxNum}` annotations on every declared signal.
 ///
 /// Returns the last destination signal name (without declaration prefix).
-pub fn unroll_code_bn128(
-    code: &[Value],
-    initialized: &[u64],
-    ctx: &UnrollCtx<'_>,
-    out: &mut Vec<String>,
-) -> Result<String> {
-    let mut declared: Vec<u64> = initialized.to_vec();
+pub fn unroll_code_bn128(code: &[Value], ctx: &UnrollCtx<'_>, out: &mut Vec<String>) -> Result<String> {
+    let mut declared: Vec<u64> = Vec::new();
     // Dedup table for number constants: (norm_val, dim) → signal_name
     let mut const_signals: std::collections::HashMap<(u128, u64), String> = Default::default();
     let mut const_cnt: usize = 0;
@@ -500,8 +486,6 @@ fn ref_operand_bn128(r: &Value, ctx: &UnrollCtx<'_>) -> Result<String> {
                 Ok("challengeQ".into())
             } else if stage == ctx.evals_stage {
                 Ok("challengeOut".into())
-            } else if stage == ctx.fri_stage {
-                Ok(format!("challengesDeep[{stage_id}]"))
             } else {
                 Ok(format!("challengesStage{stage}[{stage_id}]"))
             }
@@ -536,7 +520,6 @@ fn ref_operand_bn128(r: &Value, ctx: &UnrollCtx<'_>) -> Result<String> {
                 other => bail!("Zi: unknown boundary name '{other}'"),
             }
         }
-        "xDivXSubXi" => Ok(format!("xDivXSubXi[{}]", r["id"].as_u64().unwrap_or(0))),
         "tmp" => {
             let id = r["id"].as_u64().unwrap_or(0);
             Ok(format!("tmp_{id}"))
@@ -732,7 +715,6 @@ mod tests {
         let ctx = UnrollCtx {
             q_stage: 3,
             evals_stage: 4,
-            fri_stage: 5,
             cm_pols_map: &cm,
             custom_commits: &cc,
             custom_commits_map: &ccm,
@@ -758,7 +740,6 @@ mod tests {
         let ctx = UnrollCtx {
             q_stage: 3,
             evals_stage: 4,
-            fri_stage: 5,
             cm_pols_map: &cm,
             custom_commits: &cc,
             custom_commits_map: &ccm,
@@ -783,7 +764,6 @@ mod tests {
         let ctx = UnrollCtx {
             q_stage: 3,
             evals_stage: 4,
-            fri_stage: 5,
             cm_pols_map: &cm,
             custom_commits: &cc,
             custom_commits_map: &ccm,
@@ -806,7 +786,6 @@ mod tests {
         let ctx = UnrollCtx {
             q_stage: 3,
             evals_stage: 4,
-            fri_stage: 5,
             cm_pols_map: &cm,
             custom_commits: &cc,
             custom_commits_map: &ccm,
@@ -837,7 +816,6 @@ mod tests {
         let ctx = UnrollCtx {
             q_stage: 3,
             evals_stage: 4,
-            fri_stage: 5,
             cm_pols_map: &cm,
             custom_commits: &cc,
             custom_commits_map: &ccm,
@@ -859,7 +837,6 @@ mod tests {
         let ctx = UnrollCtx {
             q_stage: 3,
             evals_stage: 4,
-            fri_stage: 5,
             cm_pols_map: &cm,
             custom_commits: &cc,
             custom_commits_map: &ccm,

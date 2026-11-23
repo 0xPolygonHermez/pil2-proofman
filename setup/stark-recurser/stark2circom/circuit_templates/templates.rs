@@ -721,14 +721,18 @@ mod tests {
                 "merkleTreeCustom": merkle_tree_custom,
                 "lastLevelVerification": 0,
                 "hashCommits": false,
+                "transcriptArity": 4,
                 "foldingFactors": [4],
                 "logDegrees": [6, 2],
                 "logDomainSizes": [10, 6]
             },
             "nStages": 2,
+            "qDim": 3,
+            "cExpId": 0,
+            "security": {"regime": "test"},
             "nPublics": 6,
             "nConstants": 3,
-            "evMap": [],
+            "evMap": [{"type": "const", "id": 0, "prime": 0, "openingPos": 0}],
             "cmPolsMap": [],
             "customCommits": [],
             "customCommitsMap": [],
@@ -738,7 +742,7 @@ mod tests {
             "airValuesMap": [],
             "proofValuesMap": [],
             "mapSectionsN": {"cm1": 2, "cm2": 2, "cm3": 2},
-            "openingPoints": [],
+            "openingPoints": [0],
             "qDeg": 1
         })
     }
@@ -858,7 +862,7 @@ mod tests {
         let libraries = Path::new(env!("CARGO_MANIFEST_DIR")).join("stark2circom/circom_verifier");
 
         let stark_info = recursivef_stark_info(true);
-        let verifier_info = json!({ "qVerifier": { "code": [] }, "queryVerifier": { "code": [] } });
+        let verifier_info = json!({ "qVerifier": { "code": [] } });
         let opts = Pil2CircomOptions { skip_main: true, ..Pil2CircomOptions::default() };
         let root_c = ["1".to_string(), "0".to_string(), "0".to_string(), "0".to_string()];
         let verifier = gen_stark_verifier_bn128(Some(&root_c), &stark_info, &verifier_info, &opts).unwrap();

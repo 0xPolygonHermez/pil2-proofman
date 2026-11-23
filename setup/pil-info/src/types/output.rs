@@ -35,8 +35,6 @@ pub struct CodeRef {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub commit_id: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub opening: Option<i64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub boundary_id: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub airgroup_id: Option<usize>,
@@ -127,13 +125,6 @@ impl serde::Serialize for CodeRef {
                 if let Some(agid) = self.airgroup_id {
                     map.serialize_entry("airgroupId", &agid)?;
                 }
-            }
-            "xDivXSubXi" => {
-                map.serialize_entry("id", &self.id)?;
-                if let Some(opening) = self.opening {
-                    map.serialize_entry("opening", &opening)?;
-                }
-                map.serialize_entry("dim", &self.dim)?;
             }
             "Zi" => {
                 if let Some(bid) = self.boundary_id {

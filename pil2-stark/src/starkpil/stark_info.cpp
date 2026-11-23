@@ -6,6 +6,7 @@
 #include "expressions_pack.hpp"
 #include "grinding_launch.hpp"
 #include "stir/stir_layout.hpp"
+#include "deep.hpp"
 
 StarkInfo::StarkInfo(string file, bool final_, bool recursive_, bool verify_constraints_, bool verify_, bool gpu_)
 {
@@ -20,6 +21,8 @@ StarkInfo::StarkInfo(string file, bool final_, bool recursive_, bool verify_cons
     json starkInfoJson;
     file2json(file, starkInfoJson);
     load(starkInfoJson);
+
+    if (!verify_constraints_) deepTables = std::make_shared<const DeepTables>(buildDeepTables(*this));
 }
 
 void StarkInfo::load(json j)
@@ -115,7 +118,6 @@ void StarkInfo::load(json j)
 
     nConstraints = j["nConstraints"];
 
-    deepExpId = j["deepExpId"];
     cExpId = j["cExpId"];
 
 
@@ -956,12 +958,8 @@ opType string2opType(const string s)
         return Zi;
     if(s == "eval")
         return eval;
-    if(s == "xDivXSubXi") 
-        return xDivXSubXi;
     if(s == "q") 
         return q;
-    if(s == "f") 
-        return f;
     if(s == "proofvalue")
         return proofvalue;
     zklog.error("string2opType() found invalid string=" + s);
@@ -996,14 +994,8 @@ string opType2string(const opType op)
         return "Zi";
     if(op == opType::eval)
         return "eval";
-    if(op == opType::xDivXSubXi) 
-        return "xDivXSubXi";
     if(op == opType::q)
         return "q";
-    if(op == opType::f)
-        return "f";
-    if(op == opType::eval)
-        return "eval";
     if(op == opType::proofvalue)
         return "proofvalue";
 

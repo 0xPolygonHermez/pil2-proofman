@@ -324,7 +324,8 @@ pub fn air_setup(
     max_q_degree: u64,
     packing: Packing,
 ) -> Result<AirSetup, SetupError> {
-    if result.deep_exp_id.is_some() {
+    // Only the DEEP opening registers challenges here (std_vf1/std_vf2).
+    if !result.pil_code.challenges_map.is_empty() {
         return passes_output("a DEEP polynomial: the passes must run with PilInfoCfg::bn128()".to_string());
     }
     let setup = &result.setup;

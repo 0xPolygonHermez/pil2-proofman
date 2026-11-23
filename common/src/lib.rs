@@ -16,6 +16,7 @@ pub mod global_info;
 pub mod hash_family;
 pub mod publics_info;
 pub mod stark_info;
+pub mod deep;
 pub mod utils;
 pub mod custom_commits;
 pub mod constraints;

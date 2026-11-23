@@ -93,17 +93,6 @@ pub fn build_verifier_info_json(info: &crate::pil::gen_code::VerifierInfo) -> se
     let mut result = serde_json::Map::new();
     result.insert("qVerifier".to_string(), serde_json::Value::Object(qv));
 
-    // queryVerifier: {tmpUsed, code, expId, stage, line}, for the DEEP opening only
-    if let Some(query_verifier) = &info.query_verifier {
-        let mut qr = serde_json::Map::new();
-        qr.insert("tmpUsed".to_string(), json!(query_verifier.tmp_used));
-        qr.insert("code".to_string(), code_entries_to_json(&query_verifier.code));
-        qr.insert("expId".to_string(), json!(query_verifier.exp_id));
-        qr.insert("stage".to_string(), json!(query_verifier.stage));
-        qr.insert("line".to_string(), json!(query_verifier.line));
-        result.insert("queryVerifier".to_string(), serde_json::Value::Object(qr));
-    }
-
     serde_json::Value::Object(result)
 }
 
@@ -248,7 +237,6 @@ pub fn code_entries_to_json(entries: &[CodeEntry]) -> serde_json::Value {
 ///   proofvalue:            type, id, stage, dim
 ///   number:                type, value, dim
 ///   airgroupvalue/airvalue: type, id, stage, dim, [airgroupId]
-///   xDivXSubXi:            type, id, opening, dim
 ///   Zi:                    type, boundaryId, dim
 pub fn code_ref_to_json(r: &CodeRef) -> serde_json::Value {
     let mut obj = serde_json::Map::new();
@@ -333,13 +321,6 @@ pub fn code_ref_to_json(r: &CodeRef) -> serde_json::Value {
             if let Some(agid) = r.airgroup_id {
                 obj.insert("airgroupId".to_string(), json!(agid));
             }
-        }
-        "xDivXSubXi" => {
-            obj.insert("id".to_string(), json!(r.id));
-            if let Some(opening) = r.opening {
-                obj.insert("opening".to_string(), json!(opening));
-            }
-            obj.insert("dim".to_string(), json!(r.dim));
         }
         "Zi" => {
             if let Some(bid) = r.boundary_id {

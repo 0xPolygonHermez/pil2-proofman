@@ -344,11 +344,6 @@ mod tests {
                 "airgroupvalues do not exist",
             ),
             (
-                "the DEEP opening's xDivXSubXi",
-                vec![entry("copy", 0, &[operand("xDivXSubXi", json!({"id": 0}))])],
-                "\"xDivXSubXi\" is not one of the qVerifier's",
-            ),
-            (
                 "a column, which the verifier reads as an eval",
                 vec![entry("copy", 0, &[operand("cm", json!({"id": 0}))])],
                 "\"cm\" is not one",

@@ -11,7 +11,7 @@
 //   fri[r] = SUM_o D[r - o B] a_o (SUM_{G with o} S_G[r] + K_o)      S_G[r] = SUM_{c in G} b_c p_c[r]
 //   b_c = vf2^c     a_o = w^-o vf1^e_o     K_o = -SUM_{c in o} vf2^c e_(o,c)
 //
-// e_o counts the later openings that have evaluations, as the setup's Horner on vf1 (fri_poly.rs).
+// e_o counts the later openings that have evaluations (deep/deep.hpp's Horner on vf1).
 //
 // D is one inversion per row of the domain, computed once (computeFRIDenominators) and read by every opening
 // at its own offset: the reads of a warp are contiguous, and the offsets of one row span a few KiB, so they

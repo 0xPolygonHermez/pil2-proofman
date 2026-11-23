@@ -30,6 +30,9 @@ pub struct VerifierInfo {
     pub n_fri_queries: u64,
     pub n_fri_steps: u64,
     pub n_challenges: u64,
+    /// `challengesMap` positions of vf1 and vf2 (the DEEP batching challenges).
+    pub vf1_idx: u64,
+    pub vf2_idx: u64,
     pub n_challenges_total: u64,
     pub fri_steps: Vec<u64>,
     pub hash_commits: bool,
@@ -51,7 +54,8 @@ pub fn expected_proof_size_bytes(info: &VerifierInfo) -> usize {
 /// One opened column that the FRI polynomial reads at a query point.
 #[derive(Debug, Clone)]
 pub struct FriEvalRef {
-    /// 0 for constants, `stage` for a witness column, `n_stages + 1 + commit_id` for a custom one.
+    /// 0 for constants, `stage` for a witness column, `n_stages + 1 + commit_id` for a custom one
+    /// (only the circom generator meets those: this verifier's `vals` hold const, stages and Q).
     pub bucket: u16,
     pub offset: u16,
     pub dim: u8,
@@ -70,18 +74,6 @@ impl FriEvalRef {
 pub struct FriEvalGroup {
     pub opening: u16,
     pub refs: Vec<FriEvalRef>,
-}
-
-/// Evaluates the FRI polynomial at one query point, mirroring the setup's
-/// `fri_poly.rs`: terms weighted by vf2^col, scaled by `xDivXSubXi`, Horner on `vf1` across openings.
-pub fn fri_query_verify(
-    info: &VerifierInfo,
-    challenges: &[CubicExtensionField<Goldilocks>],
-    evals: &[CubicExtensionField<Goldilocks>],
-    vals: &[Vec<Goldilocks>],
-    xdivxsub: &[CubicExtensionField<Goldilocks>],
-) -> CubicExtensionField<Goldilocks> {
-    deep_query_eval(&info.fri_ev_groups, info.n_challenges, challenges, evals, vals, xdivxsub)
 }
 
 /// `1 / (x_q - xi * w^o)` for every query `q` and opening point `o`, one row per query. The
@@ -131,18 +123,18 @@ pub(crate) fn deep_denominators_inv(
     Some(den.chunks(n_open).map(|c| c.to_vec()).collect())
 }
 
-/// The DEEP polynomial at one query point from its `FriEvalGroup` table: FRI's first-layer value
-/// and STIR's f_0 alike (both are the setup's `deepExpId`).
-pub fn deep_query_eval(
-    fri_ev_groups: &[FriEvalGroup],
-    n_challenges: u64,
+/// The DEEP polynomial at one query point (FRI's first-layer value and STIR's f_0 alike): terms
+/// weighted by vf2^col, scaled by `xdivxsub`, Horner on vf1 across openings.
+#[cfg(test)]
+fn deep_query_eval(
+    info: &VerifierInfo,
     challenges: &[CubicExtensionField<Goldilocks>],
     evals: &[CubicExtensionField<Goldilocks>],
     vals: &[Vec<Goldilocks>],
     xdivxsub: &[CubicExtensionField<Goldilocks>],
 ) -> CubicExtensionField<Goldilocks> {
-    let consts = DeepQueryConsts::new(fri_ev_groups, n_challenges, challenges, evals);
-    consts.eval(fri_ev_groups, vals, xdivxsub)
+    let consts = DeepQueryConsts::new(&info.fri_ev_groups, (info.vf1_idx, info.vf2_idx), challenges, evals);
+    consts.eval(&info.fri_ev_groups, vals, xdivxsub)
 }
 
 /// The query-independent half of [`deep_query_eval`], built once per proof.
@@ -156,12 +148,12 @@ pub(crate) struct DeepQueryConsts {
 impl DeepQueryConsts {
     pub(crate) fn new(
         fri_ev_groups: &[FriEvalGroup],
-        n_challenges: u64,
+        (vf1_idx, vf2_idx): (u64, u64),
         challenges: &[CubicExtensionField<Goldilocks>],
         evals: &[CubicExtensionField<Goldilocks>],
     ) -> Self {
-        let vf1 = challenges[n_challenges as usize - 2];
-        let vf2 = challenges[n_challenges as usize - 1];
+        let vf1 = challenges[vf1_idx as usize];
+        let vf2 = challenges[vf2_idx as usize];
 
         let n_cols = fri_ev_groups.iter().flat_map(|g| g.refs.iter()).map(|e| e.col as usize + 1).max().unwrap_or(0);
         let mut vf2_pow = Vec::with_capacity(n_cols);
@@ -566,8 +558,12 @@ where
 
     v_debug!("Verifying proof");
 
-    let deep_consts =
-        DeepQueryConsts::new(&verifier_info.fri_ev_groups, verifier_info.n_challenges, &challenges, &evals);
+    let deep_consts = DeepQueryConsts::new(
+        &verifier_info.fri_ev_groups,
+        (verifier_info.vf1_idx, verifier_info.vf2_idx),
+        &challenges,
+        &evals,
+    );
 
     let check_query = |q: usize| -> bool {
         // 1) Fixed MT
@@ -777,7 +773,7 @@ mod tests {
         CubicExtensionField { value: [Goldilocks::new(x), Goldilocks::ZERO, Goldilocks::ZERO] }
     }
 
-    /// A `VerifierInfo` carrying only what `fri_query_verify` reads.
+    /// A `VerifierInfo` carrying only what `deep_query_eval` reads.
     fn info(groups: Vec<FriEvalGroup>) -> VerifierInfo {
         VerifierInfo {
             n_stages: 2,
@@ -789,6 +785,8 @@ mod tests {
             n_fri_queries: 0,
             n_fri_steps: 1,
             n_challenges: 6,
+            vf1_idx: 4,
+            vf2_idx: 5,
             n_challenges_total: 12,
             fri_steps: vec![],
             hash_commits: true,
@@ -807,7 +805,7 @@ mod tests {
         FriEvalRef { bucket, offset, dim, col }
     }
 
-    // challenges[4] = vf1, challenges[5] = vf2 for n_challenges = 6.
+    // challenges[4] = vf1, challenges[5] = vf2 (`info`'s vf1_idx/vf2_idx).
     fn challenges(vf1: u64, vf2: u64) -> Vec<CubicExtensionField<Goldilocks>> {
         vec![gl(0), gl(0), gl(0), gl(0), gl(vf1), gl(vf2)]
     }
@@ -818,7 +816,7 @@ mod tests {
         let i = info(vec![FriEvalGroup { opening: 0, refs: vec![r(1, 2, 1, 0)] }]);
         let vals = vec![vec![], vec![Goldilocks::ZERO, Goldilocks::ZERO, Goldilocks::new(7)]];
 
-        let got = fri_query_verify(&i, &challenges(10, 2), &[gl(3)], &vals, &[gl(5)]);
+        let got = deep_query_eval(&i, &challenges(10, 2), &[gl(3)], &vals, &[gl(5)]);
 
         assert_eq!(got, gl((7 - 3) * 5));
     }
@@ -829,7 +827,7 @@ mod tests {
         let i = info(vec![FriEvalGroup { opening: 0, refs: vec![r(1, 0, 1, 0), r(1, 1, 1, 1)] }]);
         let vals = vec![vec![], vec![Goldilocks::new(7), Goldilocks::new(9)]];
 
-        let got = fri_query_verify(&i, &challenges(10, 2), &[gl(3), gl(4)], &vals, &[gl(1)]);
+        let got = deep_query_eval(&i, &challenges(10, 2), &[gl(3), gl(4)], &vals, &[gl(1)]);
 
         // (7-3)*2^0 + (9-4)*2^1
         assert_eq!(got, gl(14));
@@ -844,7 +842,7 @@ mod tests {
         ]);
         let vals = vec![vec![], vec![Goldilocks::new(7), Goldilocks::new(9)]];
 
-        let got = fri_query_verify(&i, &challenges(10, 2), &[gl(3), gl(4), gl(6)], &vals, &[gl(1), gl(1)]);
+        let got = deep_query_eval(&i, &challenges(10, 2), &[gl(3), gl(4), gl(6)], &vals, &[gl(1), gl(1)]);
 
         // group0 = 4 + 5*2 = 14, group1 = (9-6)*2 = 6, fri = 14*10 + 6
         assert_eq!(got, gl(146));
@@ -859,7 +857,7 @@ mod tests {
         ]);
         let vals = vec![vec![], vec![Goldilocks::new(7), Goldilocks::new(9)]];
 
-        let got = fri_query_verify(&i, &challenges(10, 2), &[gl(3), gl(4)], &vals, &[gl(1), gl(1)]);
+        let got = deep_query_eval(&i, &challenges(10, 2), &[gl(3), gl(4)], &vals, &[gl(1), gl(1)]);
 
         // group0 = 4, group1 = 5*2 (col 1), fri = 4*10 + 10
         assert_eq!(got, gl(50));
@@ -872,7 +870,7 @@ mod tests {
         let vals = vec![vec![], vec![Goldilocks::new(1), Goldilocks::new(2), Goldilocks::new(3)]];
         let eval = CubicExtensionField { value: [Goldilocks::new(1), Goldilocks::new(1), Goldilocks::new(1)] };
 
-        let got = fri_query_verify(&i, &challenges(10, 2), &[eval], &vals, &[gl(1)]);
+        let got = deep_query_eval(&i, &challenges(10, 2), &[eval], &vals, &[gl(1)]);
 
         assert_eq!(got, CubicExtensionField { value: [Goldilocks::ZERO, Goldilocks::new(1), Goldilocks::new(2)] });
     }
@@ -883,7 +881,7 @@ mod tests {
         let i = info(vec![FriEvalGroup { opening: 2, refs: vec![r(1, 0, 1, 0)] }]);
         let vals = vec![vec![], vec![Goldilocks::new(7)]];
 
-        let got = fri_query_verify(&i, &challenges(10, 2), &[gl(3)], &vals, &[gl(0), gl(0), gl(5)]);
+        let got = deep_query_eval(&i, &challenges(10, 2), &[gl(3)], &vals, &[gl(0), gl(0), gl(5)]);
 
         assert_eq!(got, gl((7 - 3) * 5));
     }

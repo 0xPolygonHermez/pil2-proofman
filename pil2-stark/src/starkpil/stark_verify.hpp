@@ -1,6 +1,7 @@
 #include "expressions_ctx.hpp"
 #include "stir/stir.hpp"
 #include "stark_info.hpp"
+#include "deep.hpp"
 #include "merkleTreeGL.hpp"
 #include "merkleTreeBN128.hpp"
 
@@ -399,41 +400,23 @@ bool starkVerify(json jproof, StarkInfo& starkInfo, ExpressionsBin& expressionsB
     }
     
     Goldilocks::Element xiChallenge[FIELD_EXTENSION];
-
-    for (uint64_t i = 0; i < starkInfo.challengesMap.size(); i++)
-    {
-        if(starkInfo.challengesMap[i].stage == starkInfo.nStages + 2) {
-            if(starkInfo.challengesMap[i].stageId == 0) {
-                std::memcpy(&xiChallenge[0], &challenges[i*FIELD_EXTENSION], FIELD_EXTENSION * sizeof(Goldilocks::Element));
-            }
-        }
-    }
+    std::memcpy(&xiChallenge[0], &challenges[starkInfo.deepTables->xiIdx * FIELD_EXTENSION], FIELD_EXTENSION * sizeof(Goldilocks::Element));
 
     ProverHelpers proverHelpers(starkInfo, xiChallenge);
 
     SetupCtx setupCtx(starkInfo, expressionsBin);
 
-    Goldilocks::Element *xDivXSub = new Goldilocks::Element[starkInfo.openingPoints.size() * FIELD_EXTENSION * starkInfo.starkStruct.nQueries];
-    for(uint64_t i = 0; i < starkInfo.starkStruct.nQueries; ++i) {
-        uint64_t query = queriesL0[i];
-        Goldilocks::Element x = Goldilocks::shift() * Goldilocks::exp(Goldilocks::w(starkInfo.starkStruct.nBitsExt), query);
-        for(uint64_t o = 0; o < starkInfo.openingPoints.size(); ++o) {
-            Goldilocks::Element w = Goldilocks::one();
+    const DeepTables &deepT = *starkInfo.deepTables;
+    const DeepConsts deepC = deepConstants(deepT, challenges, evals, starkInfo.starkStruct.nBits);
+    const uint64_t nOpenings = starkInfo.openingPoints.size();
 
-            for(uint64_t j = 0; j < uint64_t(std::abs(starkInfo.openingPoints[o])); ++j) {
-                w = w * Goldilocks::w(starkInfo.starkStruct.nBits);
-            }
-            if(starkInfo.openingPoints[o] < 0) {
-                w = Goldilocks::inv(w);
-            }
-            
-            Goldilocks::Element x_ext[FIELD_EXTENSION] = { x, Goldilocks::zero(), Goldilocks::zero() };
-            Goldilocks::Element aux[FIELD_EXTENSION];
-            Goldilocks3::mul((Goldilocks3::Element &)aux[0], (Goldilocks3::Element &)xiChallenge[0], w);
-            Goldilocks3::sub((Goldilocks3::Element &)aux[0], (Goldilocks3::Element &)x_ext[0], (Goldilocks3::Element &)aux[0]);
-            Goldilocks3::inv((Goldilocks3::Element *)aux, (Goldilocks3::Element *)aux);
-            std::memcpy(&xDivXSub[(i*starkInfo.openingPoints.size() + o)*FIELD_EXTENSION], &aux[0], FIELD_EXTENSION * sizeof(Goldilocks::Element));
-        }
+    // xDivXSub[q][o] = 1 / (x_q - xi * w^o).
+    Goldilocks::Element *xDivXSub = new Goldilocks::Element[nOpenings * FIELD_EXTENSION * starkInfo.starkStruct.nQueries];
+    for(uint64_t i = 0; i < starkInfo.starkStruct.nQueries; ++i) {
+        Goldilocks::Element x = Goldilocks::shift() * Goldilocks::exp(Goldilocks::w(starkInfo.starkStruct.nBitsExt), queriesL0[i]);
+        Goldilocks3::Element *row = (Goldilocks3::Element *)&xDivXSub[i*nOpenings*FIELD_EXTENSION];
+        deepDenominators(deepC, x, row);
+        for(uint64_t o = 0; o < nOpenings; ++o) Goldilocks3::inv(row[o], row[o]);
     }
 
     Goldilocks::Element *trace = new Goldilocks::Element[starkInfo.mapSectionsN["cm1"]*starkInfo.starkStruct.nQueries];
@@ -478,7 +461,6 @@ bool starkVerify(json jproof, StarkInfo& starkInfo, ExpressionsBin& expressionsB
         .airgroupValues = airgroupValues,
         .airValues = airValues,
         .evals = evals,
-        .xDivXSub = xDivXSub,
         .pConstPolsAddress = constPolsVals,
         .pConstPolsExtendedTreeAddress = nullptr,
         .pCustomCommitsFixed = trace_custom_commits_fixed,
@@ -526,9 +508,15 @@ bool starkVerify(json jproof, StarkInfo& starkInfo, ExpressionsBin& expressionsB
 
     zklog.trace("Verifying FRI queries consistency");
     Goldilocks::Element buffQueries[FIELD_EXTENSION*starkInfo.starkStruct.nQueries];
-    Dest destQueries(buffQueries, starkInfo.starkStruct.nQueries, 0);
-    destQueries.addParams(starkInfo.deepExpId, setupCtx.expressionsBin.expressionsInfo[starkInfo.deepExpId].destDim);
-    expressionsPack.calculateExpressions(params, destQueries, starkInfo.starkStruct.nQueries, false, false);
+    {
+        // The opened rows, point = query index (stage 1 in trace, later stages in aux_trace).
+        const DeepSource src = deepSource(starkInfo, deepT, false, trace, aux_trace, constPolsVals, trace_custom_commits_fixed);
+#pragma omp parallel for
+        for(uint64_t q = 0; q < starkInfo.starkStruct.nQueries; ++q) {
+            deepEvalPoint(deepT, deepC, (const Goldilocks3::Element *)&xDivXSub[q * nOpenings * FIELD_EXTENSION], src.at(q),
+                          *(Goldilocks3::Element *)&buffQueries[q * FIELD_EXTENSION]);
+        }
+    }
     bool isValidFRIConsistency = true;
 #pragma omp parallel for
     for(uint64_t q = 0; q < starkInfo.starkStruct.nQueries; ++q) {

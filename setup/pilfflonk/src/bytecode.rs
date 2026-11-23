@@ -158,7 +158,7 @@
 //!
 //! Some values of the STARK's are never written here:
 //! - `bs + 1`, the tmp3 buffer (dimension 3);
-//! - `nStages + 3`, `xDivXSubXi` (the DEEP opening's);
+//! - `nStages + 3`, a slot the STARK keeps reserved;
 //! - the custom commits;
 //! - `x`, `nStages + 2` with arg1 0 (PIL1).
 //!
@@ -510,7 +510,7 @@ impl Types {
         self.n_stages + 2
     }
 
-    /// `bs`: the tmp buffer, after the stages, the zerofiers, `xDivXSubXi` and no custom commit.
+    /// `bs`: the tmp buffer, after the stages, the zerofiers, the reserved slot and no custom commit.
     fn tmp(self) -> u32 {
         self.n_stages + 4
     }
@@ -611,7 +611,8 @@ impl Bytecode {
     /// (pilfflonk/docs/README.md#what-the-setup-refuses). Any other hint is refused: it is none the
     /// prover computes.
     pub fn from_pil_info(result: &PilInfoResult) -> BytecodeResult<Self> {
-        if result.deep_exp_id.is_some() {
+        // Only the DEEP opening registers challenges here (std_vf1/std_vf2).
+        if !result.pil_code.challenges_map.is_empty() {
             return encode_error("a result with a DEEP polynomial: pilfflonk opens with SHPLONK (PilInfoCfg::bn128())");
         }
         let context = CodeContext::from_pil_info(result)?;
@@ -808,7 +809,6 @@ fn im_pol_copy(index: usize, result: &PilInfoResult, what: &str) -> BytecodeResu
         stage: None,
         stage_id: None,
         commit_id: None,
-        opening: None,
         boundary_id: None,
         airgroup_id: None,
         exp_id: None,
@@ -984,7 +984,7 @@ fn operand(r: &CodeRef, context: &CodeContext, what: &str) -> BytecodeResult<Ope
             None => return encode_error(format!("{what}: a Zi without a boundary")),
         },
         OpType::Eval => Operand::Eval(id()?),
-        OpType::StringVal | OpType::Custom | OpType::X | OpType::XDivXSubXi | OpType::Q | OpType::F => {
+        OpType::StringVal | OpType::Custom | OpType::X | OpType::Q => {
             return encode_error(format!("{what}: a {} is not an operand of the pilfflonk bytecode", r.ref_type))
         }
     })
@@ -1713,7 +1713,7 @@ mod tests {
             assert_eq!(types.words(&t, 0), Some(words), "{t:?}");
             assert_eq!(types.operand(words, &[wide], "").unwrap(), t);
         }
-        // x, xDivXSubXi, tmp3 and beyond evals are not operands here.
+        // x, the reserved slot, tmp3 and beyond evals are not operands here.
         for words in [[4, 0, 0], [5, 0, 0], [7, 0, 0], [15, 0, 0]] {
             assert!(types.operand(words, &[wide], "").is_err(), "{words:?}");
         }

@@ -178,7 +178,6 @@ inline bool expsWarmup(SetupCtx& sc, const ExpsKernel& ek) {
     warm.airgroupValues = (Goldilocks::Element *)dummy;
     warm.airValues = (Goldilocks::Element *)dummy;
     warm.evals = (Goldilocks::Element *)dummy;
-    warm.xDivXSub = (Goldilocks::Element *)dummy;
     warm.pConstPolsAddress = (Goldilocks::Element *)dummy;
     warm.pConstPolsExtendedTreeAddress = (Goldilocks::Element *)dummy;
     warm.pCustomCommitsFixed = (Goldilocks::Element *)dummy;

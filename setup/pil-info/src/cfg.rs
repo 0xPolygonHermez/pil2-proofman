@@ -107,9 +107,9 @@ impl DegreePolicy {
 /// constraint polynomial.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Opening {
-    /// The STARK's: the DEEP polynomial (`deepExpId`, its challenges `std_vf1`/`std_vf2` and the
-    /// `queryVerifier`), which its low-degree test, FRI or STIR, runs on, and the quotient's pieces
-    /// in the `evMap`, whose evaluations the verifier receives and checks against `Q(ξ)`.
+    /// The STARK's: the DEEP polynomial's challenges `std_vf1`/`std_vf2` (the polynomial itself,
+    /// which its low-degree test, FRI or STIR, runs on, is computed natively from starkinfo), and the
+    /// quotient's pieces in the `evMap`, whose evaluations the verifier receives and checks against `Q(ξ)`.
     Deep,
     /// pilfflonk's: the prover opens the committed polynomials with SHPLONK outside these passes,
     /// and the verifier computes `Q(ξ)` rather than receiving it

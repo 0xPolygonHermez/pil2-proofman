@@ -70,9 +70,6 @@ pub fn add_info_expressions(expressions: &mut Vec<Expression>, idx: usize, field
                 }
             }
         }
-        "xDivXSubXi" => {
-            expressions[idx].exp_deg = 1;
-        }
         "challenge" | "eval" => {
             expressions[idx].exp_deg = 0;
             expressions[idx].dim = field.ext_dim();
@@ -164,9 +161,6 @@ pub fn add_info_expression_inline(
                     expr.dim = 1;
                 }
             }
-        }
-        "xDivXSubXi" => {
-            expr.exp_deg = 1;
         }
         "challenge" | "eval" => {
             expr.exp_deg = 0;
@@ -455,7 +449,7 @@ fn get_exp_dim_inner(expressions: &[Expression], exp: &Expression, field: &Field
             }
         }
         "const" | "number" | "public" | "Zi" => 1,
-        "challenge" | "eval" | "xDivXSubXi" => field.ext_dim(),
+        "challenge" | "eval" => field.ext_dim(),
         _ => return Err(PilInfoError::UnknownOp { pass: "get_exp_dim", op: exp.op.clone() }),
     };
     Ok(dim)

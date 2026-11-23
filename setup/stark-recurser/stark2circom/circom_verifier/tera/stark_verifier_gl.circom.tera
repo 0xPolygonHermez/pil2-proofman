@@ -256,74 +256,38 @@ template parallel {{ verify_evaluations_name }}() {
 }
 
 /*
-    f_0(x) at one query point, out of that query's opened leaves: the arithmetic of the DEEP
-    combination whose formula and cross-check live in {{ verify_query_name }} below.
-
-    The leaves arrive as the flat sections the Merkle trees store (cm1..cm{{ q_stage }}, consts{% if custom_commits %},
-    custom_*{% endif %}), and `mapValues` splits them into one signal per committed polynomial: dim 1 for a
-    base-field polynomial, dim 3 for an extension one — which is why a dim-1 value is
-    subtracted from limb 0 of its `evals` entry alone. Fixed polynomials are always dim 1 and
-    are read straight out of `consts`.
-
-    The emitted code is a nested Horner. Within one opening point g^s·z the differences
-    (pol(x) - pol(g^s·z)) are folded with challengesDeep[1] = vf2, the result is multiplied by
-    xDivXSubXi[s] = 1/(x - g^s·z), and the opening points are folded together with
-    challengesDeep[0] = vf1; tmp_{{ last_dest_id_q }} is f_0(x).
-
-    The DAG is split into {{ eval_q_chunks | length }} chunk(s) by the same compile-cost device as
-    VerifyEvaluationsChunks*, with tmp_ signals crossing the boundaries; each chunk builds its
-    own `mapValues`, since the leaf values feed the whole DAG.
+    The DEEP terms that are the same for every query, computed once per proof from vf1 =
+    challengesDeep[0], vf2 = challengesDeep[1] and the evaluations:
+        friConsts = [vf1, vf2, vf2^0..vf2^(nPols-1), vf1^e_o per opening, K_o per opening]
+    over the openings with evaluations, where e_o counts the openings after o and
+    K_o = sum over the polynomials p opened at o of vf2^c(p) * eval(p, o), c(p) being p's first
+    appearance in the evaluation map.
 */
-{% for chunk in eval_q_chunks %}template CalculateDeepPolChunks{{ chunk.idx }}{{ chunk_suffix }}() {
+template {{ deep_constants_name }}() {
     signal input challengesDeep[2][3];
     signal input evals[{{ ev_map_len }}][3];
+    signal output friConsts[{{ n_fri_consts }}][3];
 
-{% for stage in stages_info %}{% if stage.has_cm and stage.stage <= n_stages %}    signal input cm{{ stage.stage }}[{{ stage.cm_section_len }}];
-{% endif %}{% endfor %}    signal input cm{{ q_stage }}[{{ q_stage_cm_section_len }}];
-    signal input consts[{{ n_constants }}];
-{% for cc in custom_commits %}    signal input custom_{{ cc.name }}_0[{{ cc.section_len_0 }}];
-{% endfor %}
-    signal input xDivXSubXi[{{ opening_points | length }}][3];
+{{ deep_once_code }}
+{{ deep_const_assign }}}
 
-    // Map the s0_vals so that they are converted either into single vars (if they belong to base field) or arrays of 3 elements (if 
-    // they belong to the extended field). 
-    component mapValues = {{ map_values_name }}();
-{% for stage in stages_info %}{% if stage.has_cm and stage.stage <= n_stages %}    mapValues.vals{{ stage.stage }} <== cm{{ stage.stage }};
-{% endif %}{% endfor %}    mapValues.vals{{ q_stage }} <== cm{{ q_stage }};
-{% for cc in custom_commits %}    mapValues.vals_{{ cc.name }}_0 <== custom_{{ cc.name }}_0;
-{% endfor %}
-{% for inp in chunk.inputs %}{% if inp.dim == 1 %}    signal input tmp_{{ inp.id }};
-{% else %}    signal input tmp_{{ inp.id }}[3];
-{% endif %}{% endfor %}
-{% for out in chunk.outputs %}{% if out.dim == 1 %}    signal output tmp_{{ out.id }};
-{% else %}    signal output tmp_{{ out.id }}[3];
-{% endif %}{% endfor %}{{ chunk.code }}
-
-}
-{% endfor %}
-
-{% for chunk in fri_once_chunks %}template CalculateFRIConstantsChunks{{ chunk.idx }}() {
-    signal input challengesDeep[2][3];
-    signal input evals[{{ ev_map_len }}][3];
-{% for inp in chunk.inputs %}{% if inp.dim == 1 %}    signal input tmp_{{ inp.id }};
-{% else %}    signal input tmp_{{ inp.id }}[3];
-{% endif %}{% endfor %}{% for out in chunk.outputs %}{% if out.dim == 1 %}    signal output tmp_{{ out.id }};
-{% else %}    signal output tmp_{{ out.id }}[3];
-{% endif %}{% endfor %}{{ chunk.code }}
-}
-{% endfor %}
 /*
     The committed openings really are the openings, at one query point.
 
     Given query index i (LSB-first bits), x = shift * w^i in L_0 is accumulated bit by bit in
-    `xacc`, and one CInv per opening point gives the denominators 1/(x - g^s*z) that the DEEP
-    combination needs (the name xDivXSubXi is inherited from the prover's row helper).
-    `CalculateDeepPolChunks*` then rebuilds
+    `xacc`, and one CInv per opening point with evaluations gives the denominators
+    1/(x - g^s*z) that the DEEP combination needs (the name xDivXSubXi is inherited from the
+    prover's row helper). With A_o = vf1^e_o * xDivXSubXi[rank of o], the DEEP value
         f_0(x) = sum over opening points, vf1-folded, of
                  [ sum over polynomials, vf2-folded, of (pol(x) - pol(g^s*z)) ] / (x - g^s*z)
-    from this query's opened leaves - the trace/quotient/fixed/custom values of row i, which
-    the caller has already checked against their Merkle roots. The query-independent terms
-    arrive precomputed in `friConsts`, whose first two entries are vf1 and vf2.
+    is computed in its grouped form
+        f_0(x) = sum_G S_G * (sum_{o in G} A_o) - sum_o A_o * K_o,
+    G running over the sets of polynomials opened at exactly the same points and
+    S_G = sum_{p in G} vf2^c(p) * p(x) over this query's opened leaves - the trace/quotient/
+    fixed/custom values of row i, which the caller has already checked against their Merkle
+    roots. `mapValues` splits those flat leaf sections into one signal per polynomial (dim 1 for
+    a base-field one, dim 3 for an extension one); the query-independent terms arrive in
+    `friConsts` ({{ deep_constants_name }}).
 
     The value must match the prover's committed f_0 oracle: the caller passes the whole opened
     coset of f_0 above x, and TreeSelector picks the member x corresponds to using the query
@@ -352,21 +316,15 @@ template {{ verify_query_name }}(currStepBits, nextStepBits) {
 
     signal xDivXSubXi[{{ opening_points | length }}][3];
 
-{% for op in opening_points %}    xDivXSubXi[{{ op.idx }}] <== CInv()([xacc[{{ step0_bits - 1 }}] - {{ op.root }} * challengeOut[0], - {{ op.root }} * challengeOut[1], - {{ op.root }} * challengeOut[2]]);
+{% for op in opening_points %}    xDivXSubXi[{{ op.rank }}] <== CInv()([xacc[{{ step0_bits - 1 }}] - {{ op.root }} * challengeOut[0], - {{ op.root }} * challengeOut[1], - {{ op.root }} * challengeOut[2]]);
 {% endfor %}
-    // The query-independent terms, computed once in the StarkVerifier.
-    signal challengesDeep[2][3] <== [friConsts[0], friConsts[1]];
-{% for c in fri_consts %}{% if c.dim == 1 %}    signal tmp_{{ c.id }} <== friConsts[{{ c.idx }}][0];
-{% else %}    signal tmp_{{ c.id }}[3] <== friConsts[{{ c.idx }}];
-{% endif %}{% endfor %}
-{% for chunk in eval_q_chunks %}{% for out in chunk.outputs %}{% if out.dim == 1 %}    signal tmp_{{ out.id }};
-{% else %}    signal tmp_{{ out.id }}[3];
-{% endif %}{% endfor %}    ({{ chunk.call_outputs }}) <== CalculateDeepPolChunks{{ chunk.idx }}{{ chunk_suffix }}()({{ chunk.call_inputs }});
+    component mapValues = {{ map_values_name }}();
+{% for stage in stages_info %}{% if stage.has_cm and stage.stage <= n_stages %}    mapValues.vals{{ stage.stage }} <== cm{{ stage.stage }};
+{% endif %}{% endfor %}    mapValues.vals{{ q_stage }} <== cm{{ q_stage }};
+{% for cc in custom_commits %}    mapValues.vals_{{ cc.name }}_0 <== custom_{{ cc.name }}_0;
 {% endfor %}
-    signal queryVals[3];
-    queryVals[0] <== tmp_{{ last_dest_id_q }}[0];
-    queryVals[1] <== tmp_{{ last_dest_id_q }}[1];
-    queryVals[2] <== tmp_{{ last_dest_id_q }}[2];
+{{ deep_query_code }}
+    signal queryVals[3] <== {{ deep_result }};
 
     signal {binary} s0_keys_lowValues[nextStep];
     for (var i = 0; i < nextStep; i++) {
@@ -799,16 +757,8 @@ template {{ verifier_name }}() {
     ///////////
     // DEEP polynomial terms that are the same for every query
     ///////////
-{% for chunk in fri_once_chunks %}{% for out in chunk.outputs %}{% if out.dim == 1 %}    signal tmp_{{ out.id }};
-{% else %}    signal tmp_{{ out.id }}[3];
-{% endif %}{% endfor %}    ({{ chunk.call_outputs }}) <== CalculateFRIConstantsChunks{{ chunk.idx }}()({{ chunk.call_inputs }});
-{% endfor %}
-    signal friConsts[{{ n_fri_consts }}][3];
-    friConsts[0] <== challengesDeep[0];
-    friConsts[1] <== challengesDeep[1];
-{% for c in fri_consts %}{% if c.dim == 1 %}    friConsts[{{ c.idx }}] <== [tmp_{{ c.id }}, 0, 0];
-{% else %}    friConsts[{{ c.idx }}] <== tmp_{{ c.id }};
-{% endif %}{% endfor %}
+    signal friConsts[{{ n_fri_consts }}][3] <== {{ deep_constants_name }}()(challengesDeep, evals);
+
     ///////////
     // Check constraints are consistent with Q polynomial at the out-of-domain points
     ///////////

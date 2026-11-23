@@ -42,6 +42,18 @@ pub fn write_verifier_rust_file(
     Ok(())
 }
 
+/// `challengesMap` position of vf1 (`stage_id` 0) or vf2 (1): the stage `nStages + 3` challenge with that
+/// `stageId`, the same rule as the C++ `buildDeepTables`.
+fn deep_challenge_idx(stark_info: &StarkInfo, stage_id: u64) -> Result<u64> {
+    let stage = stark_info.n_stages + 3;
+    stark_info
+        .challenges_map
+        .iter()
+        .position(|c| c.stage == stage && c.stage_id == stage_id)
+        .map(|i| i as u64)
+        .ok_or_else(|| anyhow::anyhow!("challengesMap has no vf{} (stage {stage}, stageId {stage_id})", stage_id + 1))
+}
+
 fn prepare_verifier_rust(
     stark_info: &StarkInfo,
     verifier_info: &VerifierInfo,
@@ -129,41 +141,22 @@ fn prepare_verifier_rust(
 
     // The FRI query polynomial is structural, so the verifier evaluates it from
     // the evaluation map instead of an unrolled per-air function.
-    let mut group_strs: Vec<String> = Vec::new();
-    let mut next_eval = 0usize;
-    // vf2's exponent: each polynomial's first appearance in the eval map (fri_poly.rs).
-    let mut pol_index: std::collections::HashMap<(String, u64, u64), usize> = std::collections::HashMap::new();
-    for ev in &stark_info.ev_map {
-        let n = pol_index.len();
-        pol_index.entry((ev.ev_type.clone(), ev.commit_id, ev.id)).or_insert(n);
-    }
-    for (o, opening) in stark_info.opening_points.iter().enumerate() {
-        let mut ref_strs: Vec<String> = Vec::new();
-        for (i, ev) in stark_info.ev_map.iter().enumerate() {
-            if ev.prime != *opening {
-                continue;
-            }
-            let (bucket, offset, dim) = match ev.ev_type.as_str() {
-                "const" => (0u64, ev.id, 1u64),
-                "cm" => {
-                    let pol = &stark_info.cm_pols_map[ev.id as usize];
-                    (pol.stage, pol.stage_pos, pol.dim)
-                }
-                "custom" => (stark_info.n_stages + 1 + ev.commit_id, ev.id, 1u64),
-                other => panic!("Unknown evMap type: {other}"),
-            };
-            // The runtime indexes `evals` with a running counter.
-            assert_eq!(i, next_eval, "evMap is not ordered by opening point");
-            next_eval += 1;
-            let col = pol_index[&(ev.ev_type.clone(), ev.commit_id, ev.id)];
-            ref_strs.push(format!("FriEvalRef::new({bucket}, {offset}, {dim}, {col})"));
-        }
-        // Opening points from hint expressions have no evaluations.
-        if ref_strs.is_empty() {
-            continue;
-        }
-        group_strs.push(format!("FriEvalGroup {{ opening: {o}, refs: vec![{}] }}", ref_strs.join(", ")));
-    }
+    let common = match &stark_info.common {
+        Some(Ok(common)) => common,
+        Some(Err(e)) => anyhow::bail!("starkinfo does not parse as a proofman StarkInfo: {e}"),
+        None => anyhow::bail!("starkinfo has no proofman StarkInfo"),
+    };
+    let group_strs: Vec<String> = proofman_common::deep::fri_ev_groups(common)
+        .iter()
+        .map(|g| {
+            let refs: Vec<String> = g
+                .refs
+                .iter()
+                .map(|r| format!("FriEvalRef::new({}, {}, {}, {})", r.bucket, r.offset, r.dim, r.col))
+                .collect();
+            format!("FriEvalGroup {{ opening: {}, refs: vec![{}] }}", g.opening, refs.join(", "))
+        })
+        .collect();
     let fri_ev_groups_str =
         format!("        fri_ev_groups: vec![\n            {}\n        ],", group_strs.join(",\n            "));
 
@@ -175,12 +168,9 @@ fn prepare_verifier_rust(
         0
     };
 
-    let layout = match &stark_info.layout {
-        Some(Ok(layout)) => layout,
-        Some(Err(e)) => anyhow::bail!("starkinfo does not give a proof layout: {e}"),
-        None => anyhow::bail!("starkinfo has no proof layout"),
-    };
+    let layout = common.proof_layout();
     let num_vals: Vec<String> = layout.num_vals.iter().map(|v| v.to_string()).collect();
+    let (vf1_idx, vf2_idx) = (deep_challenge_idx(stark_info, 0)?, deep_challenge_idx(stark_info, 1)?);
     let vec_str = |v: &[u64]| -> String { v.iter().map(|b| b.to_string()).collect::<Vec<String>>().join(", ") };
 
     // verifier_info function
@@ -198,6 +188,8 @@ fn prepare_verifier_rust(
             lines.push(format!("        n_fri_queries: {},", n_queries));
             lines.push(format!("        n_fri_steps: {},", steps.len()));
             lines.push(format!("        n_challenges: {},", stark_info.challenges_map.len()));
+            lines.push(format!("        vf1_idx: {vf1_idx},"));
+            lines.push(format!("        vf2_idx: {vf2_idx},"));
             // Stage challenges, one r^fold per fold (M = domains − 1) and the query seed.
             lines.push(format!("        n_challenges_total: {},", stark_info.challenges_map.len() + steps.len()));
 
@@ -227,6 +219,8 @@ fn prepare_verifier_rust(
             lines.push(format!("        n_bits: {},", stark_info.stark_struct.n_bits));
             lines.push(format!("        n_bits_ext: {},", layout.n_bits_ext));
             lines.push(format!("        n_challenges: {},", stark_info.challenges_map.len()));
+            lines.push(format!("        vf1_idx: {vf1_idx},"));
+            lines.push(format!("        vf2_idx: {vf2_idx},"));
             // r_fold_0, then (r_out, r_fold, r_comb) per iteration 1..M−1, then the M query
             // challenges — `num_ldt_challenges` in common/src/stark_info.rs.
             lines.push(format!(

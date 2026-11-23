@@ -126,6 +126,9 @@ pub struct StirVerifierInfo {
     pub n_bits: u64,
     pub n_bits_ext: u64,
     pub n_challenges: u64,
+    /// `challengesMap` positions of vf1 and vf2 (the DEEP batching challenges).
+    pub vf1_idx: u64,
+    pub vf2_idx: u64,
     pub n_challenges_total: u64,
     pub num_vals: Vec<u64>,
     pub opening_points: Vec<i64>,
@@ -1099,8 +1102,12 @@ where
 
     v_debug!("Verifying proof");
 
-    let deep_consts =
-        DeepQueryConsts::new(&verifier_info.fri_ev_groups, verifier_info.n_challenges, &challenges, &evals);
+    let deep_consts = DeepQueryConsts::new(
+        &verifier_info.fri_ev_groups,
+        (verifier_info.vf1_idx, verifier_info.vf2_idx),
+        &challenges,
+        &evals,
+    );
 
     // The multiproof check opened the stage trees at its own round-1 indices: pin them to ours.
     if let Some(l) = leaves {

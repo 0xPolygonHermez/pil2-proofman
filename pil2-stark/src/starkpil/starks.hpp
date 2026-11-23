@@ -17,6 +17,7 @@
 #include "expressions_bin.hpp"
 #include "expressions_pack.hpp"
 #include "hints.hpp"
+#include "deep.hpp"
 
 class gl64_t;
 struct DeviceCommitBuffers;
@@ -393,30 +394,32 @@ void Starks<ElementType>::calculateQuotientPolynomial(StepsParams &params, Expre
 
 template <typename ElementType>
 void Starks<ElementType>::calculateDeepPolynomial(StepsParams &params, ExpressionsCtx &expressionsCtx) {
-uint64_t xiChallengeIndex = 0;
-    for (uint64_t i = 0; i < setupCtx.starkInfo.challengesMap.size(); i++)
-    {
-        if(setupCtx.starkInfo.challengesMap[i].stage == setupCtx.starkInfo.nStages + 2) {
-            if(setupCtx.starkInfo.challengesMap[i].stageId == 0) xiChallengeIndex = i;
+    using F3 = Goldilocks3;
+    StarkInfo &si = setupCtx.starkInfo;
+    const DeepTables &t = *si.deepTables;
+    const DeepConsts c = deepConstants(t, params.challenges, params.evals, si.starkStruct.nBits);
+
+    const uint64_t NExtended = 1 << si.starkStruct.nBitsExt;
+    const uint64_t nOpenings = t.openings.size();
+    const Goldilocks::Element *x = expressionsCtx.proverHelpers->x;
+    Goldilocks::Element *f = &params.aux_trace[si.mapOffsets[std::make_pair("f", true)]];
+
+    // Extended row-major buffers, point = row of the extended domain.
+    const DeepSource src = deepSource(si, t, true, params.aux_trace, params.aux_trace,
+                                      params.pConstPolsExtendedTreeAddress, params.pCustomCommitsFixed);
+
+    constexpr uint64_t BLOCK = 256;
+#pragma omp parallel for
+    for (uint64_t b = 0; b < NExtended; b += BLOCK) {
+        const uint64_t n = std::min(BLOCK, NExtended - b);
+        F3::Element den[BLOCK * nOpenings];
+        for (uint64_t i = 0; i < n; i++) deepDenominators(c, x[b + i], &den[i * nOpenings]);
+        F3::batchInverse(den, den, n * nOpenings);
+        for (uint64_t i = 0; i < n; i++) {
+            const uint64_t r = b + i;
+            deepEvalPoint(t, c, &den[i * nOpenings], src.at(r), *(F3::Element *)&f[r * FIELD_EXTENSION]);
         }
     }
-
-    Goldilocks::Element *xiChallenge = &params.challenges[xiChallengeIndex * FIELD_EXTENSION];
-    
-    Goldilocks::Element xis[setupCtx.starkInfo.openingPoints.size() * FIELD_EXTENSION];
-    for (uint64_t i = 0; i < setupCtx.starkInfo.openingPoints.size(); ++i)
-    {
-        uint64_t openingAbs = setupCtx.starkInfo.openingPoints[i] < 0 ? -setupCtx.starkInfo.openingPoints[i] : setupCtx.starkInfo.openingPoints[i];
-        Goldilocks::Element w = Goldilocks::pow(Goldilocks::w(setupCtx.starkInfo.starkStruct.nBits), openingAbs);
-
-        if (setupCtx.starkInfo.openingPoints[i] < 0) w = Goldilocks::inv(w);
-
-        Goldilocks3::mul((Goldilocks3::Element &)(xis[i * FIELD_EXTENSION]), (Goldilocks3::Element &)xiChallenge[0], w);
-    }
-
-    expressionsCtx.setXi(xis);
-
-    expressionsCtx.calculateExpression(params, &params.aux_trace[setupCtx.starkInfo.mapOffsets[std::make_pair("f", true)]], setupCtx.starkInfo.deepExpId);
 
     for(uint64_t step = 0; step < nTreesFRI; ++step) { 
         Goldilocks::Element *src = &params.aux_trace[setupCtx.starkInfo.mapOffsets[std::make_pair("fri_" + to_string(step + 1), true)]];

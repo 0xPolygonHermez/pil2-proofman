@@ -174,6 +174,7 @@ impl Toolchain {
             s("bn128/src/curve"),
             s("starkpil"),
             s("starkpil/expressions"),
+            s("starkpil/deep"),
             s("starkpil/transcript"),
             s("starkpil/merkleTree"),
             s("starkpil/fri"),

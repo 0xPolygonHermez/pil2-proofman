@@ -97,7 +97,7 @@ struct FriCase {
                 F3::sub(den, den, *(F3::Element *)&xis[o * FIELD_EXTENSION]);
                 F3::inv(inv, den);
                 F3::mul(accum, accum, inv);
-                if (termStart[o + 1] == termStart[o]) continue;   // fri_poly.rs skips openings without evaluations
+                if (termStart[o + 1] == termStart[o]) continue;   // deep.hpp skips openings without evaluations
                 F3::mul(fri, fri, vf1e);
                 F3::add(fri, fri, accum);
             }
