@@ -320,6 +320,15 @@ pub fn compute_log_folding_factors(stark_struct: &StarkStruct) -> Vec<u32> {
 /// openings. The 128-bit JBR target and the geometry (rate, tree arity, pow
 /// bits) come from the stark struct, as the FRI-only callers always did.
 pub fn solve_low_degree_test(stark_struct: &StarkStruct, batch_size: u64) -> LowDegreeTest {
+    let ldt = solve_low_degree_test_unchecked(stark_struct, batch_size);
+    match security::check::check_low_degree_test(stark_struct, &ldt, batch_size) {
+        Ok(report) => tracing::info!("{} (2^{} domain, {})", report.summary(), stark_struct.n_bits_ext, report.config),
+        Err(e) => panic!("low-degree test fails the exact security check: {e}"),
+    }
+    ldt
+}
+
+fn solve_low_degree_test_unchecked(stark_struct: &StarkStruct, batch_size: u64) -> LowDegreeTest {
     let field_size = security::goldilocks_safe_extension_field_size();
     let rate = 1.0 / (1u64 << (stark_struct.n_bits_ext - stark_struct.n_bits)) as f64;
     let log_folding_factors = compute_log_folding_factors(stark_struct);

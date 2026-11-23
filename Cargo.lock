@@ -1303,6 +1303,8 @@ dependencies = [
  "clap",
  "indexmap",
  "mpi",
+ "num-bigint",
+ "num-traits",
  "pil-info",
  "pil2-pilout",
  "pil2-stark-recurser",

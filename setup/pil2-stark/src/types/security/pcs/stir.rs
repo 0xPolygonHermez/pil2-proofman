@@ -442,7 +442,8 @@ impl Stir {
     ///      in-domain and out-of-domain quotient answers with powers of a challenge;
     ///   3. err*(folded Cᵢ, 2^{kᵢ}, δᵢ): folding fᵢ for the next iteration.
     ///
-    /// All three share one verifier message, hence one grinding value.
+    /// The challenges of terms 2 and 3 are drawn before the proof of work, so grinding
+    /// only scales term 1 (the query-miss term).
     fn shift_error(
         &self,
         regime: &dyn ProximityGapsRegime,
@@ -461,7 +462,7 @@ impl Stir {
 
         let third = self.fold_error(regime, iteration);
 
-        apply_grinding(first + second + third, grinding_bits)
+        apply_grinding(first, grinding_bits) + second + third
     }
 
     /// Final error (1 − δ_{M−1})^{t_{M−1}}.
@@ -695,7 +696,8 @@ mod tests {
         assert_eq!(sec.grinding_bits_ood, vec![0; 5]);
         // The final polynomial is queried at t_{M-1} points against a code of rate
         // 2^-(1+5*2), so t_{M-1} is well below the initial 228.
-        assert_eq!(sec.num_queries[0], 228);
+        // 229 (was 228): grinding is no longer credited to the shift's second/fold terms.
+        assert_eq!(sec.num_queries[0], 229);
         assert!(
             sec.num_queries.windows(2).all(|w| w[0] >= w[1]),
             "query counts should not increase: {:?}",
@@ -712,10 +714,11 @@ mod tests {
         assert_eq!(stir.security_params().num_queries[0], 228);
     }
 
-    /// At |F| = 2^150 no gap brings batching to 128 bits: only grinding can.
+    /// At |F| = 2^170 no gap brings batching to 128 bits: only grinding can.
     fn small_field(budget: u64) -> StirConfig {
         StirConfig {
-            field_size: 2f64.powi(150),
+            // 2^170 (was 2^150): grinding no longer rescues the shift's second/fold terms.
+            field_size: 2f64.powi(170),
             max_grinding_bits_non_query: budget,
             ..test_config(1 << 17, 0.5, 4065, vec![3, 3, 3, 3], 23)
         }

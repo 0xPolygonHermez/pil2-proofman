@@ -220,82 +220,46 @@ pub fn geometry_for_family(
     n_evals: usize,
     fri_batch_size: usize,
 ) -> VerifierGeometry {
-    use crate::types::security;
-    use crate::types::security::pcs::{Batching, Fri, FriConfig};
-    use crate::types::security::regimes::DecodingRegime;
-
+    use crate::types::security::pcs::LowDegreeTest as Solved;
+    use crate::output::stark_info::solve_low_degree_test;
     use crate::types::stark_struct::LowDegreeTest;
 
-    // The arity the setup actually builds: only blake3 has it forced, so any other family can be
-    // configured away from the family default and the whole geometry moves with it.
     let arity = stark_struct.merkle_tree_arity as u64;
-    let log_folding_factors = crate::output::stark_info::compute_log_folding_factors(stark_struct);
 
-    // Same configuration `build_starkinfo_output` uses: the query counts and grinding bits come
-    // out of the security analysis, not out of the settings.
-    let (n_queries, pow_bits, step_n_bits, stir_rounds, final_pol_size) = match &stark_struct.low_degree_test {
-        LowDegreeTest::Fri(fri_struct) => {
-            let fri = Fri::new(FriConfig {
-                field_size: security::goldilocks_safe_extension_field_size(),
-                trace_length: 1u32 << stark_struct.n_bits,
-                rate: 1.0 / (1u64 << (stark_struct.n_bits_ext - stark_struct.n_bits)) as f64,
-                batch_size: fri_batch_size.max(1) as u64,
-                batching: Batching::Powers,
-                log_folding_factors,
-                max_grinding_bits_query: fri_struct.grinding_bits_queries as u64,
-                use_max_grinding_bits_query: true,
-                max_grinding_bits_non_query: 0,
-                tree_arity: arity,
-                hash_size_bits: 256,
-                target_security_bits: 128,
-                regime: DecodingRegime::Jbr,
-            });
-            let sec = fri.security_params();
-            (
-                sec.n_queries,
-                sec.grinding_bits_query as u64,
-                fri_struct.log_domain_sizes.iter().map(|&b| b as u64).collect::<Vec<_>>(),
-                vec![],
-                1u64 << fri_struct.log_domain_sizes.last().copied().unwrap_or(0),
-            )
-        }
-        LowDegreeTest::Stir(stir_struct) => {
-            use crate::types::security::pcs::{Stir, StirConfig};
-            let stir = Stir::new(StirConfig {
-                field_size: security::goldilocks_safe_extension_field_size(),
-                trace_length: 1u32 << stark_struct.n_bits,
-                rate: 1.0 / (1u64 << (stark_struct.n_bits_ext - stark_struct.n_bits)) as f64,
-                batch_size: fri_batch_size.max(1) as u64,
-                batching: Batching::Powers,
-                log_folding_factors,
-                max_grinding_bits_queries: stir_struct.grinding_bits_queries.iter().map(|&g| g as u64).collect(),
-                use_max_grinding_bits_query: true,
-                max_grinding_bits_non_query: 0,
-                tree_arity: arity,
-                hash_size_bits: 256,
-                base_field_bits: 64,
-                target_security_bits: 128,
-                regime: DecodingRegime::Jbr,
-            });
-            let sec = stir.security_params().clone();
-            let rounds: Vec<StirRoundGeometry> = (0..stir_struct.num_iterations())
-                .map(|i| StirRoundGeometry {
-                    log_domain_size: stir_struct.log_domain_sizes[i] as u64,
-                    log_folding_factor: stir_struct.folding_factors[i] as u64,
-                    n_queries: sec.num_queries[i],
-                    grinding_bits: sec.grinding_bits_queries[i] as u64,
-                })
-                .collect();
-            (
-                sec.num_queries[0],
-                sec.grinding_bits_queries.iter().copied().max().unwrap_or(0) as u64,
-                vec![],
-                rounds,
-                // p travels as its d_M coefficients.
-                1u64 << stir_struct.log_degrees.last().copied().unwrap_or(0),
-            )
-        }
-    };
+    // The one solver the setup itself runs, so the counts here cannot drift from the built key.
+    let (n_queries, pow_bits, step_n_bits, stir_rounds, final_pol_size) =
+        match (solve_low_degree_test(stark_struct, fri_batch_size.max(1) as u64), &stark_struct.low_degree_test) {
+            (Solved::Fri(fri), LowDegreeTest::Fri(fri_struct)) => {
+                let sec = fri.security_params();
+                (
+                    sec.n_queries,
+                    sec.grinding_bits_query as u64,
+                    fri_struct.log_domain_sizes.iter().map(|&b| b as u64).collect::<Vec<_>>(),
+                    vec![],
+                    1u64 << fri_struct.log_domain_sizes.last().copied().unwrap_or(0),
+                )
+            }
+            (Solved::Stir(stir), LowDegreeTest::Stir(stir_struct)) => {
+                let sec = stir.security_params();
+                let rounds: Vec<StirRoundGeometry> = (0..stir_struct.num_iterations())
+                    .map(|i| StirRoundGeometry {
+                        log_domain_size: stir_struct.log_domain_sizes[i] as u64,
+                        log_folding_factor: stir_struct.folding_factors[i] as u64,
+                        n_queries: sec.num_queries[i],
+                        grinding_bits: sec.grinding_bits_queries[i] as u64,
+                    })
+                    .collect();
+                (
+                    sec.num_queries[0],
+                    sec.grinding_bits_queries.iter().copied().max().unwrap_or(0) as u64,
+                    vec![],
+                    rounds,
+                    // p travels as its d_M coefficients.
+                    1u64 << stir_struct.log_degrees.last().copied().unwrap_or(0),
+                )
+            }
+            _ => unreachable!("the solver returns the kind the struct asks for"),
+        };
 
     let width = |section: &str| setup.map_sections_n.get(section).copied().unwrap_or(0) as u64;
 
