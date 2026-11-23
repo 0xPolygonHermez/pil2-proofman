@@ -3,11 +3,14 @@
 //! `globalConstraints.json`.
 
 pub mod cfg;
+pub mod core;
+pub mod emit;
 pub mod error;
 pub mod expr;
 pub mod io;
 pub mod output;
 pub mod pil;
+pub mod search;
 pub mod types;
 
 pub use cfg::{DegreePolicy, FieldCfg, Opening, PilInfoCfg, DEFAULT_MAX_CONSTRAINT_DEGREE};
