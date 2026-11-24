@@ -7,10 +7,7 @@ use num_bigint::BigUint;
 use pil2_pilout::pilout::{self as pb, operand, SymbolType};
 use pil_info::core::from_pilout::{from_pilout, PiloutError};
 use pil_info::core::ir::{degree, Boundary, ColType, Expr};
-use pil_info::pil::im_polynomials::calculate_exp_deg;
-use pil_info::pil::prepare::prepare_pil;
 use pil_info::{FieldCfg, Opening};
-use std::collections::HashMap;
 
 fn col(id: u32, offset: i64) -> Expr {
     Expr::Col { col: ColType::Witness, commit_id: None, id, offset }
@@ -157,44 +154,14 @@ fn degree_follows_rules() {
     assert_eq!(degree(&cs, &Expr::Neg(Box::new(col(0, 0)))), 1);
 }
 
+/// Every air of every example pilout lowers, the global constraints too.
 #[test]
-fn lower_matches_old_prepare() {
-    let p = pilout(
-        &["a", "b", "c"],
-        &["L1"],
-        vec![
-            mul(witness(0, 0), witness(1, 1)),
-            mul(exp(0), witness(2, 0)),
-            sub(exp(1), constant("1")),
-            mul(fixed(0), exp(2)),
-            neg(exp(3)),
-        ],
-        vec![every_row(2), every_row(3), every_row(4)],
-    );
-    let cs = from_pilout(&p, 0, 0, &gl(), Opening::Deep).unwrap();
-    let old = prepare_pil(&p, 0, 0, &gl()).unwrap();
-    assert_eq!(cs.constraints.len(), old.constraints.len());
-    let mut cache = HashMap::new();
-    for (c, o) in cs.constraints.iter().zip(&old.constraints) {
-        let want = calculate_exp_deg(&old.expressions, o.e, &[], false, &mut cache).unwrap();
-        assert_eq!(degree(&cs, &c.e) as i64, want);
-    }
-}
-
-#[test]
-fn real_pilouts_lower_and_match_old_degrees() {
+fn real_pilouts_lower() {
     for (f, p) in real_pilouts() {
         pil_info::core::global::global_from_pilout(&p, &gl()).unwrap_or_else(|e| panic!("{f:?} global: {e}"));
         for (g, ag) in p.air_groups.iter().enumerate() {
             for a in 0..ag.airs.len() {
-                let cs = from_pilout(&p, g, a, &gl(), Opening::Deep).unwrap_or_else(|e| panic!("{f:?} {g}/{a}: {e}"));
-                let old = prepare_pil(&p, g, a, &gl()).unwrap();
-                let mut cache = HashMap::new();
-                assert_eq!(cs.constraints.len(), old.constraints.len());
-                for (c, o) in cs.constraints.iter().zip(&old.constraints) {
-                    let want = calculate_exp_deg(&old.expressions, o.e, &[], false, &mut cache).unwrap();
-                    assert_eq!(degree(&cs, &c.e) as i64, want, "{f:?} {g}/{a}");
-                }
+                from_pilout(&p, g, a, &gl(), Opening::Deep).unwrap_or_else(|e| panic!("{f:?} {g}/{a}: {e}"));
             }
         }
     }

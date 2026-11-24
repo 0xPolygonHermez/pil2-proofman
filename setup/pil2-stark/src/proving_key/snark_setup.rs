@@ -593,26 +593,8 @@ pub fn gen_recursivef_setup(
     let pil_result_rf =
         crate::pil::stark_setup::stark_setup(pilout_inner, 0, 0, &stark_struct_rf, &Default::default())?;
 
-    // Build starkinfo output.
-    let opening_points_rf = crate::output::stark_info::collect_opening_points(&pil_result_rf.setup);
-    let ldt = crate::output::stark_info::solve_low_degree_test(
-        &stark_struct_rf,
-        pil_result_rf.pil_code.fri_batch_size.max(1) as u64,
-    );
-
-    let starkinfo_rf = crate::output::stark_info::build_starkinfo_output(
-        &pil_result_rf.setup,
-        &stark_struct_rf,
-        &pil_result_rf.pil_code,
-        &opening_points_rf,
-        &ldt,
-        0,
-        0,
-        None,
-        "Recursivef",
-        pil_result_rf.c_exp_id,
-        pil_result_rf.q_deg,
-    );
+    let mut starkinfo_rf = pil_result_rf.starkinfo;
+    starkinfo_rf.name = "Recursivef".into();
     tracing::info!("Circuit 'recursivef' low-degree test: {}", starkinfo_rf.stark_struct.low_degree_test.describe());
     let starkinfo_rf_json = crate::output::json::to_json_string(&starkinfo_rf)?;
     let starkinfo_rf_path = recursivef_dir.join("recursivef.starkinfo.json");

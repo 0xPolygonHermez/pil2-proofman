@@ -47,6 +47,72 @@ pub fn print_expression_no_cache(
     print_expr_inner(ctx, expressions, exp_idx, is_constraint)
 }
 
+/// Nodes a stats line may walk; a runaway walk stalls setup.
+const PRINT_NODE_BUDGET: usize = 50_000;
+
+fn fits_print_budget(expressions: &[Expression], idx: usize, budget: &mut usize) -> bool {
+    if *budget == 0 {
+        return false;
+    }
+    *budget -= 1;
+    let exp = &expressions[idx];
+    if exp.op == "exp" {
+        if let Some(rid) = exp.id {
+            return fits_print_budget(expressions, rid, budget);
+        }
+        return true;
+    }
+    for child in &exp.values {
+        let ok = match child {
+            ExprChild::Id(id) => fits_print_budget(expressions, *id, budget),
+            ExprChild::Inline(e) => fits_print_budget_inline(e, expressions, budget),
+        };
+        if !ok {
+            return false;
+        }
+    }
+    true
+}
+
+fn fits_print_budget_inline(expr: &Expression, expressions: &[Expression], budget: &mut usize) -> bool {
+    if *budget == 0 {
+        return false;
+    }
+    *budget -= 1;
+    if expr.op == "exp" {
+        if let Some(rid) = expr.id {
+            return fits_print_budget(expressions, rid, budget);
+        }
+        return true;
+    }
+    for child in &expr.values {
+        let ok = match child {
+            ExprChild::Id(id) => fits_print_budget(expressions, *id, budget),
+            ExprChild::Inline(e) => fits_print_budget_inline(e, expressions, budget),
+        };
+        if !ok {
+            return false;
+        }
+    }
+    true
+}
+
+/// `print_expression_no_cache` within `PRINT_NODE_BUDGET` nodes, else a placeholder naming `what`.
+pub fn print_bounded(
+    ctx: &PrintCtx,
+    expressions: &mut [Expression],
+    exp_idx: usize,
+    is_constraint: bool,
+    what: &str,
+) -> String {
+    let mut budget = PRINT_NODE_BUDGET;
+    if fits_print_budget(expressions, exp_idx, &mut budget) {
+        print_expr_inner(ctx, expressions, exp_idx, is_constraint)
+    } else {
+        format!("<{what} too large to print: >{PRINT_NODE_BUDGET} nodes>")
+    }
+}
+
 /// Inner recursive printer.
 ///
 /// Caches ONLY on `exp` type nodes (matching JS where `if(exp.op === "exp")

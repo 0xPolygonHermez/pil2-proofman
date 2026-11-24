@@ -579,14 +579,6 @@ fn a_bytecode_the_reader_would_refuse_is_not_written() {
     refused(Bytecode { n_stages: u32::MAX, ..expression(good) }, "stages");
 }
 
-#[test]
-fn the_starks_passes_are_refused() {
-    let result =
-        pil_info::run(&wide_constants_pilout(), 0, 0, &PilInfoCfg::goldilocks(1), &Default::default()).unwrap();
-    let err = Bytecode::from_pil_info(&result).unwrap_err().to_string();
-    assert!(err.contains("DEEP polynomial"), "{err}");
-}
-
 // ---------------------------------------------------------------------------------------------
 // What the reader refuses
 // ---------------------------------------------------------------------------------------------

@@ -392,6 +392,16 @@ mod tests {
         assert!(err.to_string().contains("differs"), "{err}");
     }
 
+    #[test]
+    fn parity_rejects_reordered_roots() {
+        let f = full(const_pilout()).expect("feasible");
+        let mut dag = build_dag(&f.run.cs, &f.run.im).unwrap();
+        assert!(dag.roots.len() >= 2, "two constraint roots");
+        dag.roots.swap(0, 1);
+        let err = check_dag_parity(&dag, &f.si, &f.vi).unwrap_err();
+        assert!(err.to_string().contains("differs"), "{err}");
+    }
+
     fn fe(g: Goldilocks) -> BigUint {
         BigUint::from(g.as_canonical_u64())
     }

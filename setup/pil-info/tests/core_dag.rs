@@ -171,7 +171,7 @@ fn every_dag_validates_on_real_pilouts() {
     for (f, p) in real_pilouts() {
         for (g, ag) in p.air_groups.iter().enumerate() {
             for a in 0..ag.airs.len() {
-                let Some(run) = old_run_any(&p, g, a) else { continue };
+                let Some(run) = run_any(&p, g, a) else { continue };
                 let d = build_dag(&run.cs, &run.im).unwrap_or_else(|e| panic!("{f:?} {g}/{a}: {e:?}"));
                 d.validate(&gl()).unwrap_or_else(|e| panic!("{f:?} {g}/{a}: {e:?}"));
                 assert_eq!(d.roots.len(), run.cs.constraints.len() + run.im.exprs.len());

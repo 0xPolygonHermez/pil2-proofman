@@ -58,6 +58,23 @@ With `--recursive`, the recursive layers are added under
 `<airgroup>/recursive2/`, `vadcop_final/`, and `vadcop_final_compressed/` —
 each with its own const tree, witness `.so`/`.dylib`, and verifier artifacts.
 
+### Where each AIR's info comes from
+
+Every STARK circuit (basic AIRs, compressor, recursive1/2, final, recursivef, the recursive test)
+goes through one entry, `pil::stark_setup::stark_setup`, over the thin core in `pil-info`:
+
+| Module | Rule |
+|---|---|
+| `core/from_pilout` | strict pilout -> typed `ConstraintSystem` |
+| `search/im` (untrusted) -> `core/im` | picks the im columns; `check_im` derives `qDeg` |
+| `core/dag` | the constraint DAG (`constraintDag`) and its code lowering |
+| `core/layout`, `core/openings`, `core/project` | columns, evMap, the starkinfo projection |
+| `emit/prover` | today's arena and generator: expressionsinfo, hints, `qVerifier` |
+| `output/stark_info` | starkinfo JSON from the projection and the solved low-degree test |
+| `output/dag_eval` | setup-time parity of the DAG against `qVerifier` |
+
+pilfflonk keeps the old passes (`pil_info::run`, SHPLONK only).
+
 ## `stats`
 
 Print per-AIR statistics: constraints, intermediate polynomials per stage,

@@ -231,26 +231,10 @@ pub fn gen_recursive_test_setup(
     // -------------------------------------------------------------------------
     // Step 10: Build and write starkinfo JSON.
     // -------------------------------------------------------------------------
-    let opening_points = crate::output::stark_info::collect_opening_points(&pil_info_result.setup);
-    let ldt = crate::output::stark_info::solve_low_degree_test(
-        &stark_struct,
-        pil_info_result.pil_code.fri_batch_size.max(1) as u64,
-    );
-
-    let starkinfo_output = crate::output::stark_info::build_starkinfo_output(
-        &pil_info_result.setup,
-        &stark_struct,
-        &pil_info_result.pil_code,
-        &opening_points,
-        &ldt,
-        0,
-        0,
-        // The test circuit is proven as air 0 of airgroup 0.
-        Some(proofman_common::circuit_type_of(0, 1)),
-        NAME_FILE,
-        pil_info_result.c_exp_id,
-        pil_info_result.q_deg,
-    );
+    let mut starkinfo_output = pil_info_result.starkinfo;
+    // The test circuit is proven as air 0 of airgroup 0.
+    starkinfo_output.circuit_type = Some(proofman_common::circuit_type_of(0, 1));
+    starkinfo_output.name = NAME_FILE.into();
     tracing::info!(
         "Circuit '{}' low-degree test: {}",
         circom_name,

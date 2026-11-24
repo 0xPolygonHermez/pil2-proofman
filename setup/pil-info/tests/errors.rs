@@ -4,7 +4,7 @@
 
 use pil2_pilout::pilout::{self as pb, constraint, expression, global_expression, global_operand, operand, SymbolType};
 use pil_info::output::global_constraints::build_global_constraints_json;
-use pil_info::{FieldCfg, PilInfoCfg, PilInfoError, PilInfoResult};
+use pil_info::{FieldCfg, Opening, PilInfoCfg, PilInfoError, PilInfoResult};
 
 fn op(operand: operand::Operand) -> Option<pb::Operand> {
     Some(pb::Operand { operand: Some(operand) })
@@ -76,9 +76,9 @@ fn the_air(pilout: &mut pb::PilOut) -> &mut pb::Air {
     &mut pilout.air_groups[0].airs[0]
 }
 
-/// The STARK's passes (DEEP) and pilfflonk's (SHPLONK).
+/// The passes over both fields; they open with SHPLONK only.
 fn cfgs() -> [PilInfoCfg; 2] {
-    [PilInfoCfg::goldilocks(1), PilInfoCfg::bn128()]
+    [PilInfoCfg { opening: Opening::Shplonk, ..PilInfoCfg::goldilocks(1) }, PilInfoCfg::bn128()]
 }
 
 fn run(pilout: &pb::PilOut, cfg: &PilInfoCfg) -> Result<PilInfoResult, PilInfoError> {
@@ -160,7 +160,7 @@ fn a_custom_column_of_a_custom_commit_the_air_does_not_have_is_refused() {
 fn a_custom_column_of_a_stage_other_than_0_is_refused() {
     let mut pilout = pilout();
     pilout.symbols.push(pb::Symbol { commit_id: Some(0), ..column_symbol("Synthetic.c", SymbolType::CustomCol, 1, 0) });
-    let err = run_err(&pilout, &PilInfoCfg::goldilocks(1));
+    let err = run_err(&pilout, &cfgs()[0]);
     assert!(matches!(&err, PilInfoError::CustomColumnStage { name, stage: 1 } if name == "Synthetic.c"), "{err:?}");
 }
 
@@ -190,19 +190,11 @@ fn a_hint_field_without_a_value_is_refused() {
     assert!(matches!(&err, PilInfoError::HintFieldWithoutValue { hint } if hint == "broken"), "{err:?}");
 }
 
-/// Was `panic!("Symbol not found for ev type=const id=0")`: the DEEP polynomial needs the stage and
-/// dimension of every column it opens, and SHPLONK builds no DEEP polynomial.
+/// The STARK's DEEP setup is the core's: the passes refuse it.
 #[test]
-fn an_opened_column_without_a_symbol_is_refused_by_the_deep_opening() {
-    let mut pilout = pilout();
-    pilout.symbols.retain(|s| s.name != "Synthetic.L1");
-    let err = run_err(&pilout, &PilInfoCfg::goldilocks(1));
-    assert!(
-        matches!(&err, PilInfoError::NoSymbolForEvaluation { entry_type, id: 0 } if entry_type == "const"),
-        "{err:?}"
-    );
-    assert_eq!(err.to_string(), "invalid pilout: the constraints evaluate const 0, which has no symbol");
-    run(&pilout, &PilInfoCfg::bn128()).unwrap();
+fn the_deep_opening_is_refused() {
+    let err = run_err(&pilout(), &PilInfoCfg::goldilocks(1));
+    assert!(matches!(err, PilInfoError::DeepPasses), "{err:?}");
 }
 
 fn global_ref(idx: u32) -> Option<pb::GlobalOperand> {

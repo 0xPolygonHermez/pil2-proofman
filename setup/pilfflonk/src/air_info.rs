@@ -262,9 +262,6 @@ fn name_stage_entries(map: &[SymbolInfo], what: &str) -> Result<Vec<NameStageEnt
 }
 
 fn challenges_map(result: &PilInfoResult) -> Result<Vec<ChallengeMapEntry>, SetupError> {
-    if !result.pil_code.challenges_map.is_empty() {
-        return passes_output("the code added challenges, as the DEEP opening does".to_string());
-    }
     result
         .setup
         .challenges_map
@@ -324,10 +321,6 @@ pub fn air_setup(
     max_q_degree: u64,
     packing: Packing,
 ) -> Result<AirSetup, SetupError> {
-    // Only the DEEP opening registers challenges here (std_vf1/std_vf2).
-    if !result.pil_code.challenges_map.is_empty() {
-        return passes_output("a DEEP polynomial: the passes must run with PilInfoCfg::bn128()".to_string());
-    }
     let setup = &result.setup;
     let q_deg = u64::try_from(result.q_deg).map_err(|_| SetupError::QDegree(result.q_deg))?;
     let n_stages = setup.n_stages as u64;

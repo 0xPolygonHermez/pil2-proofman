@@ -153,85 +153,6 @@ fn map_sections_n_counts_by_stage() {
     assert_eq!(l.map_sections_n.len(), 4, "no section twice");
 }
 
-fn lens(l: &Option<Vec<u32>>) -> Option<Vec<usize>> {
-    l.as_ref().map(|v| v.iter().map(|x| *x as usize).collect())
-}
-
-fn assert_layout_matches_old(run: &OldRun, what: &str) {
-    let s = &run.old.setup;
-    let params = LayoutParams { air_name: s.name.clone(), ..lp(run.chk.q_deg) };
-    let l = layout(&run.cs, &run.im, &params).unwrap_or_else(|e| panic!("{what}: {e:?}"));
-    assert_eq!(l.cm_pols_map.len(), s.cm_pols_map.len(), "{what}: cmPolsMap length");
-    for (i, (n, o)) in l.cm_pols_map.iter().zip(&s.cm_pols_map).enumerate() {
-        let got = (&n.name, lens(&n.lengths), n.stage, n.dim, n.stage_id, n.stage_pos, n.im_pol);
-        let want = (
-            &o.name,
-            o.lengths.clone(),
-            o.stage.unwrap_or(0) as u32,
-            o.dim as u32,
-            o.stage_id.unwrap_or(0) as u32,
-            o.stage_pos.unwrap_or(0) as u32,
-            o.im_pol,
-        );
-        assert_eq!(got, want, "{what}: cm {i}");
-    }
-    assert_eq!(l.const_pols_map.len(), s.const_pols_map.len(), "{what}: constPolsMap length");
-    for (i, (n, o)) in l.const_pols_map.iter().zip(&s.const_pols_map).enumerate() {
-        assert_eq!(
-            (&n.name, lens(&n.lengths), n.dim, n.stage_id),
-            (&o.name, o.lengths.clone(), o.dim as u32, o.stage_id.unwrap_or(0) as u32),
-            "{what}: const {i}"
-        );
-    }
-    let old_ch = s
-        .challenges_map
-        .iter()
-        .filter(|c| !c.name.is_empty())
-        .map(|c| (c.name.clone(), c.stage.unwrap_or(0), c.dim, c.stage_id.unwrap_or(0)))
-        .chain(run.old.pil_code.challenges_map.iter().map(|c| (c.name.clone(), c.stage, c.dim, c.stage_id)))
-        .collect::<Vec<_>>();
-    let new_ch: Vec<_> = l
-        .challenges_map
-        .iter()
-        .map(|c| (c.name.clone(), c.stage as usize, c.dim as usize, c.stage_id as usize))
-        .collect();
-    assert_eq!(new_ch, old_ch, "{what}: challengesMap");
-    let named = |m: &[pil_info::core::ir::NamedValue]| {
-        m.iter().map(|e| (e.name.clone(), lens(&e.lengths), e.stage as usize)).collect::<Vec<_>>()
-    };
-    let old_named = |m: &[pil_info::types::pilout_info::SymbolInfo]| {
-        m.iter().map(|e| (e.name.clone(), e.lengths.clone(), e.stage.unwrap_or(0))).collect::<Vec<_>>()
-    };
-    assert_eq!(named(&l.publics_map), old_named(&s.publics_map), "{what}: publicsMap");
-    assert_eq!(named(&l.proof_values_map), old_named(&s.proof_values_map), "{what}: proofValuesMap");
-    assert_eq!(named(&l.air_values_map), old_named(&s.air_values_map), "{what}: airValuesMap");
-    assert_eq!(named(&l.airgroup_values_map), old_named(&s.airgroup_values_map), "{what}: airgroupValuesMap");
-    let old_sec: Vec<(String, u32)> = s.map_sections_n.iter().map(|(k, v)| (k.clone(), *v as u32)).collect();
-    assert_eq!(l.map_sections_n, old_sec, "{what}: mapSectionsN");
-}
-
-#[test]
-fn layout_matches_old_map() {
-    let mut compared = 0;
-    for seed in 0..60 {
-        let (p, _) = random_pilout(seed);
-        let Some(run) = old_run_any(&p, 0, 0) else { continue };
-        assert_layout_matches_old(&run, &format!("seed {seed}"));
-        compared += 1;
-    }
-    assert!(compared >= 20, "only {compared} feasible random pilouts");
-    for (f, p) in real_pilouts() {
-        for (g, ag) in p.air_groups.iter().enumerate() {
-            for a in 0..ag.airs.len() {
-                let Some(run) = old_run_any(&p, g, a) else { continue };
-                assert_layout_matches_old(&run, &format!("{f:?} {g}/{a}"));
-                compared += 1;
-            }
-        }
-    }
-    assert!(compared > 20);
-}
-
 // ---- openings --------------------------------------------------------------------------------
 
 #[test]
@@ -367,43 +288,6 @@ fn fri_batch_size_formula() {
         ev_map: vec![ev(ColType::Custom, Some(0), 0, 0, 0), ev(ColType::Custom, Some(1), 0, 0, 0)],
     };
     assert_eq!(fri_batch_size(&o), 2);
-}
-
-#[test]
-fn ev_map_matches_old() {
-    let check = |run: &OldRun, what: &str| {
-        let o = core_out(run).ops;
-        let old = &run.old.pil_code.ev_map;
-        let kind = |t: &str| match t {
-            "cm" => ColType::Witness,
-            "const" => ColType::Fixed,
-            _ => ColType::Custom,
-        };
-        let want: Vec<EvEntry> = old
-            .iter()
-            .map(|e| ev(kind(&e.entry_type), e.commit_id.map(|c| c as u32), e.id as u32, e.prime, e.opening_pos as u32))
-            .collect();
-        assert_eq!(o.opening_points, run.old.setup.opening_points, "{what}: points");
-        assert_eq!(o.ev_map, want, "{what}: evMap");
-    };
-    let mut compared = 0;
-    for seed in 0..60 {
-        let (p, _) = random_pilout(seed);
-        let Some(run) = old_run_any(&p, 0, 0) else { continue };
-        check(&run, &format!("seed {seed}"));
-        compared += 1;
-    }
-    assert!(compared >= 20, "only {compared} feasible random pilouts");
-    for (f, p) in real_pilouts() {
-        for (g, ag) in p.air_groups.iter().enumerate() {
-            for a in 0..ag.airs.len() {
-                let Some(run) = old_run_any(&p, g, a) else { continue };
-                check(&run, &format!("{f:?} {g}/{a}"));
-                compared += 1;
-            }
-        }
-    }
-    assert!(compared > 20);
 }
 
 /// 64 levels of `x_{k+1} = x_k + x_k`: inlining would be 2^64 nodes, the memoised walk is linear.

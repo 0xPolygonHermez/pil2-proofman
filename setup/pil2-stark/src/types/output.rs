@@ -39,7 +39,7 @@ pub struct StarkInfoOutput {
     pub n_constraints: usize,
     pub n_commitments_stage1: usize,
     pub ev_map: Vec<EvMapEntry>,
-    /// See `pil_info::pil::deep_poly::fri_batch_size`.
+    /// See `pil_info::core::openings::fri_batch_size`.
     pub fri_batch_size: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub security: Option<SecurityInfo>,

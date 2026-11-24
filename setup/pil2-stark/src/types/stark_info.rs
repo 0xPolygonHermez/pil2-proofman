@@ -661,7 +661,8 @@ mod tests {
             ..Default::default()
         };
 
-        let result = pil_info::run(&pilout, 0, 0, &pil_info::PilInfoCfg::goldilocks(1), &Default::default()).unwrap();
+        let cfg = pil_info::PilInfoCfg { opening: pil_info::Opening::Shplonk, ..pil_info::PilInfoCfg::goldilocks(1) };
+        let result = pil_info::run(&pilout, 0, 0, &cfg, &Default::default()).unwrap();
         let err = ExpressionsInfo::try_from(&result.pil_code.expressions_info).unwrap_err();
         assert!(format!("{err:#}").ends_with(&not_goldilocks("18446744073709551621")), "{err:#}");
     }

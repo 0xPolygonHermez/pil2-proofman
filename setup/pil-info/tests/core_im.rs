@@ -1,4 +1,4 @@
-//! `im`: check_im, substitute, order, and the untrusted search against the old one.
+//! `im`: check_im, substitute, order, and the untrusted search.
 
 mod common;
 
@@ -7,9 +7,9 @@ use std::collections::BTreeSet;
 use common::*;
 use num_bigint::BigUint;
 use pil2_pilout::pilout as pb;
-use pil_info::core::from_pilout::from_pilout;
 use pil_info::core::im::{check_im, im_order, substitute, Checked, ImError};
-use pil_info::core::ir::{degree, eval_expr, visit, Boundary, ColRef, ColType, ConstraintSystem, Env, Expr};
+use pil_info::core::layout::quotient_dim;
+use pil_info::core::ir::{degree, eval_expr, visit, Boundary, ColRef, ColType, Env, Expr};
 use pil_info::pil::im_polynomials::calculate_intermediate_polynomials;
 use pil_info::pil::prepare::prepare_pil;
 use pil_info::search::im::search_im;
@@ -128,7 +128,7 @@ fn substitute_resolves_refs_and_promoted_become_columns() {
     assert_eq!(eval_expr(&cs, &inlined, &env), eval_expr(&cs, &root, &env));
 }
 
-// ---- the old search as oracle -------------------------------------------------------------
+// ---- the search, and pilfflonk's old one -------------------------------------------------------------
 
 fn policies() -> Vec<DegreePolicy> {
     vec![
@@ -157,39 +157,6 @@ fn old_search(p: &pb::PilOut, g: usize, air: usize, policy: &DegreePolicy) -> Op
     )
     .ok()?;
     Some((r.im_exps.iter().map(|&e| e as u32).collect(), r.q_deg, q_dim))
-}
-
-/// `search_im` returns the old set, and `check_im` the old q_deg, on air (`g`, `a`) under every policy.
-fn assert_matches_old(p: &pb::PilOut, cs: &ConstraintSystem, g: usize, a: usize, what: &str) -> usize {
-    let mut compared = 0;
-    for policy in policies() {
-        let old = old_search(p, g, a, &policy);
-        let new = search_im(cs, &policy, old.as_ref().map_or(1, |o| o.2));
-        match (old, new) {
-            (Some((set, old_q, _)), Ok(got)) => {
-                assert_eq!(got, set, "{what} {policy:?}");
-                let im = im_order(&got).unwrap();
-                let max = policy.max_constraint_degree() as u32;
-                let checked = check_im(cs, &im, max, stark_floor(&policy)).unwrap_or_else(|e| panic!("{what}: {e:?}"));
-                assert_eq!(checked.q_deg as i64, old_q, "{what} {policy:?}");
-                compared += 1;
-            }
-            (None, Err(_)) => {}
-            (o, n) => panic!("{what} {policy:?}: old {o:?} vs new {n:?}"),
-        }
-    }
-    compared
-}
-
-#[test]
-fn search_equals_old_set() {
-    let compared: usize = (0..200)
-        .map(|seed| {
-            let (p, cs) = random_pilout(seed);
-            assert_matches_old(&p, &cs, 0, 0, &format!("seed {seed}"))
-        })
-        .sum();
-    assert!(compared > 500, "only {compared} feasible comparisons");
 }
 
 /// pilfflonk protocol.md#degree-search: qDeg = max(deg c_i + δ_i) - 1, δ_i = 1 off everyRow. The old search
@@ -228,10 +195,9 @@ fn shplonk_boundaries_follow_the_spec() {
 fn search_output_is_checked() {
     let mut checked = 0;
     for seed in 0..200 {
-        let (p, cs) = random_pilout(seed);
+        let (_, cs) = random_pilout(seed);
         for policy in policies() {
-            let q_dim = old_search(&p, 0, 0, &policy).map_or(1, |o| o.2);
-            let Ok(set) = search_im(&cs, &policy, q_dim) else { continue };
+            let Ok(set) = search_im(&cs, &policy, quotient_dim(&cs, &choice(&[])) as usize) else { continue };
             let max = policy.max_constraint_degree() as u32;
             let im = im_order(&set).unwrap();
             check_im(&cs, &im, max, stark_floor(&policy)).unwrap_or_else(|e| panic!("seed {seed} {policy:?}: {e:?}"));
@@ -241,20 +207,18 @@ fn search_output_is_checked() {
     assert!(checked > 500);
 }
 
-/// No memo hazard in 20000 seeds x 5 policies: the old q_deg always equals the derived one. This seed is kept
-/// because only its im root (not a constraint root) sets q_deg, which a roots-only derivation misses.
+/// Only this seed's im root (not a constraint root) sets q_deg, which a roots-only derivation misses.
 const HAZARD_SEED: u64 = 2781;
 
 #[test]
 fn memo_hazard_regression() {
-    let (p, cs) = random_pilout(HAZARD_SEED);
+    let (_, cs) = random_pilout(HAZARD_SEED);
     for policy in policies() {
-        let (set, old_q, _) = old_search(&p, 0, 0, &policy).expect("feasible");
+        let set = search_im(&cs, &policy, quotient_dim(&cs, &choice(&[])) as usize).expect("feasible");
         let im = im_order(&set).unwrap();
         let got = check_im(&cs, &im, policy.max_constraint_degree() as u32, stark_floor(&policy))
-            .unwrap_or_else(|e| panic!("{policy:?}: old set rejected: {e:?}"));
+            .unwrap_or_else(|e| panic!("{policy:?}: set rejected: {e:?}"));
         let roots = cs.constraints.iter().map(|c| degree(&cs, &substitute(&cs, &im, &c.e))).max().unwrap();
-        assert_eq!(got.q_deg as i64, old_q, "{policy:?}");
         assert_eq!((roots, got.q_deg), (2, 2), "{policy:?}: the im root drives q_deg");
     }
 }
@@ -266,20 +230,6 @@ fn empty_system_has_q_deg_zero_or_the_floor() {
     assert_eq!(check_im(&cs, &choice(&[]), 3, false).unwrap(), want);
     assert_eq!(check_im(&cs, &choice(&[]), 3, true).unwrap().q_deg, 1);
     assert_eq!(search_im(&cs, &DegreePolicy::FromBlowup { blowup_bits: 1 }, 1).unwrap(), BTreeSet::new());
-}
-
-#[test]
-fn real_pilouts_match_old_search() {
-    let mut airs = 0;
-    for (f, p) in real_pilouts() {
-        for (g, ag) in p.air_groups.iter().enumerate() {
-            for a in 0..ag.airs.len() {
-                let cs = from_pilout(&p, g, a, &gl(), Opening::Deep).unwrap_or_else(|e| panic!("{f:?} {g}/{a}: {e}"));
-                airs += assert_matches_old(&p, &cs, g, a, &format!("{f:?} {g}/{a}"));
-            }
-        }
-    }
-    assert!(airs > 0, "no air compared");
 }
 
 /// 64 levels of `x_{k+1} = x_k + x_k`: inlining would be 2^64 nodes, the memoised degree is linear.

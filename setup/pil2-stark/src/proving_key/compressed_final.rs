@@ -289,26 +289,8 @@ pub fn gen_compressed_final_setup(config: &CompressedFinalConfig<'_>, witness_tr
     let pil_info_result =
         crate::pil::stark_setup::stark_setup(pilout, 0, 0, &compressed_stark_struct, &Default::default())?;
 
-    // Build JSON representations using the same helpers as the non-recursive path
-    let opening_points = crate::output::stark_info::collect_opening_points(&pil_info_result.setup);
-    let ldt = crate::output::stark_info::solve_low_degree_test(
-        &compressed_stark_struct,
-        pil_info_result.pil_code.fri_batch_size.max(1) as u64,
-    );
-
-    let mut starkinfo_output = crate::output::stark_info::build_starkinfo_output(
-        &pil_info_result.setup,
-        &compressed_stark_struct,
-        &pil_info_result.pil_code,
-        &opening_points,
-        &ldt,
-        0,
-        0,
-        None,
-        "compressed_final",
-        pil_info_result.c_exp_id,
-        pil_info_result.q_deg,
-    );
+    let mut starkinfo_output = pil_info_result.starkinfo;
+    starkinfo_output.name = "compressed_final".into();
     starkinfo_output.multiproof = multiproof;
     tracing::info!(
         "Circuit '{}' low-degree test: {}",

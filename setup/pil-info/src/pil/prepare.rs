@@ -10,8 +10,6 @@ use crate::types::pilout_info::{ConstraintInfo, HintInfo, SetupResult, SymbolInf
 /// Options controlling the preparePil flow.
 #[derive(Debug, Clone, Default)]
 pub struct PrepareOptions {
-    /// When true, skip code generation here, and the starkStruct validation in the STARK setup.
-    pub debug: bool,
     /// When true, enable intermediate polynomial batching by stage.
     pub im_pols_stages: bool,
     /// A basic air: the GPU prover commits its stages in place, which the prover memory

@@ -1161,51 +1161,38 @@ fn convert_global_operand_to_expression(
 // ---------------------------------------------------------------------------
 
 /// Format constraints from protobuf, mirroring JS `formatConstraints`.
-pub fn format_constraints(constraints: &[pb::Constraint]) -> Vec<ConstraintInfo> {
+///
+/// Fails on an empty constraint and on one without an expression.
+pub fn format_constraints(constraints: &[pb::Constraint]) -> Result<Vec<ConstraintInfo>> {
     constraints
         .iter()
-        .filter_map(|c| {
-            let inner = c.constraint.as_ref()?;
-            match inner {
-                constraint::Constraint::FirstRow(fr) => Some(ConstraintInfo {
-                    boundary: "firstRow".to_string(),
-                    e: fr.expression_idx.as_ref().map(|e| e.idx as usize).unwrap_or(0),
-                    line: fr.debug_line.clone(),
-                    offset_min: None,
-                    offset_max: None,
-                    stage: None,
-                    im_pol: false,
-                }),
-                constraint::Constraint::LastRow(lr) => Some(ConstraintInfo {
-                    boundary: "lastRow".to_string(),
-                    e: lr.expression_idx.as_ref().map(|e| e.idx as usize).unwrap_or(0),
-                    line: lr.debug_line.clone(),
-                    offset_min: None,
-                    offset_max: None,
-                    stage: None,
-                    im_pol: false,
-                }),
-                constraint::Constraint::EveryRow(er) => Some(ConstraintInfo {
-                    boundary: "everyRow".to_string(),
-                    e: er.expression_idx.as_ref().map(|e| e.idx as usize).unwrap_or(0),
-                    line: er.debug_line.clone(),
-                    offset_min: None,
-                    offset_max: None,
-                    stage: None,
-                    im_pol: false,
-                }),
-                constraint::Constraint::EveryFrame(ef) => Some(ConstraintInfo {
-                    boundary: "everyFrame".to_string(),
-                    e: ef.expression_idx.as_ref().map(|e| e.idx as usize).unwrap_or(0),
-                    line: ef.debug_line.clone(),
-                    offset_min: Some(ef.offset_min),
-                    offset_max: Some(ef.offset_max),
-                    stage: None,
-                    im_pol: false,
-                }),
-            }
+        .enumerate()
+        .map(|(i, c)| {
+            let inner = c.constraint.as_ref().ok_or_else(|| invalid(format!("constraint {i} is empty")))?;
+            let (boundary, idx, line, offsets) = match inner {
+                constraint::Constraint::FirstRow(c) => ("firstRow", &c.expression_idx, &c.debug_line, None),
+                constraint::Constraint::LastRow(c) => ("lastRow", &c.expression_idx, &c.debug_line, None),
+                constraint::Constraint::EveryRow(c) => ("everyRow", &c.expression_idx, &c.debug_line, None),
+                constraint::Constraint::EveryFrame(c) => {
+                    ("everyFrame", &c.expression_idx, &c.debug_line, Some((c.offset_min, c.offset_max)))
+                }
+            };
+            let e = idx.as_ref().ok_or_else(|| invalid(format!("constraint {i} has no expression")))?.idx as usize;
+            Ok(ConstraintInfo {
+                boundary: boundary.to_string(),
+                e,
+                line: line.clone(),
+                offset_min: offsets.map(|o| o.0),
+                offset_max: offsets.map(|o| o.1),
+                stage: None,
+                im_pol: false,
+            })
         })
         .collect()
+}
+
+fn invalid(message: String) -> PilInfoError {
+    PilInfoError::InvalidPilout(message)
 }
 
 // ---------------------------------------------------------------------------
@@ -1690,7 +1677,7 @@ pub fn get_pilout_info(
     let num_rows = air.num_rows.unwrap_or(0);
     let pil_power = if num_rows > 0 { (num_rows as f64).log2() as u32 } else { 0 };
 
-    let constraints = format_constraints(&air.constraints);
+    let constraints = format_constraints(&air.constraints)?;
     check_constraint_expressions(&constraints, air.expressions.len(), &format!("air {air_name}"))?;
 
     let mut expressions = format_expressions(
@@ -1834,6 +1821,27 @@ pub fn build_arena(exprs: Vec<Expression>) -> ExpressionArena {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn every_row(expression_idx: Option<u32>) -> pb::Constraint {
+        let er = constraint::EveryRow {
+            expression_idx: expression_idx.map(|idx| operand::Expression { idx }),
+            debug_line: None,
+        };
+        pb::Constraint { constraint: Some(constraint::Constraint::EveryRow(er)) }
+    }
+
+    #[test]
+    fn format_constraints_rejects_missing_expression_idx() {
+        assert_eq!(format_constraints(&[every_row(Some(3))]).unwrap()[0].e, 3);
+        let err = format_constraints(&[every_row(Some(0)), every_row(None)]).unwrap_err().to_string();
+        assert!(err.contains("constraint 1 has no expression"), "{err}");
+    }
+
+    #[test]
+    fn format_constraints_rejects_empty_constraint() {
+        let err = format_constraints(&[pb::Constraint { constraint: None }]).unwrap_err().to_string();
+        assert!(err.contains("constraint 0 is empty"), "{err}");
+    }
 
     #[test]
     fn buf_to_bigint_string_reads_big_endian() {

@@ -718,26 +718,10 @@ pub fn gen_recursive_setup(
             let pil_info_result =
                 crate::pil::stark_setup::stark_setup(pilout, 0, 0, &stark_struct, &Default::default())?;
 
-            // Build JSON representations using the same helpers as the non-recursive path
-            let opening_points = crate::output::stark_info::collect_opening_points(&pil_info_result.setup);
-            let ldt = crate::output::stark_info::solve_low_degree_test(
-                &stark_struct,
-                pil_info_result.pil_code.fri_batch_size.max(1) as u64,
-            );
-
-            let starkinfo_output = crate::output::stark_info::build_starkinfo_output(
-                &pil_info_result.setup,
-                &stark_struct,
-                &pil_info_result.pil_code,
-                &opening_points,
-                &ldt,
-                config.airgroup_id,
-                config.air_id,
-                None,
-                &airgroup_pil_name,
-                pil_info_result.c_exp_id,
-                pil_info_result.q_deg,
-            );
+            let mut starkinfo_output = pil_info_result.starkinfo;
+            starkinfo_output.airgroup_id = config.airgroup_id;
+            starkinfo_output.air_id = config.air_id;
+            starkinfo_output.name = airgroup_pil_name.clone();
 
             // Say which low-degree test this circuit runs, with the solved schedule
             // (recursive2 is one circuit per airgroup, the others one per air).

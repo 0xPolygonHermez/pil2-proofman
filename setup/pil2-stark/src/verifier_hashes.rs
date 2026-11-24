@@ -212,85 +212,8 @@ impl TranscriptSim {
     }
 }
 
-/// Build the geometry from what the stats pipeline already has. Everything family-dependent
-/// reaches it through `stark_struct` (the arity, and through it the FRI query count).
-pub fn geometry_for_family(
-    stark_struct: &crate::types::stark_struct::StarkStruct,
-    setup: &crate::types::pilout_info::SetupResult,
-    n_evals: usize,
-    fri_batch_size: usize,
-) -> VerifierGeometry {
-    use crate::types::security::pcs::LowDegreeTest as Solved;
-    use crate::output::stark_info::solve_low_degree_test;
-    use crate::types::stark_struct::LowDegreeTest;
-
-    let arity = stark_struct.merkle_tree_arity as u64;
-
-    // The one solver the setup itself runs, so the counts here cannot drift from the built key.
-    let (n_queries, pow_bits, step_n_bits, stir_rounds, final_pol_size) =
-        match (solve_low_degree_test(stark_struct, fri_batch_size.max(1) as u64), &stark_struct.low_degree_test) {
-            (Solved::Fri(fri), LowDegreeTest::Fri(fri_struct)) => {
-                let sec = fri.security_params();
-                (
-                    sec.n_queries,
-                    sec.grinding_bits_query as u64,
-                    fri_struct.log_domain_sizes.iter().map(|&b| b as u64).collect::<Vec<_>>(),
-                    vec![],
-                    1u64 << fri_struct.log_domain_sizes.last().copied().unwrap_or(0),
-                )
-            }
-            (Solved::Stir(stir), LowDegreeTest::Stir(stir_struct)) => {
-                let sec = stir.security_params();
-                let rounds: Vec<StirRoundGeometry> = (0..stir_struct.num_iterations())
-                    .map(|i| StirRoundGeometry {
-                        log_domain_size: stir_struct.log_domain_sizes[i] as u64,
-                        log_folding_factor: stir_struct.folding_factors[i] as u64,
-                        n_queries: sec.num_queries[i],
-                        grinding_bits: sec.grinding_bits_queries[i] as u64,
-                    })
-                    .collect();
-                (
-                    sec.num_queries[0],
-                    sec.grinding_bits_queries.iter().copied().max().unwrap_or(0) as u64,
-                    vec![],
-                    rounds,
-                    // p travels as its d_M coefficients.
-                    1u64 << stir_struct.log_degrees.last().copied().unwrap_or(0),
-                )
-            }
-            _ => unreachable!("the solver returns the kind the struct asks for"),
-        };
-
-    let width = |section: &str| setup.map_sections_n.get(section).copied().unwrap_or(0) as u64;
-
-    VerifierGeometry {
-        n_bits_ext: stark_struct.n_bits_ext as u64,
-        arity,
-        transcript_arity: stark_struct.transcript_arity as u64,
-        last_level_verification: stark_struct.last_level_verification as u64,
-        n_queries,
-        pow_bits,
-        hash_commits: stark_struct.hash_commits,
-        // One committed tree per stage, plus the quotient stage.
-        stage_widths: (1..=setup.n_stages + 1).map(|s| width(&format!("cm{s}"))).collect(),
-        n_constants: setup.n_constants as u64,
-        custom_commit_widths: setup.custom_commits.iter().map(|c| width(&format!("{}0", c.name))).collect(),
-        step_n_bits,
-        stir_rounds,
-        n_publics: setup.n_publics as u64,
-        n_evals: n_evals as u64,
-        stage_challenges: (2..=setup.n_stages + 1)
-            .map(|s| setup.challenges_map.iter().filter(|c| c.stage == Some(s)).count() as u64)
-            .collect(),
-        stage_air_values: (2..=setup.n_stages + 1)
-            .map(|s| setup.air_values_map.iter().filter(|v| v.stage == Some(s)).count() as u64)
-            .collect(),
-        final_pol_size,
-    }
-}
-
 /// Build the geometry from an as-built starkinfo (a proving key's `starkinfo.json`), using the
-/// solved query counts and grinding bits as written — unlike [`geometry_for_family`], nothing is
+/// solved query counts and grinding bits as written — nothing is
 /// re-derived, so post-solve adjustments (A2's query equalization) are reflected.
 pub fn geometry_from_stark_info(si: &proofman_common::StarkInfo) -> VerifierGeometry {
     use proofman_common::LowDegreeTest as Ldt;

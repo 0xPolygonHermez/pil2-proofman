@@ -611,10 +611,6 @@ impl Bytecode {
     /// (pilfflonk/docs/README.md#what-the-setup-refuses). Any other hint is refused: it is none the
     /// prover computes.
     pub fn from_pil_info(result: &PilInfoResult) -> BytecodeResult<Self> {
-        // Only the DEEP opening registers challenges here (std_vf1/std_vf2).
-        if !result.pil_code.challenges_map.is_empty() {
-            return encode_error("a result with a DEEP polynomial: pilfflonk opens with SHPLONK (PilInfoCfg::bn128())");
-        }
         let context = CodeContext::from_pil_info(result)?;
         let info = &result.pil_code.expressions_info;
         let expressions =

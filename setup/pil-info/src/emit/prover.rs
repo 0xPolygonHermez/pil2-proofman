@@ -2,25 +2,21 @@
 
 use std::cell::RefCell;
 
-use indexmap::IndexMap;
 use pil2_pilout::pilout::{self as pb, expression as px, global_operand, operand as po};
 
-use crate::cfg::{FieldCfg, Opening};
+use crate::cfg::FieldCfg;
 use crate::core::fold::fold_roots;
 use crate::core::from_pilout::stage_base;
 use crate::core::im::{im_column_id, Checked, ImChoice};
 use crate::core::ir::{Boundary, ColType, ConstraintSystem, Expr, NamedValue};
 use crate::core::layout::{Layout, PolMap};
-use crate::core::openings::{fri_batch_size, EvEntry, Openings};
+use crate::core::openings::{EvEntry, Openings};
 use crate::error::{PilInfoError, Result};
 use crate::expr::expression::{ExprChild, Expression};
 use crate::expr::helpers::{add_info_expression_inline, add_info_expressions, get_exp_dim};
-use crate::expr::print::PrintCtx;
+use crate::expr::print::{print_bounded, PrintCtx};
 use crate::pil::gen_code::{generate_pil_code, CodeGenParams, PilCodeResult};
-use crate::pil::map;
-use crate::types::pilout_info::{
-    format_expressions, format_hints, ConstraintInfo, CustomCommitInfo, HintInfo, SetupResult, SymbolInfo,
-};
+use crate::types::pilout_info::{format_expressions, format_hints, ConstraintInfo, HintInfo, SymbolInfo};
 
 /// Arena ids of the roles; until Task 9 they equal today's ids.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -51,10 +47,6 @@ pub struct ProverExprs {
 pub struct EmitParams {
     pub air_id: usize,
     pub airgroup_id: usize,
-    /// The air name `map` recognises the im roots by (`LayoutParams::air_name`).
-    pub air_name: String,
-    /// Skip the verifier code, as `PrepareOptions::debug`.
-    pub debug: bool,
 }
 
 /// Today's push order: pilout expressions (old formatter), the cExp fold, the im roots, then Q.
@@ -63,8 +55,17 @@ pub fn to_arena(cs: &ConstraintSystem, im: &ImChoice, lay: &Layout) -> Result<Pr
     fold_quotient(cs, im, lay, arena, hints, kept, constraints)
 }
 
-/// Expressionsinfo, hints and qVerifier through the existing generator, from `to_arena`'s output,
-/// with the mapped setup the STARK summary and today's starkinfo builder read.
+/// The generator's output plus what the AIR summary counts.
+pub struct ProverCode {
+    pub code: PilCodeResult,
+    /// The im expressions printed, (base field, extension), in column order.
+    pub im_pols_info: (Vec<String>, Vec<String>),
+    /// Stage of each constraint, im roots included.
+    pub constraint_stages: Vec<usize>,
+    pub n_expressions: usize,
+}
+
+/// Expressionsinfo, hints and qVerifier through the existing generator, from `to_arena`'s output.
 pub fn emit_prover(
     cs: &ConstraintSystem,
     im: &ImChoice,
@@ -73,15 +74,21 @@ pub fn emit_prover(
     chk: &Checked,
     exprs: ProverExprs,
     p: &EmitParams,
-) -> Result<(PilCodeResult, SetupResult)> {
-    let ProverExprs { arena, roles, hints, constraints } = exprs;
-    let mut setup = setup_of(cs, im, lay, p, arena, constraints);
-    // constraint lines (im roots printed) as today
-    map::map(&mut setup, false);
-    same_layout(&setup, lay, cs.n_stages)?;
-    let mut arena = std::mem::take(&mut setup.expressions);
-    let mut symbols = std::mem::take(&mut setup.symbols);
-    let mut params = CodeGenParams {
+) -> Result<ProverCode> {
+    let ProverExprs { mut arena, roles, hints, mut constraints } = exprs;
+    let maps = Maps::of(cs, im, lay, p);
+    let ctx = maps.print_ctx();
+    // the old map's order: im-root lines, then the im expressions; printing caches lines in the arena
+    for c in constraints.iter_mut().filter(|c| c.im_pol) {
+        c.line = Some(print_bounded(&ctx, &mut arena, c.e, true, "im_pol constraint expression"));
+    }
+    constraints.iter_mut().for_each(|c| c.line.get_or_insert_with(String::new).push_str(" == 0"));
+    let mut im_pols_info = (Vec::new(), Vec::new());
+    for s in maps.cm.iter().filter(|s| s.im_pol) {
+        let line = print_bounded(&ctx, &mut arena, s.exp_id.ok_or_else(fold_bug)?, false, "im_pol expression");
+        if s.dim == 1 { &mut im_pols_info.0 } else { &mut im_pols_info.1 }.push(line);
+    }
+    let params = CodeGenParams {
         air_id: p.air_id,
         airgroup_id: p.airgroup_id,
         n_stages: cs.n_stages as usize,
@@ -89,59 +96,19 @@ pub fn emit_prover(
         q_deg: chk.q_deg as usize,
         q_dim: lay.q_dim as usize,
         opening_points: ops.opening_points.clone(),
-        cm_pols_map: setup.cm_pols_map.clone(),
+        cm_pols_map: maps.cm.clone(),
         custom_commits_count: cs.custom_commits.len(),
         field: cs.field.clone(),
         opening: cs.opening,
     };
-    let print_ctx = PrintCtx {
-        cm_pols_map: &setup.cm_pols_map,
-        const_pols_map: &setup.const_pols_map,
-        custom_commits_map: &setup.custom_commits_map,
-        publics_map: &setup.publics_map,
-        challenges_map: &setup.challenges_map,
-        air_values_map: &setup.air_values_map,
-        airgroup_values_map: &setup.airgroup_values_map,
-        proof_values_map: &setup.proof_values_map,
-    };
-    let code = generate_pil_code(
-        &mut params,
-        &mut symbols,
-        &setup.constraints,
-        &mut arena,
-        &hints,
-        p.debug,
-        Some(&print_ctx),
-    )?;
-    if !p.debug && cs.opening == Opening::Deep {
-        same_deep(&code, lay, ops, cs.n_stages)?;
-    }
-    (setup.expressions, setup.symbols, setup.hints) = (arena, symbols, hints);
-    setup.opening_points = ops.opening_points.clone();
-    // the layout's sections: `map` counts only the columns it placed (no empty `const`)
-    setup.map_sections_n = lay.map_sections_n.iter().map(|(k, n)| (k.clone(), *n as usize)).collect();
-    Ok((code, setup))
+    let code = generate_pil_code(&params, &maps.symbols(), &constraints, &mut arena, &hints, Some(&ctx))?;
+    same_ev_map(&code, ops)?;
+    let constraint_stages = constraints.iter().map(|c| c.stage.unwrap_or(0)).collect();
+    Ok(ProverCode { code, im_pols_info, constraint_stages, n_expressions: arena.len() })
 }
 
-/// TEMPORARY (Task 8): `map`'s maps, rebuilt by the old rule, must be `lay`'s.
-fn same_layout(setup: &SetupResult, lay: &Layout, n_stages: u32) -> Result<()> {
-    let cm = |s: &SymbolInfo| (s.stage, s.dim, s.stage_id, s.stage_pos, s.im_pol);
-    let want = |c: &PolMap| {
-        (Some(c.stage as usize), c.dim as usize, Some(c.stage_id as usize), Some(c.stage_pos as usize), c.im_pol)
-    };
-    let ch = |s: &SymbolInfo| (s.name.clone(), s.stage, s.dim, s.stage_id);
-    let lay_ch = lay.challenges_map.iter().filter(|c| c.stage <= n_stages + 2);
-    let lay_ch = lay_ch.map(|c| (c.name.clone(), Some(c.stage as usize), c.dim as usize, Some(c.stage_id as usize)));
-    let same_cm = setup.cm_pols_map.iter().map(cm).eq(lay.cm_pols_map.iter().map(want));
-    let same_ch = setup.challenges_map.iter().map(ch).eq(lay_ch);
-    if !(same_cm && same_ch) {
-        return Err(PilInfoError::InvalidPilout("the old map rule disagrees with the layout".into()));
-    }
-    Ok(())
-}
-
-/// TEMPORARY (Task 8): the generator's evMap, friBatchSize and DEEP challenges must be the core's.
-fn same_deep(code: &PilCodeResult, lay: &Layout, ops: &Openings, n_stages: u32) -> Result<()> {
+/// TEMPORARY (piece 3): the generator's evMap indexes the qVerifier, so it must be the core's.
+fn same_ev_map(code: &PilCodeResult, ops: &Openings) -> Result<()> {
     let ev = |e: &EvEntry| {
         let t = match e.pol.col {
             ColType::Witness => "cm",
@@ -151,16 +118,8 @@ fn same_deep(code: &PilCodeResult, lay: &Layout, ops: &Openings, n_stages: u32) 
         (t.to_string(), e.pol.id as usize, e.pol.offset, e.opening_pos as usize, e.pol.commit_id.map(|c| c as usize))
     };
     let old_ev = code.ev_map.iter().map(|e| (e.entry_type.clone(), e.id, e.prime, e.opening_pos, e.commit_id));
-    let deep = lay.challenges_map.iter().filter(|c| c.stage > n_stages + 2);
-    let deep = deep.map(|c| (c.name.clone(), c.stage as usize, c.dim as usize, c.stage_id as usize));
-    let old_deep = code.challenges_map.iter().map(|c| (c.name.clone(), c.stage, c.dim, c.stage_id));
-    if !ops.ev_map.iter().map(ev).eq(old_ev)
-        || code.fri_batch_size != fri_batch_size(ops) as usize
-        || !deep.eq(old_deep)
-    {
-        return Err(PilInfoError::InvalidPilout(
-            "the generator's evMap, friBatchSize or DEEP challenges differ".into(),
-        ));
+    if !ops.ev_map.iter().map(ev).eq(old_ev) {
+        return Err(PilInfoError::InvalidPilout("the generator's evMap differs from the core's".into()));
     }
     Ok(())
 }
@@ -258,15 +217,15 @@ fn fold_quotient(
     let c_exp = st.push(q);
     st.arena[c_exp].dim = get_exp_dim(&st.arena, c_exp, field)?;
 
-    for (e, name, stage) in st.im_roots {
+    for (e, stage) in st.im_roots {
         constraints.push(ConstraintInfo {
             e,
             boundary: "everyRow".into(),
-            line: Some(name),
+            line: None,
             stage: Some(stage),
             offset_min: None,
             offset_max: None,
-            im_pol: false,
+            im_pol: true,
         });
     }
     Ok(ProverExprs { arena: st.arena, roles: Roles { c_exp, hints: kept }, hints, constraints })
@@ -322,8 +281,8 @@ struct Ctx<'a> {
 struct FoldState<'a> {
     arena: Vec<Expression>,
     boundaries: Vec<Boundary>,
-    /// (sub id, im column name, stage) per im root, in fold order.
-    im_roots: Vec<(usize, String, usize)>,
+    /// (sub id, stage) per im root, in fold order.
+    im_roots: Vec<(usize, usize)>,
     q_stage: usize,
     vc_id: usize,
     field: &'a FieldCfg,
@@ -432,7 +391,7 @@ impl FoldState<'_> {
                 };
                 let copy = self.arena[exp_id].clone();
                 let sub = self.push_bin("sub", ExprChild::Inline(Box::new(cm)), ExprChild::Inline(Box::new(copy)))?;
-                self.im_roots.push((sub, col.name.clone(), stage));
+                self.im_roots.push((sub, stage));
                 Ok(sub)
             }
         }
@@ -551,124 +510,105 @@ fn not_pilout() -> PilInfoError {
     PilInfoError::InvalidPilout("an expression the pilout format cannot hold".into())
 }
 
-/// Today's symbol list, projected from the layout.
-fn symbols_of(cs: &ConstraintSystem, im: &ImChoice, lay: &Layout, p: &EmitParams) -> Vec<SymbolInfo> {
-    let ext = cs.field.ext_dim();
-    let lengths = |l: &Option<Vec<u32>>| l.as_ref().map(|v| v.iter().map(|x| *x as usize).collect());
-    let pol = |kind: &str, i: usize, c: &PolMap| SymbolInfo {
-        name: c.name.clone(),
-        sym_type: kind.into(),
-        stage: Some(c.stage as usize),
-        dim: c.dim as usize,
-        id: None,
-        pol_id: Some(i),
-        stage_id: Some(c.stage_id as usize),
-        air_id: Some(p.air_id),
-        airgroup_id: Some(p.airgroup_id),
-        commit_id: c.commit_id.map(|x| x as usize),
-        lengths: lengths(&c.lengths),
-        idx: None,
-        stage_pos: Some(c.stage_pos as usize),
-        im_pol: c.im_pol,
-        exp_id: None,
-    };
-    let value = |kind: &str, i: usize, v: &NamedValue| SymbolInfo {
-        name: v.name.clone(),
-        sym_type: kind.into(),
-        stage: Some(v.stage as usize),
-        dim: if v.stage == 1 { 1 } else { ext },
-        id: Some(i),
-        pol_id: None,
-        stage_id: None,
-        air_id: None,
-        airgroup_id: None,
-        commit_id: None,
-        lengths: lengths(&v.lengths),
-        idx: None,
-        stage_pos: None,
-        im_pol: false,
-        exp_id: None,
-    };
-    let mut out = Vec::new();
-    let n_witness = cs.witness.len();
-    for (i, c) in lay.cm_pols_map.iter().enumerate() {
-        let mut s = pol("witness", i, c);
-        if let Some(e) = i.checked_sub(n_witness).and_then(|k| im.exprs.get(k)).filter(|_| c.im_pol) {
-            (s.id, s.exp_id) = (Some(*e as usize), Some(*e as usize));
-        }
-        out.push(s);
-    }
-    out.extend(lay.const_pols_map.iter().enumerate().map(|(i, c)| pol("fixed", i, c)));
-    for m in &lay.custom_pols_map {
-        out.extend(m.iter().enumerate().map(|(i, c)| pol("custom", i, c)));
-    }
-    // generate_pil_code registers std_vf1/std_vf2 itself
-    let q = cs.n_stages + 2;
-    for (i, c) in lay.challenges_map.iter().enumerate().filter(|(_, c)| c.stage <= q) {
-        let mut s = value("challenge", i, &NamedValue { name: c.name.clone(), stage: c.stage, lengths: None });
-        (s.dim, s.stage_id) = (c.dim as usize, Some(c.stage_id as usize));
-        out.push(s);
-    }
-    let tables = [
-        ("public", &lay.publics_map),
-        ("proofvalue", &lay.proof_values_map),
-        ("airvalue", &lay.air_values_map),
-        ("airgroupvalue", &lay.airgroup_values_map),
-    ];
-    for (kind, m) in tables {
-        out.extend(m.iter().enumerate().map(|(i, v)| value(kind, i, v)));
-    }
-    out
+/// The generator's symbol maps, projected from the layout.
+struct Maps {
+    cm: Vec<SymbolInfo>,
+    fixed: Vec<SymbolInfo>,
+    custom: Vec<Vec<SymbolInfo>>,
+    challenges: Vec<SymbolInfo>,
+    publics: Vec<SymbolInfo>,
+    proof_values: Vec<SymbolInfo>,
+    air_values: Vec<SymbolInfo>,
+    airgroup_values: Vec<SymbolInfo>,
 }
 
-/// The setup `map::map` reads: symbols from the layout, the arena and the constraints.
-fn setup_of(
-    cs: &ConstraintSystem,
-    im: &ImChoice,
-    lay: &Layout,
-    p: &EmitParams,
-    expressions: Vec<Expression>,
-    constraints: Vec<ConstraintInfo>,
-) -> SetupResult {
-    SetupResult {
-        name: p.air_name.clone(),
-        air_id: p.air_id,
-        airgroup_id: p.airgroup_id,
-        pil_power: cs.n_rows_bits,
-        n_stages: cs.n_stages as usize,
-        n_constants: cs.fixed.len(),
-        n_publics: cs.publics.len(),
-        n_commitments: lay.cm_pols_map.len(),
-        cm_pols_map: Vec::new(),
-        const_pols_map: Vec::new(),
-        challenges_map: Vec::new(),
-        publics_map: Vec::new(),
-        proof_values_map: Vec::new(),
-        airgroup_values_map: Vec::new(),
-        air_values_map: Vec::new(),
-        map_sections_n: IndexMap::new(),
-        custom_commits: cs
-            .custom_commits
-            .iter()
-            .map(|c| CustomCommitInfo {
-                name: c.name.clone(),
-                stage_widths: c.stage_widths.clone(),
-                public_values: c.public_values.clone(),
-            })
-            .collect(),
-        custom_commits_map: vec![Vec::new(); cs.custom_commits.len()],
-        air_group_values: cs
-            .airgroup_agg_types
-            .iter()
-            .zip(&cs.airgroup_values)
-            .map(|(a, v)| pb::AirGroupValue { agg_type: *a, stage: v.stage })
-            .collect(),
-        expressions,
-        constraints,
-        symbols: symbols_of(cs, im, lay, p),
-        hints: Vec::new(),
-        n_commitments_stage1: 0,
-        im_pols_info: (Vec::new(), Vec::new()),
-        opening_points: Vec::new(),
+impl Maps {
+    fn of(cs: &ConstraintSystem, im: &ImChoice, lay: &Layout, p: &EmitParams) -> Self {
+        let ext = cs.field.ext_dim();
+        let lengths = |l: &Option<Vec<u32>>| l.as_ref().map(|v| v.iter().map(|x| *x as usize).collect());
+        let pol = |kind: &str, i: usize, c: &PolMap| SymbolInfo {
+            name: c.name.clone(),
+            sym_type: kind.into(),
+            stage: Some(c.stage as usize),
+            dim: c.dim as usize,
+            id: None,
+            pol_id: Some(i),
+            stage_id: Some(c.stage_id as usize),
+            air_id: Some(p.air_id),
+            airgroup_id: Some(p.airgroup_id),
+            commit_id: c.commit_id.map(|x| x as usize),
+            lengths: lengths(&c.lengths),
+            idx: None,
+            stage_pos: Some(c.stage_pos as usize),
+            im_pol: c.im_pol,
+            exp_id: None,
+        };
+        let value = |kind: &str, i: usize, v: &NamedValue| SymbolInfo {
+            name: v.name.clone(),
+            sym_type: kind.into(),
+            stage: Some(v.stage as usize),
+            dim: if v.stage == 1 { 1 } else { ext },
+            id: Some(i),
+            pol_id: None,
+            stage_id: None,
+            air_id: None,
+            airgroup_id: None,
+            commit_id: None,
+            lengths: lengths(&v.lengths),
+            idx: None,
+            stage_pos: None,
+            im_pol: false,
+            exp_id: None,
+        };
+        let n_witness = cs.witness.len();
+        let cm = lay.cm_pols_map.iter().enumerate().map(|(i, c)| {
+            let mut s = pol("witness", i, c);
+            if let Some(e) = i.checked_sub(n_witness).and_then(|k| im.exprs.get(k)).filter(|_| c.im_pol) {
+                (s.id, s.exp_id) = (Some(*e as usize), Some(*e as usize));
+            }
+            s
+        });
+        let values = |kind: &str, m: &[NamedValue]| m.iter().enumerate().map(|(i, v)| value(kind, i, v)).collect();
+        // the DEEP challenges are not the generator's
+        let q = cs.n_stages + 2;
+        let challenges = lay.challenges_map.iter().enumerate().filter(|(_, c)| c.stage <= q).map(|(i, c)| {
+            let mut s = value("challenge", i, &NamedValue { name: c.name.clone(), stage: c.stage, lengths: None });
+            (s.dim, s.stage_id) = (c.dim as usize, Some(c.stage_id as usize));
+            s
+        });
+        Maps {
+            cm: cm.collect(),
+            fixed: lay.const_pols_map.iter().enumerate().map(|(i, c)| pol("fixed", i, c)).collect(),
+            custom: lay
+                .custom_pols_map
+                .iter()
+                .map(|m| m.iter().enumerate().map(|(i, c)| pol("custom", i, c)).collect())
+                .collect(),
+            challenges: challenges.collect(),
+            publics: values("public", &lay.publics_map),
+            proof_values: values("proofvalue", &lay.proof_values_map),
+            air_values: values("airvalue", &lay.air_values_map),
+            airgroup_values: values("airgroupvalue", &lay.airgroup_values_map),
+        }
+    }
+
+    /// Today's symbol list: the maps in the old order.
+    fn symbols(&self) -> Vec<SymbolInfo> {
+        let custom = self.custom.iter().flatten();
+        let tail = [&self.challenges, &self.publics, &self.proof_values, &self.air_values, &self.airgroup_values];
+        self.cm.iter().chain(&self.fixed).chain(custom).chain(tail.into_iter().flatten()).cloned().collect()
+    }
+
+    fn print_ctx(&self) -> PrintCtx<'_> {
+        PrintCtx {
+            cm_pols_map: &self.cm,
+            const_pols_map: &self.fixed,
+            custom_commits_map: &self.custom,
+            publics_map: &self.publics,
+            challenges_map: &self.challenges,
+            air_values_map: &self.air_values,
+            airgroup_values_map: &self.airgroup_values,
+            proof_values_map: &self.proof_values,
+        }
     }
 }

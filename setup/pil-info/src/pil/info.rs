@@ -3,8 +3,8 @@
 
 use pil2_pilout::pilout as pb;
 
-use crate::cfg::PilInfoCfg;
-use crate::error::Result;
+use crate::cfg::{Opening, PilInfoCfg};
+use crate::error::{PilInfoError, Result};
 use crate::pil::constraint_poly::Boundary;
 use crate::pil::gen_code::{CodeGenParams, PilCodeResult};
 use crate::pil::im_polynomials::{add_im_polynomials, calculate_intermediate_polynomials};
@@ -42,7 +42,8 @@ pub fn run(
     pil_info(prepared, airgroup_id, air_id, cfg, options)
 }
 
-/// Run the passes on the output of `prepare_pil`, which must have been prepared over `cfg.field`.
+/// Run the passes on the output of `prepare_pil`, which must have been prepared over `cfg.field`;
+/// SHPLONK only (pilfflonk's), see [`PilInfoError::DeepPasses`].
 ///
 /// Steps:
 /// 1. calculate_intermediate_polynomials, as `cfg.degree_policy` says
@@ -56,6 +57,9 @@ pub fn pil_info(
     cfg: &PilInfoCfg,
     options: &PrepareOptions,
 ) -> Result<PilInfoResult> {
+    if cfg.opening == Opening::Deep {
+        return Err(PilInfoError::DeepPasses);
+    }
     let mut setup = prepared.setup;
     let mut expressions = prepared.expressions;
     let mut constraints = prepared.constraints;
@@ -132,7 +136,7 @@ pub fn pil_info(
 
     // Build code-gen params
     let n_stages = setup.n_stages;
-    let mut params = CodeGenParams {
+    let params = CodeGenParams {
         air_id,
         airgroup_id,
         n_stages,
@@ -151,7 +155,7 @@ pub fn pil_info(
 
     // Temporarily take out mutable fields to allow PrintCtx to borrow map fields
     let mut expressions = std::mem::take(&mut setup.expressions);
-    let mut symbols = std::mem::take(&mut setup.symbols);
+    let symbols = std::mem::take(&mut setup.symbols);
 
     let print_ctx = PrintCtx {
         cm_pols_map: &setup.cm_pols_map,
@@ -165,12 +169,11 @@ pub fn pil_info(
     };
 
     let pil_code = crate::pil::gen_code::generate_pil_code(
-        &mut params,
-        &mut symbols,
+        &params,
+        &symbols,
         &setup.constraints,
         &mut expressions,
         &setup.hints,
-        options.debug,
         Some(&print_ctx),
     )?;
 

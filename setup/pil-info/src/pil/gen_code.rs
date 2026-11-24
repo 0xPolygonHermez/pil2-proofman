@@ -16,7 +16,6 @@ use std::sync::Arc;
 
 use crate::pil::codegen::{build_code, pil_code_gen, rebuild_ev_map_index, CalcEntry, CodeGenCtx, EvMapRef};
 use crate::expr::expression::Expression;
-use crate::pil::deep_poly::{self, ChallengeMapEntry};
 use crate::expr::helpers::{add_info_expressions_symbols, EvMapItem};
 use crate::types::pilout_info::{ConstraintInfo, HintFieldValue, HintInfo, SymbolInfo};
 use crate::expr::print::PrintCtx;
@@ -274,10 +273,6 @@ pub struct PilCodeResult {
     pub verifier_info: VerifierInfo,
     /// The evaluation map built during verifier code generation.
     pub ev_map: Vec<EvMapRef>,
-    /// The DEEP challenges, which go after the setup's (empty unless the opening is DEEP).
-    pub challenges_map: Vec<ChallengeMapEntry>,
-    /// See `deep_poly::fri_batch_size`.
-    pub fri_batch_size: usize,
 }
 
 // ---------------------------------------------------------------------------
@@ -309,54 +304,23 @@ pub struct CodeGenParams {
 
 /// Orchestrate code generation for all stages.
 ///
-/// Mirrors JS `generatePilCode(res, symbols, constraints, expressions, hints, debug)`. The opening
-/// hook: only `Opening::Deep` registers the DEEP challenges and sizes its batching; the DEEP
-/// polynomial itself is computed natively from starkinfo.
+/// Mirrors JS `generatePilCode(res, symbols, constraints, expressions, hints)`. The DEEP challenges and
+/// the batching size are not the generator's: the STARK takes them from the core's layout and openings.
 pub fn generate_pil_code(
-    params: &mut CodeGenParams,
-    symbols: &mut Vec<SymbolInfo>,
+    params: &CodeGenParams,
+    symbols: &[SymbolInfo],
     constraints: &[ConstraintInfo],
     expressions: &mut Vec<Expression>,
     hints: &[HintInfo],
-    debug: bool,
     print_ctx: Option<&PrintCtx>,
 ) -> Result<PilCodeResult> {
     let mut ev_map_items: Vec<EvMapRef> = Vec::new();
-    let mut challenges_map: Vec<ChallengeMapEntry> = Vec::new();
-    let mut fri_batch_size = 0;
 
     // Pre-compute witness symbol index for O(1) lookups in fix_commit_pol
     let witness_index = build_witness_index(symbols, params.air_id, params.airgroup_id);
 
-    // In non-debug mode: generate verifier code, then, for the DEEP opening, its challenges
-    let q_verifier = if !debug {
-        let qv = generate_constraint_polynomial_verifier_code(
-            params,
-            symbols,
-            expressions,
-            &mut ev_map_items,
-            &witness_index,
-        )?;
-
-        if params.opening == Opening::Deep {
-            let ev_map: Vec<EvMapItem> = ev_map_items
-                .iter()
-                .map(|e| EvMapItem {
-                    entry_type: e.entry_type.clone(),
-                    id: e.id,
-                    prime: e.prime,
-                    commit_id: e.commit_id,
-                })
-                .collect();
-            deep_poly::check_unique_evaluations(symbols, &ev_map)?;
-            challenges_map = deep_poly::register_deep_challenges(params.n_stages, symbols, &params.field);
-            fri_batch_size = deep_poly::fri_batch_size(&ev_map, &params.opening_points);
-        }
-
-        qv
-    } else {
-        ExpressionCodeEntry { tmp_used: 0, code: Vec::new(), exp_id: 0, stage: 0, dest: None, line: String::new() }
-    };
+    let mut q_verifier =
+        generate_constraint_polynomial_verifier_code(params, symbols, expressions, &mut ev_map_items, &witness_index)?;
 
     let hints_info = add_hints_info(params, expressions, hints, false, print_ctx)?;
 
@@ -366,7 +330,6 @@ pub fn generate_pil_code(
 
     // The verifier entry only: it feeds the Rust/C++ verifiers and the circom recursion circuit,
     // none of which is the prover's cExp.
-    let mut q_verifier = q_verifier;
     let result = cse::cse_code(&q_verifier.code);
     tracing::debug!("CSE qVerifier: {} -> {} ops", q_verifier.code.len(), result.code.len());
     q_verifier.code = result.code;
@@ -375,8 +338,6 @@ pub fn generate_pil_code(
         expressions_info: ExpressionsInfo { hints_info, expressions_code, constraints: constraints_code },
         verifier_info: VerifierInfo { q_verifier, constraint_dag: None },
         ev_map: ev_map_items,
-        challenges_map,
-        fri_batch_size,
     })
 }
 

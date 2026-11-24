@@ -25,18 +25,13 @@ pub enum PilInfoError {
     )]
     CustomColumnStage { name: String, stage: usize },
 
-    /// An evaluation of a column that has no symbol: the DEEP polynomial needs its stage and
-    /// dimension.
-    #[error("invalid pilout: the constraints evaluate {entry_type} {id}, which has no symbol")]
-    NoSymbolForEvaluation { entry_type: String, id: usize },
-
     // --- What the constraints need that the passes cannot give --------------------------------
     #[error("no choice of intermediate polynomials brings the constraints down to a degree in 2..={max}")]
     NoFeasibleDegree { max: usize },
 
-    /// The DEEP polynomial combines the evaluations at each opening point, and there are none.
-    #[error("the DEEP polynomial has no evaluation to combine: the constraints evaluate no column")]
-    DeepWithoutEvaluations,
+    /// The passes are pilfflonk's: the STARK's DEEP setup is `stark_setup` over the core.
+    #[error("the passes open with SHPLONK only; the STARK's DEEP setup runs through the core")]
+    DeepPasses,
 
     // --- An invariant of the passes broken: a bug of pil-info, not of the pilout -------------
     #[error("{pass}: unknown expression op `{op}`")]
@@ -47,11 +42,6 @@ pub enum PilInfoError {
 
     #[error("an evaluation of a `{0}`, which is neither a cm, a const nor a custom column")]
     UnknownEvaluation(String),
-
-    /// The evaluations' map holds each (column, opening) once, and the DEEP polynomial combines each
-    /// once.
-    #[error("the DEEP polynomial evaluates {entry_type} {id} twice at opening {opening}")]
-    DuplicateEvaluation { entry_type: String, id: usize, opening: i64 },
 
     #[error("a hint field of op `{0}`, which no hint holds")]
     UnknownHintOp(String),

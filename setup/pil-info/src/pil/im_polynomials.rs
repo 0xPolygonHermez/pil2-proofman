@@ -117,8 +117,7 @@ pub struct ImPolsResult {
 }
 
 /// Greedy search over constraint degrees 2..=`policy.max_constraint_degree()` to find the split
-/// with the lowest `policy` cost: the fewest added base-field columns for the STARK, the lowest
-/// `nImPols + qDeg` for pilfflonk.
+/// with the lowest `policy` cost (pilfflonk's `nImPols + qDeg`; the STARK's search is `search::im`).
 ///
 /// Returns the optimal `(im_exps, q_deg)`, or an error if no degree is feasible.
 pub fn calculate_intermediate_polynomials(
@@ -130,15 +129,7 @@ pub fn calculate_intermediate_polynomials(
 ) -> Result<ImPolsResult> {
     let max_q_deg = policy.max_constraint_degree();
     info!("-------------------- POSSIBLE DEGREES ----------------------");
-    match policy {
-        DegreePolicy::FromBlowup { .. } => {
-            let blowup = if max_q_deg > 1 { (max_q_deg as f64 - 1.0).log2() } else { 0.0 };
-            info!("Considering degrees between 2 and {} (blowup factor: {:.0})", max_q_deg, blowup);
-        }
-        DegreePolicy::Search { .. } => {
-            info!("Considering degrees between 2 and {} (minimising nImPols + qDeg)", max_q_deg);
-        }
-    }
+    info!("Considering degrees between 2 and {} (minimising nImPols + qDeg)", max_q_deg);
     info!("------------------------------------------------------------");
 
     // Shared memo across degree iterations — the cache key includes `max_deg`,
@@ -162,8 +153,6 @@ pub fn calculate_intermediate_polynomials(
             info!("Infeasible: no valid intermediate split exists at this degree");
             continue;
         };
-        // The STARK's Q has at least one piece: its prover and verifiers do not handle an empty stage Q
-        let q_deg_p = if matches!(policy, DegreePolicy::FromBlowup { .. }) { q_deg_p.max(1) } else { q_deg_p };
         let new_added = calculate_cost(policy, d, expressions, &im_exps_p, q_deg_p, q_dim);
         let no_intermediates = im_exps_p.is_empty();
 
@@ -821,9 +810,7 @@ mod tests {
             make_cm(1, 1),     // 1
             make_mul(0, 1, 2), // 2: deg 2
         ];
-        let result =
-            calculate_intermediate_polynomials(&exprs, 2, &DegreePolicy::FromBlowup { blowup_bits: 1 }, 1, &[])
-                .unwrap();
+        let result = calculate_intermediate_polynomials(&exprs, 2, &DegreePolicy::Search { max: 3 }, 1, &[]).unwrap();
         assert!(
             result.im_exps.is_empty(),
             "No intermediate polynomials should be needed for degree-2 expr with maxQDeg=3"
@@ -987,33 +974,6 @@ mod tests {
         assert_eq!(cost(&chosen), min, "per degree: {per_degree:?}");
         assert_eq!(chosen.im_exps, vec![0, 1, 2]);
         assert_eq!(chosen.q_deg, 2);
-    }
-
-    /// The STARK's policy scores base-field columns: with a cubic quotient (`qDim = 3`) and
-    /// base-field im pols, degree 3 (`2·3 + 2 = 8` columns) beats degree 4 (`3·3 = 9`), where
-    /// pilfflonk's `nImPols + qDeg` prefers degree 4 (`3` against `4`). Same bound (9), same search.
-    #[test]
-    fn test_from_blowup_scores_columns_not_polynomials() {
-        let field = FieldCfg::goldilocks();
-        let exprs = sum_of_quartics(&field);
-
-        let stark = calculate_intermediate_polynomials(&exprs, 4, &DegreePolicy::FromBlowup { blowup_bits: 3 }, 3, &[])
-            .unwrap();
-        let fflonk = calculate_intermediate_polynomials(&exprs, 4, &DegreePolicy::Search { max: 9 }, 3, &[]).unwrap();
-
-        assert_eq!((stark.im_exps.len(), stark.q_deg), (2, 2));
-        assert_eq!((fflonk.im_exps.len(), fflonk.q_deg), (0, 3));
-    }
-
-    /// A degree-1 constraint polynomial (e.g. a cyclic gsum whose terms all have constant
-    /// denominators) has Q degree 0: the STARK's is floored at 1, so its stage Q is never empty;
-    /// pilfflonk's (`Search`) keeps 0, which it proves.
-    #[test]
-    fn test_stark_q_deg_is_at_least_one() {
-        let exprs = vec![make_cm(0, 1)];
-        let q_deg = |policy| calculate_intermediate_polynomials(&exprs, 0, &policy, 3, &[]).unwrap().q_deg;
-        assert_eq!(q_deg(DegreePolicy::FromBlowup { blowup_bits: 1 }), 1);
-        assert_eq!(q_deg(DegreePolicy::Search { max: 3 }), 0);
     }
 
     // -----------------------------------------------------------------------

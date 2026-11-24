@@ -131,7 +131,7 @@ fn pol_operand(ev: &EvMap, info: &StarkInfo) -> Result<Operand> {
     })
 }
 
-/// The DEEP ops of a starkinfo (JSON), in the op order and sharing of `deep_poly.rs`'s expression.
+/// The DEEP ops of a starkinfo (JSON), in the op order and sharing of `proofman_common::deep`.
 pub(crate) fn plan(si: &Value) -> Result<DeepPlan> {
     let info: StarkInfo = serde_json::from_value(si.clone()).context("starkinfo")?;
     // An empty evMap would leave f undefined (the circuit must never check lowValues against 0).

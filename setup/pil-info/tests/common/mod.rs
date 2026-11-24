@@ -5,10 +5,9 @@ use num_bigint::BigUint;
 use pil_info::core::from_pilout::from_pilout;
 use pil_info::core::im::{check_im, im_order, Checked, ImChoice};
 use pil_info::core::ir::{degree, ConstraintSystem};
-use pil_info::core::layout::{layout, Layout, LayoutParams};
+use pil_info::core::layout::{layout, quotient_dim, Layout, LayoutParams};
 use pil_info::core::openings::{openings, Openings};
 use pil_info::emit::prover::{to_arena, ProverExprs};
-use pil_info::pil::prepare::PrepareOptions;
 use pil_info::search::im::search_im;
 use pil_info::{Opening, PilInfoCfg};
 use pil2_pilout::pilout::{self as pb, constraint, expression, global_expression, global_operand, operand, SymbolType};
@@ -310,43 +309,36 @@ pub fn pilout2(fixed_names: &[&str], exprs: Vec<pb::Expression>, constraints: Ve
     p
 }
 
-/// The old pipeline and the new core on one air, over the same promoted set.
-pub struct OldRun {
+/// The core on one air: the system, the searched im choice and its check.
+pub struct Run {
     pub cs: ConstraintSystem,
     pub im: ImChoice,
     pub chk: Checked,
-    pub old: pil_info::PilInfoResult,
+    pub air_name: String,
     pub blowup_bits: usize,
     pub im_pols_stages: bool,
 }
 
-/// None when the old pipeline or the search finds the air infeasible at this blowup.
-pub fn old_run(p: &pb::PilOut, airgroup: usize, air: usize, blowup_bits: usize) -> Option<OldRun> {
-    old_run_with(p, airgroup, air, blowup_bits, false)
+/// None when the search finds the air infeasible at this blowup.
+pub fn run(p: &pb::PilOut, airgroup: usize, air: usize, blowup_bits: usize) -> Option<Run> {
+    run_with(p, airgroup, air, blowup_bits, false)
 }
 
-/// `old_run`, the old pipeline given `--impols`.
-pub fn old_run_with(
-    p: &pb::PilOut,
-    airgroup: usize,
-    air: usize,
-    blowup_bits: usize,
-    im_pols_stages: bool,
-) -> Option<OldRun> {
+/// `run`, given `--impols`.
+pub fn run_with(p: &pb::PilOut, airgroup: usize, air: usize, blowup_bits: usize, im_pols_stages: bool) -> Option<Run> {
     let cfg = PilInfoCfg::goldilocks(blowup_bits);
     let cs = from_pilout(p, airgroup, air, &gl(), Opening::Deep).ok()?;
-    let prep = pil_info::pil::prepare::prepare_pil(p, airgroup, air, &gl()).ok()?;
-    let set = search_im(&cs, &cfg.degree_policy, prep.constraint_poly.q_dim).ok()?;
+    let none = ImChoice { exprs: Vec::new() };
+    let set = search_im(&cs, &cfg.degree_policy, quotient_dim(&cs, &none) as usize).ok()?;
     let im = im_order(&set).ok()?;
     let chk = check_im(&cs, &im, cfg.degree_policy.max_constraint_degree() as u32, true).ok()?;
-    let opts = PrepareOptions { im_pols_stages, ..Default::default() };
-    let old = pil_info::run(p, airgroup, air, &cfg, &opts).ok()?;
-    Some(OldRun { cs, im, chk, old, blowup_bits, im_pols_stages })
+    let air_name = p.air_groups[airgroup].airs[air].name.clone().unwrap_or_default();
+    Some(Run { cs, im, chk, air_name, blowup_bits, im_pols_stages })
 }
 
-/// `old_run` at the first blowup of 1..=3 bits that is feasible.
-pub fn old_run_any(p: &pb::PilOut, airgroup: usize, air: usize) -> Option<OldRun> {
-    (1..=3).find_map(|b| old_run(p, airgroup, air, b))
+/// `run` at the first blowup of 1..=3 bits that is feasible.
+pub fn run_any(p: &pb::PilOut, airgroup: usize, air: usize) -> Option<Run> {
+    (1..=3).find_map(|b| run(p, airgroup, air, b))
 }
 
 /// The core chain on `run`, as Task 7 runs it: layout, the arena once, openings with the hints' points.
@@ -356,12 +348,12 @@ pub struct CoreOut {
     pub ops: Openings,
 }
 
-pub fn core_out(run: &OldRun) -> CoreOut {
+pub fn core_out(run: &Run) -> CoreOut {
     let params = LayoutParams {
         im_pols_stages: run.im_pols_stages,
         deep_challenges: true,
         q_deg: run.chk.q_deg,
-        air_name: run.old.setup.name.clone(),
+        air_name: run.air_name.clone(),
     };
     let lay = layout(&run.cs, &run.im, &params).unwrap();
     let exprs = to_arena(&run.cs, &run.im, &lay).unwrap();

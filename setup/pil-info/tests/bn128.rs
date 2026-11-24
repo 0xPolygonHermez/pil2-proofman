@@ -10,7 +10,6 @@
 //! PIL2C_EXEC=<pil2-compiler>/src/pil.js cargo test -p pil-info --test bn128 -- --ignored
 //! ```
 
-use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -148,7 +147,6 @@ fn assert_bn128_shape(result: &PilInfoResult) {
     }
 
     // No DEEP opening: no FRI challenges, no quotient evaluations.
-    assert!(result.pil_code.challenges_map.is_empty());
     let challenges: Vec<&str> = setup.challenges_map.iter().map(|c| c.name.as_str()).collect();
     assert_eq!(challenges, ["std_vc", "std_xi"]);
     for e in &setup.expressions {
@@ -187,53 +185,6 @@ fn bn128_keeps_wide_constants_and_negates_with_r_minus_one() {
     // Both negations became multiplications by r − 1.
     let in_arena = number_values_in_arena(&result);
     assert_eq!(in_arena.iter().filter(|n| *n == R_MINUS_ONE).count(), 2, "{in_arena:?}");
-}
-
-/// The same pilout under the STARK's configuration still gets the DEEP opening.
-#[test]
-fn goldilocks_keeps_the_deep_opening() {
-    let pilout = wide_constants_pilout();
-    let result = run(&pilout, &PilInfoCfg::goldilocks(1));
-
-    let names: Vec<&str> = result.pil_code.challenges_map.iter().map(|c| c.name.as_str()).collect();
-    assert!(names.contains(&"std_vf1") && names.contains(&"std_vf2"), "{names:?}");
-
-    let q_stage = result.setup.n_stages + 1;
-    let q_evals = result
-        .pil_code
-        .ev_map
-        .iter()
-        .filter(|ev| ev.entry_type == "cm" && result.setup.cm_pols_map[ev.id].stage == Some(q_stage))
-        .count();
-    assert_eq!(q_evals as i64, result.q_deg, "one evaluation per quotient piece");
-
-    assert!(numbers(&result).iter().any(|n| n == GOLDILOCKS_NEG_ONE));
-    assert!(result.setup.cm_pols_map.iter().any(|p| p.dim == 3), "the quotient lives in the extension");
-}
-
-/// The DEEP polynomial is computed natively from starkinfo: setup emits no DEEP code, only its
-/// challenges and the power-batching size.
-#[test]
-fn no_deep_code_emitted() {
-    let result = run(&wide_constants_pilout(), &PilInfoCfg::goldilocks(1));
-    let setup = &result.setup;
-
-    let verifier_info = serde_json::to_value(&result.pil_code.verifier_info).expect("serializable");
-    let keys: Vec<&String> = verifier_info.as_object().expect("an object").keys().collect();
-    assert_eq!(keys, ["qVerifier"]);
-    for e in &setup.expressions {
-        assert_ne!(e.op, "eval", "a DEEP polynomial node");
-    }
-
-    let deep: Vec<(&str, usize, usize)> =
-        result.pil_code.challenges_map.iter().map(|c| (c.name.as_str(), c.stage, c.dim)).collect();
-    let stage = setup.n_stages + 3;
-    assert_eq!(deep, [("std_vf1", stage, 3), ("std_vf2", stage, 3)]);
-
-    let ev_map = &result.pil_code.ev_map;
-    let n_openings = setup.opening_points.iter().filter(|&&o| ev_map.iter().any(|ev| ev.prime == o)).count();
-    let n_pols = ev_map.iter().map(|ev| (&ev.entry_type, ev.commit_id, ev.id)).collect::<HashSet<_>>().len();
-    assert_eq!(result.pil_code.fri_batch_size, ev_map.len().max(n_openings + n_pols - 1));
 }
 
 #[test]

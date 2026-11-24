@@ -88,8 +88,7 @@ pub fn run_stats(opts: &StatsOptions) -> Result<()> {
 
             let stark_struct = generate_basic_stark_struct(&air_settings, n_bits, &opts.hash);
 
-            let prepare_opts =
-                PrepareOptions { debug: false, im_pols_stages: opts.im_pols_stages, inplace_stage_commit: true };
+            let prepare_opts = PrepareOptions { im_pols_stages: opts.im_pols_stages, inplace_stage_commit: true };
 
             tracing::info!("Computing stats for air '{}'", air_name);
             let pil_result =
@@ -98,12 +97,7 @@ pub fn run_stats(opts: &StatsOptions) -> Result<()> {
             // Both the native and the in-circuit verifier run the same algorithm, so one count
             // serves both; only the price of a single hash differs.
             let family = opts.hash.as_str();
-            let geom = crate::verifier_hashes::geometry_for_family(
-                &stark_struct,
-                &pil_result.setup,
-                pil_result.pil_code.ev_map.len(),
-                pil_result.pil_code.fri_batch_size,
-            );
+            let geom = crate::verifier_hashes::geometry_from_starkinfo(&serde_json::to_value(&pil_result.starkinfo)?)?;
             let counts = crate::verifier_hashes::verifier_hashes(&geom, family);
             let verifier_hashes = counts.total().to_string();
 
