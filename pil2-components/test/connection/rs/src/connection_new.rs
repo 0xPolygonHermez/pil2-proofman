@@ -33,9 +33,7 @@ impl<F: PrimeField64> WitnessComponent<F> for ConnectionNew {
             let mut frame = [0; 6];
             let mut conn_len = [0; 6];
             for i in 0..num_rows {
-                for j in 0..6 {
-                    trace[i].d[j] = F::ZERO;
-                }
+                trace[i].d[..6].fill(F::ZERO);
 
                 // Start connection
                 trace[i].a[0] = F::from_u64(rng.random_range(0..=(1 << 63) - 1));

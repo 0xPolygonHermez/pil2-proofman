@@ -310,8 +310,7 @@ impl Fri {
         }
 
         // Folding step.
-        for i in 0..self.num_rounds {
-            let grinding_bits = sec_params.grinding_bits_folding[i];
+        for (i, &grinding_bits) in sec_params.grinding_bits_folding[..self.num_rounds].iter().enumerate() {
             let error = self.fold_error(regime, i, grinding_bits);
             bits.push((format!("fold(i={})", i), bits_of_security_from_error(error)));
         }
