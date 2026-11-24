@@ -1,7 +1,7 @@
 //! Non-recursive setup command: the main orchestrator for the setup pipeline.
 
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
@@ -13,6 +13,7 @@ use crate::output::global_info::{build_global_info_json, write_global_constraint
 use pil_info::PrepareOptions;
 use crate::commands::common::push_im_pols_stats;
 use crate::commands::recursive_setup::run_recursive_setup;
+use crate::proving_key::pipeline::{self, kinds, PipelineCtx};
 use crate::types::stark_struct::{generate_basic_stark_struct, StarkStructsConfig};
 
 /// Setup options parsed from CLI args.
@@ -148,6 +149,7 @@ pub fn run_setup(opts: &SetupOptions) -> Result<()> {
     let build_dir = opts.build_dir.clone();
     let fixed_dir = opts.fixed_dir.clone();
     let pilout_name_shared = pilout_name.clone();
+    let family: proofman_common::hash_family::HashFamily = opts.hash.parse().map_err(anyhow::Error::msg)?;
 
     // Always write globalConstraints first — run_recursive_setup reads them from disk.
     // globalInfo.json is written now only for the non-recursive path; for recursive it is
@@ -197,131 +199,20 @@ pub fn run_setup(opts: &SetupOptions) -> Result<()> {
                     .join("airs")
                     .join(&item.air_name)
                     .join("air");
-                fs::create_dir_all(&files_dir)?;
-
-                let const_path = files_dir.join(format!("{}.const", item.air_name));
-
-                // A path that cannot produce `.const` must drop any file an earlier run
-                // left, or the `const_path.exists()` check below builds the const tree
-                // and verkey from stale fixed columns and still exits 0. The verkey pair
-                // goes too: it is only rewritten when `.const` exists.
-                let drop_stale_const = |why: &str| -> Result<()> {
-                    let mut dropped = false;
-                    for stale in [
-                        const_path.clone(),
-                        files_dir.join(format!("{}.verkey.json", item.air_name)),
-                        files_dir.join(format!("{}.verkey.bin", item.air_name)),
-                    ] {
-                        if stale.exists() {
-                            fs::remove_file(&stale)
-                                .with_context(|| format!("removing stale {} ({})", stale.display(), why))?;
-                            dropped = true;
-                        }
-                    }
-                    if dropped {
-                        tracing::warn!(
-                            "Air '{}': dropped stale .const/.verkey in {} — {}",
-                            item.air_name,
-                            files_dir.display(),
-                            why
-                        );
-                    }
-                    Ok(())
-                };
-
-                // `.const` comes from `<fixed_dir>/<air>.fixed` when present, else from the
-                // pilout's inline fixed_cols. An air whose fixed columns neither source can
-                // supply is an error: without `.const` there is no verkey, and the key would
-                // only fail at prove time.
-                let air = &pilout.air_groups[item.ag_idx].airs[item.air_idx];
-                let fixed_file = fixed_dir.as_ref().map(|fd| Path::new(fd).join(format!("{}.fixed", item.air_name)));
-                if let Some(src) = fixed_file.as_ref().filter(|src| src.exists()) {
-                    fs::copy(src, &const_path)?;
-                } else if air.fixed_cols.is_empty() {
-                    tracing::debug!("Air '{}': no fixed columns — skipping .const generation", item.air_name);
-                    drop_stale_const("the air has no fixed columns")?;
-                } else if air.fixed_cols.iter().all(|fc| !fc.values.is_empty()) {
-                    crate::io::fixed_cols::write_const_file(
-                        const_path.to_str().unwrap_or(""),
-                        air,
-                        &[], // no external plonk polynomial values needed
-                    )?;
-                    tracing::info!(
-                        "Generated .const from pilout inline fixed_cols for air '{}' ({} columns, {} rows)",
-                        item.air_name,
-                        air.fixed_cols.len(),
-                        air.num_rows.unwrap_or(0)
-                    );
-                } else {
-                    drop_stale_const("its fixed columns have no source")?;
-                    match fixed_file {
-                        Some(src) => anyhow::bail!(
-                            "Air '{}': fixed file not found: {} (its fixed columns are not inline in the pilout)",
-                            item.air_name,
-                            src.display()
-                        ),
-                        None => anyhow::bail!(
-                            "Air '{}': some fixed columns have no inline values in the pilout; \
-                             provide --fixed-dir (-u) with its .fixed file",
-                            item.air_name
-                        ),
-                    }
-                }
-
-                let starkinfo_path = files_dir.join(format!("{}.starkinfo.json", item.air_name));
-
-                let prepare_opts = PrepareOptions { im_pols_stages: false, inplace_stage_commit: true };
-                let key = crate::pil::stark_setup::KeyIdentity {
+                let mut ctx = PipelineCtx::new(PathBuf::from(&build_dir), files_dir, &item.air_name, family);
+                ctx.label = format!("Air '{}'", item.air_name);
+                ctx.pilout = Some(pilout.clone());
+                ctx.air = (item.ag_idx, item.air_idx);
+                ctx.fixed_dir = fixed_dir.as_ref().map(PathBuf::from);
+                ctx.stark_struct = Some(stark_struct);
+                ctx.prepare = PrepareOptions { im_pols_stages: false, inplace_stage_commit: true };
+                ctx.key = crate::pil::stark_setup::KeyIdentity {
                     name: Some(item.air_name.clone()),
                     circuit_type: Some(proofman_common::circuit_type_of(item.ag_idx as u64, item.air_idx as u64 + 1)),
                     ..Default::default()
                 };
-                let pil_result = crate::pil::stark_setup::stark_setup(
-                    &pilout,
-                    item.ag_idx,
-                    item.air_idx,
-                    &stark_struct,
-                    &prepare_opts,
-                    &key,
-                )?;
-                let pil_code = &pil_result.pil_code;
-                let starkinfo_output = pil_result.starkinfo;
-
-                // Say which low-degree test this air runs, with the solved schedule.
-                tracing::info!(
-                    "Air '{}' low-degree test: {}",
-                    item.air_name,
-                    starkinfo_output.stark_struct.low_degree_test.describe()
-                );
-
-                let starkinfo_json = crate::output::json::to_json_string(&starkinfo_output)?;
-                fs::write(&starkinfo_path, &starkinfo_json)?;
-
-                fs::write(
-                    files_dir.join(format!("{}.expressionsinfo.json", item.air_name)),
-                    &crate::output::json::to_json_string(&pil_code.expressions_info)?,
-                )?;
-                fs::write(
-                    files_dir.join(format!("{}.verifierinfo.json", item.air_name)),
-                    &crate::output::json::to_json_string(&pil_code.verifier_info)?,
-                )?;
-
-                let verkey_json_path = files_dir.join(format!("{}.verkey.json", item.air_name));
-                if const_path.exists() {
-                    let const_root = crate::proving_key::bctree::compute_const_tree(
-                        const_path.to_str().unwrap_or(""),
-                        starkinfo_path.to_str().unwrap_or(""),
-                        verkey_json_path.to_str().unwrap_or(""),
-                    )?;
-                    let verkey_bin: Vec<u8> = const_root.iter().flat_map(|v| v.to_le_bytes()).collect();
-                    fs::write(files_dir.join(format!("{}.verkey.bin", item.air_name)), &verkey_bin)?;
-                }
-
-                write_bin_files_from_pil_code(
-                    &starkinfo_json,
-                    &pil_code.expressions_info,
-                    &files_dir.join(format!("{}.bin", item.air_name)),
-                )?;
+                pipeline::run(&kinds::steps_for_basic(&kinds::BasicCfg { user_fixed: fixed_dir.is_some() }), &mut ctx)?;
+                let (summary, im_pols_info) = ctx.stats.take().context("basic setup produced no stats")?;
 
                 tracing::info!("Setup for air '{}' complete", item.air_name);
                 Ok((
@@ -329,8 +220,8 @@ pub fn run_setup(opts: &SetupOptions) -> Result<()> {
                     item.air_idx,
                     item.airgroup_name.clone(),
                     item.air_name.clone(),
-                    pil_result.summary,
-                    pil_result.im_pols_info,
+                    summary,
+                    im_pols_info,
                 ))
             })
             .collect()
@@ -414,21 +305,6 @@ pub fn run_setup(opts: &SetupOptions) -> Result<()> {
 
     tracing::info!("Setup complete");
     Ok(())
-}
-
-/// Write the `.bin` from the in-memory generate_pil_code structs (no disk round-trip).
-fn write_bin_files_from_pil_code(
-    starkinfo_json: &str,
-    expressions_info: &crate::pil::gen_code::ExpressionsInfo,
-    bin_output: &Path,
-) -> Result<()> {
-    use crate::types::stark_info::StarkInfo;
-
-    let si_json: serde_json::Value = serde_json::from_str(starkinfo_json)?;
-    let stark_info = StarkInfo::from_json(&si_json)?;
-
-    let ei = crate::types::stark_info::ExpressionsInfo::try_from(expressions_info)?;
-    crate::io::bin_file::write_expressions_bin_file(bin_output.to_str().unwrap_or(""), &stark_info, &ei)
 }
 
 /// Compute floor(log2(n)) for a nonzero usize.
