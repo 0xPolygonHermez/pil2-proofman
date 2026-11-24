@@ -1089,16 +1089,8 @@ where
 
     let z_n = x_n - Goldilocks::ONE;
     let z_n_inv = z_n.inverse();
-    let mut zi = Vec::with_capacity(verifier_info.boundaries.len() + 1);
-    zi.push(z_n_inv);
-    for boundary in &verifier_info.boundaries {
-        if boundary.name == "everyRow" {
-            continue;
-        }
-
-        // Handling for boundaries other than "everyRow" is intentionally deferred.
-        // If support for additional boundary types is required, implement logic here.
-    }
+    // the only STARK zerofier is everyRow
+    let zi = [z_n_inv];
 
     v_debug!("Verifying proof");
 

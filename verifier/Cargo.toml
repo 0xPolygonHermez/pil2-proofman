@@ -22,3 +22,5 @@ std = ["dep:tracing", "dep:bincode", "serde/std"]
 # A no-op since rayon was dropped (its ~0.2 ms pool hand-off outweighed the query loop); kept so
 # dependants that enable it still build.
 parallel = ["std"]
+# Compiles tests/generated_verifier.rs; needs PIL2_GENERATED_VERIFIER, PIL2_PROOF, PIL2_VERKEY.
+generated-verifier-test = ["std"]

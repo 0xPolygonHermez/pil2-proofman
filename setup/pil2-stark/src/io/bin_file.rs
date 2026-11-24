@@ -60,7 +60,7 @@ fn prepare_expressions_bin(
         };
 
         let result =
-            get_parser_args(stark_info, &constraint_code.code, &mut numbers_constraints, false, false, None, "")?;
+            get_parser_args(stark_info, &constraint_code.code, &mut numbers_constraints, false, false, None)?;
 
         let mut info = result.exps_info;
         info.stage = constraint_code.stage;
@@ -101,7 +101,7 @@ fn prepare_expressions_bin(
             }
         }
 
-        let result = get_parser_args(stark_info, &exp_code.code, &mut numbers_exps, false, false, None, "")?;
+        let result = get_parser_args(stark_info, &exp_code.code, &mut numbers_exps, false, false, None)?;
 
         let mut info = result.exps_info;
         info.exp_id = exp_code.exp_id;
@@ -143,7 +143,7 @@ fn prepare_verifier_expressions_bin(
 ) -> Result<PreparedVerifierBin> {
     let mut numbers_exps: Vec<String> = Vec::new();
     let q_result =
-        get_parser_args(stark_info, &verifier_info.q_verifier.code, &mut numbers_exps, false, true, None, "")?;
+        get_parser_args(stark_info, &verifier_info.q_verifier.code, &mut numbers_exps, false, true, None)?;
     let mut q_code = q_result.exps_info;
     q_code.exp_id = stark_info.c_exp_id;
     q_code.stage = stark_info.n_stages + 1;

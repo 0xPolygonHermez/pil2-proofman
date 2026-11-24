@@ -30,7 +30,7 @@ pub fn write_global_constraints_bin_file(
     // Process each global constraint
     for constraint in &global_constraints_info.constraints {
         let result =
-            get_parser_args(&empty_stark_info, &constraint.code, &mut numbers, true, false, Some(global_info), "")?;
+            get_parser_args(&empty_stark_info, &constraint.code, &mut numbers, true, false, Some(global_info))?;
         let mut info = result.exps_info;
         info.line = constraint.line.clone();
         constraints_info.push(info);

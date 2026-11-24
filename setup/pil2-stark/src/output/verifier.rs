@@ -1,8 +1,10 @@
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use std::fs;
 
+use pil_info::core::dag::lower_code::{lower_to_code, Fold};
 use proofman_common::{hash_family, LowDegreeLayout};
-use crate::io::parser_args::get_parser_args;
+use crate::io::parser_args::rust_verify_lines;
+use crate::output::dag_eval::lower_ctx;
 use crate::types::stark_info::{StarkInfo, VerifierInfo};
 use crate::types::stark_struct::LowDegreeTest;
 
@@ -68,11 +70,13 @@ fn prepare_verifier_rust(
     // The transcript CONSTRUCTION, not a hash to wrap in a sponge: BLAKE3's is not a sponge.
     let transcript_type = hash_family::rust_transcript_type(hash_id, transcript_arity as u64);
     let grinding_type = hash_family::rust_grinding_type(hash_id);
-    let mut numbers_q = Vec::new();
-    let q_result =
-        get_parser_args(stark_info, &verifier_info.q_verifier.code, &mut numbers_q, false, true, None, "q_verify")?;
-    let verify_q_rust = q_result.verify_rust;
-    let verify_q_helpers = q_result.verify_rust_helpers;
+    let dag = verifier_info
+        .constraint_dag
+        .as_ref()
+        .ok_or_else(|| anyhow!("verifierinfo has no constraintDag: regenerate the setup"))?;
+    let code = lower_to_code(dag, &lower_ctx(stark_info)?, Fold::Stark).map_err(|e| anyhow!("{e:?}"))?;
+    let q = rust_verify_lines(stark_info, &code, "q_verify", false)?;
+    let (verify_q_rust, verify_q_helpers) = (q.verify_rust, q.verify_rust_helpers);
 
     let mut lines: Vec<String> = Vec::new();
 
@@ -295,4 +299,119 @@ fn prepare_verifier_rust(
     lines.push("}\n".to_string());
 
     Ok(lines.join("\n"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::output::test_support::full_random;
+    use crate::types::stark_info::PolMap;
+    use pil_info::core::dag::format::{DagBoundary, DagNode, DagRoot};
+    use pil_info::core::dag::lower_code::{CodeOp, Instr, Operand, Src, VerifierCode};
+    use std::collections::HashSet;
+
+    fn tmp_assignments(lines: &[String]) -> Vec<String> {
+        let is_tmp = |l: &&String| {
+            let t = l.trim_start();
+            (t.starts_with("tmp_1[") || t.starts_with("tmp_3["))
+                && t.split(']').nth(1).is_some_and(|r| r.trim_start().starts_with('='))
+        };
+        lines.iter().filter(is_tmp).map(|l| l.trim_start().split(']').next().unwrap().to_string()).collect()
+    }
+
+    fn write(si: &StarkInfo, vi: &VerifierInfo) -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        write_verifier_rust_file(dir.path().join("v.rs").to_str().unwrap(), si, vi, true, "blake3")
+    }
+
+    #[test]
+    fn q_verify_one_assignment_per_op_node() {
+        for f in full_random(3) {
+            let dag = f.vi.constraint_dag.as_ref().expect("stark_setup attaches the DAG");
+            let code = lower_to_code(dag, &lower_ctx(&f.si).unwrap(), Fold::Stark).unwrap();
+            // op nodes + fold instructions (copy of leaf roots, mul/add per root, final mul by Zi)
+            assert_eq!(code.code.len(), code.tmp_used);
+            let r = rust_verify_lines(&f.si, &code, "q_verify", false).unwrap();
+            let all: Vec<String> = r.verify_rust_helpers.iter().chain(&r.verify_rust).cloned().collect();
+            let slots = tmp_assignments(&all);
+            assert_eq!(slots.len(), code.code.len());
+            assert_eq!(slots.iter().collect::<HashSet<_>>().len(), slots.len(), "a slot is assigned twice");
+        }
+    }
+
+    #[test]
+    fn q_verify_chunks_at_100() {
+        let ev = |i| Src { operand: Operand::Eval(i), dim: 3 };
+        let n = 250;
+        let code: Vec<Instr> = (0..n)
+            .map(|k| {
+                let prev = if k == 0 { ev(1) } else { Src { operand: Operand::Tmp(k - 1), dim: 3 } };
+                Instr { op: CodeOp::Add, dest: k, dim: 3, src: vec![ev(0), prev] }
+            })
+            .collect();
+        let vc = VerifierCode { tmp_used: n as usize, code };
+        let si = StarkInfo { n_stages: 2, ..Default::default() };
+        let r = rust_verify_lines(&si, &vc, "q_verify", false).unwrap();
+        assert_eq!(r.verify_rust_helpers.iter().filter(|l| l.contains("fn q_verify_chunk_")).count(), 3);
+        assert_eq!(tmp_assignments(&r.verify_rust_helpers).len(), n as usize);
+    }
+
+    // The shared key (examples/fibonacci-square/build-dag); None (skip, with a message) while it is absent.
+    fn shared_key() -> Option<(StarkInfo, VerifierInfo)> {
+        let d = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../examples/fibonacci-square/build-dag/provingKey/build/vadcop_final"
+        );
+        let load = |ext: &str| -> Option<serde_json::Value> {
+            serde_json::from_str(&std::fs::read_to_string(format!("{d}/vadcop_final.{ext}.json")).ok()?).ok()
+        };
+        let (Some(s), Some(v)) = (load("starkinfo"), load("verifierinfo")) else {
+            eprintln!("SKIP: no shared key at {d}");
+            return None;
+        };
+        Some((StarkInfo::from_json(&s).unwrap(), VerifierInfo::from_json(&v).unwrap()))
+    }
+
+    #[test]
+    fn q_verify_refuses_airvalue() {
+        let Some((si, vi)) = shared_key() else { return };
+        assert!(write(&si, &vi).is_ok(), "baseline: the unmodified key renders");
+        let (mut si, mut vi) = (si, vi);
+        if si.air_values_map.is_empty() {
+            si.air_values_map = vec![PolMap { stage: 2, dim: 3, ..Default::default() }];
+        }
+        let dag = vi.constraint_dag.as_mut().expect("the key carries constraintDag");
+        dag.nodes.push(DagNode::AirValue { id: 0 });
+        dag.roots.push(DagRoot {
+            node: dag.nodes.len() as u32 - 1,
+            boundary: DagBoundary::EveryRow,
+            label: "av".into(),
+        });
+        let e = write(&si, &vi).expect_err("an airvalue cannot be supplied to q_verify");
+        assert!(format!("{e:#}").to_lowercase().contains("airvalue"), "{e:#}");
+    }
+
+    #[test]
+    fn q_verify_refuses_non_every_row_root() {
+        let Some((si, mut vi)) = shared_key() else { return };
+        vi.constraint_dag.as_mut().expect("the key carries constraintDag").roots[0].boundary = DagBoundary::FirstRow;
+        let e = write(&si, &vi).expect_err("a STARK root is everyRow");
+        assert!(format!("{e:#}").contains("everyRow"), "{e:#}");
+    }
+
+    // Dimension corruption: an ext-typed instruction over a base-field operand, and the reverse.
+    #[test]
+    fn q_verify_refuses_dim_mismatch() {
+        let si = StarkInfo { n_stages: 2, n_publics: 1, ..Default::default() };
+        let src = |operand, dim| Src { operand, dim };
+        let run = |dim, a: Src, b: Src| {
+            let code = vec![Instr { op: CodeOp::Mul, dest: 0, dim, src: vec![a, b] }];
+            rust_verify_lines(&si, &VerifierCode { tmp_used: 1, code }, "q_verify", false)
+        };
+        // a public is base-field: typed ext it disagrees with its slot
+        assert!(run(3, src(Operand::Public(0), 3), src(Operand::Eval(0), 3)).is_err());
+        // an eval is ext: typed base, and a base-typed result over ext operands
+        assert!(run(3, src(Operand::Public(0), 1), src(Operand::Eval(0), 1)).is_err());
+        assert!(run(1, src(Operand::Eval(0), 3), src(Operand::Eval(1), 3)).is_err());
+    }
 }

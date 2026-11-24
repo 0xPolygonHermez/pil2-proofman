@@ -467,8 +467,6 @@ where
         verifier_info.n_challenges_total as usize
     ];
 
-    let mut zi = Vec::with_capacity(verifier_info.boundaries.len() + 1);
-
     let (mut transcript, prefix) = prefix_transcript::<TranscriptT>(
         &root_c,
         &publics,
@@ -541,15 +539,8 @@ where
 
     let z_n = x_n - Goldilocks::ONE;
     let z_n_inv = z_n.inverse();
-    zi.push(z_n_inv);
-    for boundary in &verifier_info.boundaries {
-        if boundary.name == "everyRow" {
-            continue;
-        }
-
-        // Handling for boundaries other than "everyRow" is intentionally deferred.
-        // If support for additional boundary types is required, implement logic here.
-    }
+    // the only STARK zerofier is everyRow
+    let zi = [z_n_inv];
 
     let mut final_pol_vals: Vec<Goldilocks> = Vec::with_capacity(final_pol.len() * 3);
     for pol in &final_pol {

@@ -1,8 +1,10 @@
 use std::collections::HashMap;
 
-use anyhow::{bail, Result};
+use anyhow::{anyhow, bail, ensure, Result};
 
+use crate::types::goldilocks_u64;
 use crate::types::stark_info::{CodeOperation, CodeType, OpType, StarkInfo};
+use pil_info::core::dag::lower_code::{CodeOp, Operand, VerifierCode};
 use pil_info::io::temporaries::get_id_maps;
 
 const FIELD_EXTENSION: u64 = crate::types::FIELD_EXTENSION as u64;
@@ -56,15 +58,173 @@ pub struct ExpsInfo {
     pub im_pol: u64,
 }
 
-/// Rust-source-code lines for the verifier, produced when `verify == true`.
 #[derive(Debug, Clone, Default)]
 pub struct ParserArgsResult {
     pub exps_info: ExpsInfo,
-    /// Top-level `#[inline(never)]` helper functions emitted before the main verify function
-    /// when the operation count exceeds `RUST_VERIFIER_CHUNK_SIZE`.
+}
+
+/// The Rust source of a generated `q_verify`: the chunk helpers and the function body.
+#[derive(Debug, Clone, Default)]
+pub struct VerifyRust {
     pub verify_rust_helpers: Vec<String>,
-    /// Lines for the body of the verify function (tmp declarations + chunk calls or inline ops).
     pub verify_rust: Vec<String>,
+}
+
+/// `q_verify`'s Rust source: one assignment per instruction, chunked; `packed = false` gives temporary `k` its own slot.
+pub fn rust_verify_lines(
+    stark_info: &StarkInfo,
+    code: &VerifierCode,
+    function_name: &str,
+    packed: bool,
+) -> Result<VerifyRust> {
+    // slot reuse would need owner approval (Task D speed rule)
+    ensure!(!packed, "packed verifier temporaries are not implemented");
+    let ext = FIELD_EXTENSION as usize;
+    let mut slots: HashMap<u32, (usize, usize)> = HashMap::new();
+    let mut count = [0usize; 2];
+    let mut lines: Vec<String> = Vec::with_capacity(code.code.len());
+    let mut uses: Vec<Uses> = Vec::with_capacity(code.code.len());
+    for ins in &code.code {
+        let n_src = if ins.op == CodeOp::Copy { 1 } else { 2 };
+        ensure!(ins.src.len() == n_src, "tmp {}: {:?} takes {n_src} operands, got {}", ins.dest, ins.op, ins.src.len());
+        let mut u = Uses::default();
+        let mut args: Vec<(String, usize)> = Vec::with_capacity(2);
+        for s in &ins.src {
+            let (e, d) = match s.operand {
+                Operand::Tmp(k) => {
+                    let &(d, slot) =
+                        slots.get(&k).ok_or_else(|| anyhow!("tmp {}: reads tmp {k} before it is written", ins.dest))?;
+                    (format!("tmp_{d}[{slot}]"), d)
+                }
+                Operand::Eval(k) => (format!("evals[{k}]"), ext),
+                Operand::Challenge { id, .. } => (format!("challenges[{id}]"), ext),
+                Operand::Number(ref v) => (format!("Goldilocks::new({})", goldilocks_u64(v)?), 1),
+                Operand::Public(id) => {
+                    ensure!((id as u64) < stark_info.n_publics, "tmp {}: public {id} is out of range", ins.dest);
+                    (format!("_publics[{id}]"), 1)
+                }
+                Operand::Zi { boundary } => {
+                    ensure!(boundary == 0, "tmp {}: Zi {boundary}: q_verify has only the everyRow zerofier", ins.dest);
+                    (String::from("zi[0]"), ext)
+                }
+                Operand::ProofValue { .. } | Operand::AirValue { .. } | Operand::AirgroupValue { .. } => {
+                    bail!("tmp {}: q_verify has no {:?} input", ins.dest, s.operand)
+                }
+            };
+            ensure!(s.dim == d, "tmp {}: operand {:?} typed dim {} but has dim {d}", ins.dest, s.operand, s.dim);
+            u.add(&s.operand);
+            args.push((e, d));
+        }
+        let dim = args.iter().map(|a| a.1).max().unwrap_or(1);
+        ensure!(ins.dim == dim, "tmp {}: typed dim {} over operands of dim {dim}", ins.dest, ins.dim);
+        let slot = count[usize::from(dim == ext)];
+        count[usize::from(dim == ext)] += 1;
+        ensure!(slots.insert(ins.dest, (dim, slot)).is_none(), "tmp {} is assigned twice", ins.dest);
+        let dest = format!("tmp_{dim}[{slot}]");
+        // the scalar goes on the right: CubicExtensionField implements ext op base
+        let line = match (ins.op, args.as_slice()) {
+            (CodeOp::Copy, [a]) => format!("    {dest} = {};", a.0),
+            (op, [a, b]) => {
+                let swap = a.1 == 1 && b.1 == ext;
+                let (x, y) = if swap { (&b.0, &a.0) } else { (&a.0, &b.0) };
+                match op {
+                    CodeOp::Add => format!("    {dest} = {x} + {y};"),
+                    CodeOp::Mul => format!("    {dest} = {x} * {y};"),
+                    CodeOp::Sub if swap => format!("    {dest} = {x}.sub_from_scalar({y});"),
+                    _ => format!("    {dest} = {x} - {y};"),
+                }
+            }
+            _ => unreachable!("operand count checked above"),
+        };
+        lines.push(line);
+        uses.push(u);
+    }
+    let last = code.code.last().ok_or_else(|| anyhow!("{function_name}: no verifier code"))?;
+    let &(dim, slot) = &slots[&last.dest];
+    ensure!(dim == ext, "{function_name}: the result is not an extension element");
+
+    let mut out = VerifyRust::default();
+    let [count1d, count3d] = count;
+    if count1d > 0 {
+        out.verify_rust.push(format!("    let mut tmp_1 = vec![Goldilocks::ZERO; {count1d}];"));
+    }
+    if count3d > 0 {
+        out.verify_rust.push(format!(
+            "    let mut tmp_3 = vec![CubicExtensionField {{ value: [Goldilocks::ZERO, Goldilocks::ZERO, Goldilocks::ZERO] }}; {count3d}];"
+        ));
+    }
+    if lines.len() <= RUST_VERIFIER_CHUNK_SIZE {
+        out.verify_rust.extend(lines);
+    } else {
+        for (i, (body, us)) in
+            lines.chunks(RUST_VERIFIER_CHUNK_SIZE).zip(uses.chunks(RUST_VERIFIER_CHUNK_SIZE)).enumerate()
+        {
+            let used = us.iter().fold(Uses::default(), |a, b| a.or(b));
+            // a chunk that does not touch a tmp vector still takes it, underscored
+            let touches = |name: &str| body.iter().any(|l| l.contains(name));
+            let (mut params, mut call) = (Vec::new(), Vec::new());
+            for (n, ty, present) in [
+                ("tmp_1", "&mut [Goldilocks]", count1d > 0),
+                ("tmp_3", "&mut [CubicExtensionField<Goldilocks>]", count3d > 0),
+            ] {
+                if present {
+                    let u = if touches(&format!("{n}[")) { "" } else { "_" };
+                    params.push(format!("{u}{n}: {ty}"));
+                    call.push(format!("&mut {n}"));
+                }
+            }
+            for (n, ty, present) in [
+                ("challenges", "&[CubicExtensionField<Goldilocks>]", used.challenges),
+                ("evals", "&[CubicExtensionField<Goldilocks>]", used.evals),
+                ("_publics", "&[Goldilocks]", used.publics),
+                ("zi", "&[CubicExtensionField<Goldilocks>]", used.zi),
+            ] {
+                if present {
+                    params.push(format!("{n}: {ty}"));
+                    call.push(n.to_string());
+                }
+            }
+            let name = format!("{function_name}_chunk_{i}");
+            out.verify_rust_helpers
+                .extend(["#[inline(never)]", "#[rustfmt::skip]", "#[allow(clippy::all)]"].map(String::from));
+            out.verify_rust_helpers.push(format!("fn {name}({}) {{", params.join(", ")));
+            out.verify_rust_helpers.extend(body.iter().cloned());
+            out.verify_rust_helpers.push("}\n".to_string());
+            out.verify_rust.push(format!("    {name}({});", call.join(", ")));
+        }
+    }
+    out.verify_rust.push(format!("    return tmp_3[{slot}];"));
+    Ok(out)
+}
+
+/// The `q_verify` inputs a block of lines reads.
+#[derive(Default, Clone, Copy)]
+struct Uses {
+    challenges: bool,
+    evals: bool,
+    publics: bool,
+    zi: bool,
+}
+
+impl Uses {
+    fn add(&mut self, o: &Operand) {
+        match o {
+            Operand::Challenge { .. } => self.challenges = true,
+            Operand::Eval(_) => self.evals = true,
+            Operand::Public(_) => self.publics = true,
+            Operand::Zi { .. } => self.zi = true,
+            _ => {}
+        }
+    }
+
+    fn or(self, o: &Uses) -> Uses {
+        Uses {
+            challenges: self.challenges | o.challenges,
+            evals: self.evals | o.evals,
+            publics: self.publics | o.publics,
+            zi: self.zi | o.zi,
+        }
+    }
 }
 
 /// Number of verifier operations per `#[inline(never)]` helper chunk (matches JS).
@@ -144,60 +304,10 @@ fn get_operation(r: &CodeOperation, verify: bool) -> (String, u64, Vec<CodeType>
     (final_op, r.dest.dim, srcs, src0_dim, src1_dim)
 }
 
-/// Generates a Rust expression string for the verifier code generator.
-fn get_operation_verify(r: &CodeType, id1d: &[i64], id3d: &[i64], stark_info: &StarkInfo) -> String {
-    match r.op_type {
-        OpType::Tmp => {
-            if r.dim == 1 {
-                format!("tmp_1[{}]", id1d[r.id as usize])
-            } else {
-                format!("tmp_3[{}]", id3d[r.id as usize])
-            }
-        }
-        OpType::Const => format!("vals[0][{}]", r.id),
-        OpType::Cm => {
-            let pol = &stark_info.cm_pols_map[r.id as usize];
-            let stage = pol.stage;
-            let stage_pos = pol.stage_pos;
-            if r.dim == 1 {
-                format!("vals[{}][{}]", stage, stage_pos)
-            } else {
-                format!(
-                    "CubicExtensionField {{ value: [vals[{}][{}], vals[{}][{}], vals[{}][{}]] }}",
-                    stage,
-                    stage_pos,
-                    stage,
-                    stage_pos + 1,
-                    stage,
-                    stage_pos + 2
-                )
-            }
-        }
-        OpType::Custom => {
-            format!("vals[{}][{}]", stark_info.n_stages + 1 + r.commit_id, r.id)
-        }
-        OpType::Public => format!("_publics[{}]", r.id),
-        OpType::Eval => format!("evals[{}]", r.id),
-        OpType::Challenge => format!("challenges[{}]", r.id),
-        OpType::Number => {
-            // r.value is already a canonical Goldilocks u64 field element;
-            // use it directly (no sign-extension needed).
-            format!("Goldilocks::new({})", r.value)
-        }
-        OpType::Airvalue => format!("air_values[{}]", r.id),
-        OpType::Proofvalue => format!("proof_values[{}]", r.id),
-        OpType::Airgroupvalue => format!("airgroup_values[{}]", r.id),
-        OpType::Zi => format!("zi[{}]", r.boundary_id),
-        OpType::X => "xi_challenge".to_string(),
-        _ => panic!("Invalid type for verify: {:?}", r.op_type),
-    }
-}
-
 /// Port of getParserArgs from JS. Converts code blocks into flat arrays
 /// (ops, args, numbers) suitable for the binary file format.
 ///
-/// When `verify` is true, also generates Rust source lines for the verifier.
-/// `function_name` is used as a prefix for the chunk helper names (e.g. `"q_verify"` → `"q_verify_chunk_0"`).
+/// `verify` types `Zi` as an extension operand (the verifier's Q code).
 pub fn get_parser_args(
     stark_info: &StarkInfo,
     code_info_code: &[CodeOperation],
@@ -205,7 +315,6 @@ pub fn get_parser_args(
     global: bool,
     verify: bool,
     global_info: Option<&GlobalInfo>,
-    function_name: &str,
 ) -> Result<ParserArgsResult> {
     let mut numbers_index: HashMap<String, u32> =
         numbers.iter().enumerate().map(|(i, s)| (s.clone(), i as u32)).collect();
@@ -277,308 +386,6 @@ pub fn get_parser_args(
         }
     }
 
-    // Generate verifier Rust code if requested
-    let mut verify_rust: Vec<String> = Vec::new();
-    let mut verify_rust_helpers: Vec<String> = Vec::new();
-    if verify {
-        // --- Step 1: build one operation line per code instruction, tracking
-        //     which parameter categories each line references (mirrors JS operationRefs).
-        #[derive(Default, Clone)]
-        struct OpRefs {
-            challenges: bool,
-            evals: bool,
-            vals: bool,
-            publics: bool,
-            zi: bool,
-            air_values: bool,
-            proof_values: bool,
-            airgroup_values: bool,
-        }
-
-        let mut operation_lines: Vec<String> = Vec::new();
-        let mut operation_refs: Vec<OpRefs> = Vec::new();
-
-        for r in code_info_code {
-            let mut refs = OpRefs::default();
-
-            // Track every operand's category.
-            let track = |t: &CodeType, refs: &mut OpRefs| match t.op_type {
-                OpType::Challenge => refs.challenges = true,
-                OpType::Eval => refs.evals = true,
-                OpType::Const | OpType::Cm | OpType::Custom => refs.vals = true,
-                OpType::Public => refs.publics = true,
-                OpType::Zi => refs.zi = true,
-                OpType::Airvalue => refs.air_values = true,
-                OpType::Proofvalue => refs.proof_values = true,
-                OpType::Airgroupvalue => refs.airgroup_values = true,
-                _ => {}
-            };
-            if r.op != "copy" {
-                for s in &r.src {
-                    track(s, &mut refs);
-                }
-            } else {
-                track(&r.src[0], &mut refs);
-            }
-
-            let line = if r.op == "copy" {
-                format!(
-                    "    {} = {};",
-                    get_operation_verify(&r.dest, &id1d, &id3d, stark_info),
-                    get_operation_verify(&r.src[0], &id1d, &id3d, stark_info)
-                )
-            } else if r.op == "mul" {
-                if r.src[0].dim == 1 && r.src[1].dim == FIELD_EXTENSION {
-                    format!(
-                        "    {} = {} * {};",
-                        get_operation_verify(&r.dest, &id1d, &id3d, stark_info),
-                        get_operation_verify(&r.src[1], &id1d, &id3d, stark_info),
-                        get_operation_verify(&r.src[0], &id1d, &id3d, stark_info)
-                    )
-                } else {
-                    format!(
-                        "    {} = {} * {};",
-                        get_operation_verify(&r.dest, &id1d, &id3d, stark_info),
-                        get_operation_verify(&r.src[0], &id1d, &id3d, stark_info),
-                        get_operation_verify(&r.src[1], &id1d, &id3d, stark_info)
-                    )
-                }
-            } else if r.op == "add" {
-                if r.src[0].dim == 1 && r.src[1].dim == FIELD_EXTENSION {
-                    format!(
-                        "    {} = {} + {};",
-                        get_operation_verify(&r.dest, &id1d, &id3d, stark_info),
-                        get_operation_verify(&r.src[1], &id1d, &id3d, stark_info),
-                        get_operation_verify(&r.src[0], &id1d, &id3d, stark_info)
-                    )
-                } else {
-                    format!(
-                        "    {} = {} + {};",
-                        get_operation_verify(&r.dest, &id1d, &id3d, stark_info),
-                        get_operation_verify(&r.src[0], &id1d, &id3d, stark_info),
-                        get_operation_verify(&r.src[1], &id1d, &id3d, stark_info)
-                    )
-                }
-            } else {
-                // sub
-                if r.src[0].dim == 1 && r.src[1].dim == FIELD_EXTENSION {
-                    format!(
-                        "    {} = {}.sub_from_scalar({});",
-                        get_operation_verify(&r.dest, &id1d, &id3d, stark_info),
-                        get_operation_verify(&r.src[1], &id1d, &id3d, stark_info),
-                        get_operation_verify(&r.src[0], &id1d, &id3d, stark_info)
-                    )
-                } else {
-                    format!(
-                        "    {} = {} - {};",
-                        get_operation_verify(&r.dest, &id1d, &id3d, stark_info),
-                        get_operation_verify(&r.src[0], &id1d, &id3d, stark_info),
-                        get_operation_verify(&r.src[1], &id1d, &id3d, stark_info)
-                    )
-                }
-            };
-            operation_lines.push(line);
-            operation_refs.push(refs);
-        }
-
-        // --- Step 2: decide whether to chunk.
-        let should_chunk = operation_lines.len() > RUST_VERIFIER_CHUNK_SIZE;
-
-        // --- Step 3: emit helper functions when chunking.
-        if should_chunk {
-            let num_chunks = operation_lines.len().div_ceil(RUST_VERIFIER_CHUNK_SIZE);
-
-            for chunk_idx in 0..num_chunks {
-                let chunk_start = chunk_idx * RUST_VERIFIER_CHUNK_SIZE;
-                let chunk_end = (chunk_start + RUST_VERIFIER_CHUNK_SIZE).min(operation_lines.len());
-
-                // Collect which parameter categories this chunk touches.
-                let mut used = OpRefs::default();
-                for r in &operation_refs[chunk_start..chunk_end] {
-                    used.challenges |= r.challenges;
-                    used.evals |= r.evals;
-                    used.vals |= r.vals;
-                    used.publics |= r.publics;
-                    used.zi |= r.zi;
-                    used.air_values |= r.air_values;
-                    used.proof_values |= r.proof_values;
-                    used.airgroup_values |= r.airgroup_values;
-                }
-
-                // Build parameter list. `count1d`/`count3d` size the tmp slices for the WHOLE
-                // expression, so a chunk gets them even when it touches neither -- blake3's
-                // recursive2 verifier has ~90 chunks that never index tmp_1. Test the chunk's own
-                // body and underscore what it does not reference, the same treatment `_publics`
-                // already gets below; the caller passes positionally, so only the name changes.
-                let body = &operation_lines[chunk_start..chunk_end];
-                let touches = |name: &str| body.iter().any(|l| l.contains(name));
-                let mut params: Vec<&'static str> = Vec::new();
-                if count1d > 0 {
-                    params.push(if touches("tmp_1[") {
-                        "tmp_1: &mut [Goldilocks]"
-                    } else {
-                        "_tmp_1: &mut [Goldilocks]"
-                    });
-                }
-                if count3d > 0 {
-                    params.push(if touches("tmp_3[") {
-                        "tmp_3: &mut [CubicExtensionField<Goldilocks>]"
-                    } else {
-                        "_tmp_3: &mut [CubicExtensionField<Goldilocks>]"
-                    });
-                }
-
-                if !global {
-                    if used.challenges {
-                        params.push("challenges: &[CubicExtensionField<Goldilocks>]");
-                    }
-                    if used.evals {
-                        params.push("evals: &[CubicExtensionField<Goldilocks>]");
-                    }
-                    if used.vals {
-                        params.push("vals: &[Vec<Goldilocks>]");
-                    }
-                    if used.publics {
-                        params.push("_publics: &[Goldilocks]");
-                    }
-                    if used.zi {
-                        params.push("zi: &[CubicExtensionField<Goldilocks>]");
-                    }
-                    if used.air_values {
-                        params.push("air_values: &[CubicExtensionField<Goldilocks>]");
-                    }
-                    if used.proof_values {
-                        params.push("proof_values: &[CubicExtensionField<Goldilocks>]");
-                    }
-                } else {
-                    if used.challenges {
-                        params.push("challenges: &[CubicExtensionField<Goldilocks>]");
-                    }
-                    if used.publics {
-                        params.push("_publics: &[Goldilocks]");
-                    }
-                    if used.proof_values {
-                        params.push("proof_values: &[CubicExtensionField<Goldilocks>]");
-                    }
-                    if used.airgroup_values {
-                        params.push("airgroup_values: &[CubicExtensionField<Goldilocks>]");
-                    }
-                }
-
-                let chunk_name = if function_name.is_empty() {
-                    format!("chunk_{}", chunk_idx)
-                } else {
-                    format!("{}_chunk_{}", function_name, chunk_idx)
-                };
-
-                verify_rust_helpers.push("#[inline(never)]".to_string());
-                verify_rust_helpers.push("#[rustfmt::skip]".to_string());
-                verify_rust_helpers.push("#[allow(clippy::all)]".to_string());
-                verify_rust_helpers.push(format!("fn {}({}) {{", chunk_name, params.join(", ")));
-                for line in &operation_lines[chunk_start..chunk_end] {
-                    verify_rust_helpers.push(line.clone());
-                }
-                verify_rust_helpers.push("}\n".to_string());
-            }
-        }
-
-        // --- Step 4: build main body (tmp declarations + calls or inline ops).
-        if count1d > 0 {
-            verify_rust.push(format!("    let mut tmp_1 = vec![Goldilocks::ZERO; {}];", count1d));
-        }
-        if count3d > 0 {
-            verify_rust.push(format!(
-                "    let mut tmp_3 = vec![CubicExtensionField {{ value: [Goldilocks::ZERO, Goldilocks::ZERO, Goldilocks::ZERO] }}; {}];",
-                count3d
-            ));
-        }
-
-        if should_chunk {
-            let num_chunks = operation_lines.len().div_ceil(RUST_VERIFIER_CHUNK_SIZE);
-
-            for chunk_idx in 0..num_chunks {
-                let chunk_start = chunk_idx * RUST_VERIFIER_CHUNK_SIZE;
-                let chunk_end = (chunk_start + RUST_VERIFIER_CHUNK_SIZE).min(operation_lines.len());
-
-                let mut used = OpRefs::default();
-                for r in &operation_refs[chunk_start..chunk_end] {
-                    used.challenges |= r.challenges;
-                    used.evals |= r.evals;
-                    used.vals |= r.vals;
-                    used.publics |= r.publics;
-                    used.zi |= r.zi;
-                    used.air_values |= r.air_values;
-                    used.proof_values |= r.proof_values;
-                    used.airgroup_values |= r.airgroup_values;
-                }
-
-                let mut call_args: Vec<String> = Vec::new();
-                if count1d > 0 {
-                    call_args.push("&mut tmp_1".to_string());
-                }
-                if count3d > 0 {
-                    call_args.push("&mut tmp_3".to_string());
-                }
-
-                if !global {
-                    if used.challenges {
-                        call_args.push("challenges".to_string());
-                    }
-                    if used.evals {
-                        call_args.push("evals".to_string());
-                    }
-                    if used.vals {
-                        call_args.push("vals".to_string());
-                    }
-                    if used.publics {
-                        call_args.push("_publics".to_string());
-                    }
-                    if used.zi {
-                        call_args.push("zi".to_string());
-                    }
-                    if used.air_values {
-                        call_args.push("air_values".to_string());
-                    }
-                    if used.proof_values {
-                        call_args.push("proof_values".to_string());
-                    }
-                } else {
-                    if used.challenges {
-                        call_args.push("challenges".to_string());
-                    }
-                    if used.publics {
-                        call_args.push("_publics".to_string());
-                    }
-                    if used.proof_values {
-                        call_args.push("proof_values".to_string());
-                    }
-                    if used.airgroup_values {
-                        call_args.push("airgroup_values".to_string());
-                    }
-                }
-
-                let chunk_name = if function_name.is_empty() {
-                    format!("chunk_{}", chunk_idx)
-                } else {
-                    format!("{}_chunk_{}", function_name, chunk_idx)
-                };
-                verify_rust.push(format!("    {}({});", chunk_name, call_args.join(", ")));
-            }
-        } else {
-            // No chunking — inline all operations directly.
-            verify_rust.extend(operation_lines);
-        }
-
-        let dest_tmp = &code_info_code[code_info_code.len() - 1].dest;
-        if dest_tmp.dim == 1 {
-            verify_rust.push(format!("    return tmp_1[{}];", id1d[dest_tmp.id as usize]));
-        } else if dest_tmp.dim == FIELD_EXTENSION {
-            verify_rust.push(format!("    return tmp_3[{}];", id3d[dest_tmp.id as usize]));
-        } else {
-            bail!("Unknown destination dimension");
-        }
-    }
-
     let dest_tmp = &code_info_code[code_info_code.len() - 1].dest;
     let (dest_dim, dest_id) = if dest_tmp.dim == 1 {
         (1, id1d[dest_tmp.id as usize] as u64)
@@ -590,8 +397,6 @@ pub fn get_parser_args(
 
     Ok(ParserArgsResult {
         exps_info: ExpsInfo { n_temp1: count1d, n_temp3: count3d, ops, args, dest_dim, dest_id, ..Default::default() },
-        verify_rust_helpers,
-        verify_rust,
     })
 }
 
@@ -849,7 +654,7 @@ mod tests {
             ..Default::default()
         };
         let mut numbers = Vec::new();
-        let res = get_parser_args(&info, code, &mut numbers, global, false, None, "f").unwrap();
+        let res = get_parser_args(&info, code, &mut numbers, global, false, None).unwrap();
         (res.exps_info, numbers)
     }
 
