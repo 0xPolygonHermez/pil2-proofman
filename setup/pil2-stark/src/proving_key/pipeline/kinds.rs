@@ -8,7 +8,8 @@ use pil2_stark_recurser::stark2circom::StarkVerifierOptions;
 use proofman_common::hash_family as hf;
 
 use super::steps::{CircomOpt, ConstSource, Step, VerifierGen};
-use crate::proving_key::recursive::RecursiveTemplate;
+use super::PipelineCtx;
+use crate::proving_key::recursive::{self, RecursiveTemplate};
 use crate::types::stark_struct::{generate_stark_struct, LowDegreeTestKind, StarkSettings, StarkStruct};
 
 /// Basic AIR: `.const` comes from the user's fixed-column supply, no circom.
@@ -42,11 +43,20 @@ pub struct RecursivefCfg {
     pub blake3_lanes: Option<usize>,
 }
 
+#[derive(Clone, Debug)]
 pub struct RecursiveCfg {
     pub template: RecursiveTemplate,
     pub family: HashFamily,
-    /// Reuse another air's pil_info (2nd+ air, recursive2).
+    /// Reuse another air's pil_info (2nd+ airs of an airgroup, recursive1).
     pub reuse: bool,
+    pub has_compressor: bool,
+    /// More than one airgroup or air: recursive2's verifier takes an `enable` input.
+    pub multi_air: bool,
+    /// log2 of the rows recursive1/recursive2 run at.
+    pub domain_bits: usize,
+    pub agg_arity: usize,
+    pub airgroup_name: String,
+    pub air_name: String,
 }
 
 /// Waits for the background witness library builds.
@@ -287,8 +297,74 @@ pub fn steps_for_recursivef(cfg: &RecursivefCfg) -> Vec<Step> {
     ]
 }
 /// Compressor, recursive1 and recursive2 (`cfg.template`).
-pub fn steps_for_recursive(_cfg: &RecursiveCfg) -> Vec<Step> {
-    todo!()
+pub fn steps_for_recursive(cfg: &RecursiveCfg) -> Vec<Step> {
+    use RecursiveTemplate as T;
+    let (t, family) = (cfg.template, cfg.family);
+    let verifier = match t {
+        T::Compressor => gl_verifier(family, false, false, true),
+        T::Recursive1 => gl_verifier(family, false, false, !cfg.has_compressor),
+        T::Recursive2 => gl_verifier(family, true, cfg.multi_air, false),
+    };
+    let opts = PlonkOptions {
+        // recursive2's air is "Recursive2" (as the JS); its key keeps the recursive1 name.
+        airgroup_name: Some(match t {
+            T::Recursive2 => "Recursive2".to_string(),
+            _ => format!("{}_{}_{}", cfg.airgroup_name, cfg.air_name, t.as_str()),
+        }),
+        max_constraint_degree: (t == T::Compressor)
+            .then(|| hf::max_constraint_degree_for_blowup(recursive::recursive_blowup(t, family))),
+        hash_id: family.as_str().to_string(),
+        merge_copies: true,
+        // blake3 chooses LANES in its own setup; None takes the air's default of 4.
+        blake3_lanes: None,
+        // recursive1 and recursive2 share one starkSetup, so both pad to the domain; the compressor sizes itself.
+        min_n_bits: (t != T::Compressor).then_some(cfg.domain_bits),
+    };
+    let prologue = || Step::CircomPrologue {
+        verifier: Some(verifier.clone()),
+        circom_template: Some(t.ejs_template()),
+        // plonk2pil merges the linear constraints itself: --O2 yields the same air, slower.
+        opt: CircomOpt::O1,
+    };
+    let plonk2pil = || Step::Plonk2Pil { kind: plonk_kind(t), opts: opts.clone() };
+    let custom = |name, f: fn(&RecursiveCfg, &mut PipelineCtx) -> Result<()>| {
+        let cfg = cfg.clone();
+        Step::Custom { name, run: Box::new(move |c| f(&cfg, c)) }
+    };
+
+    let mut s = vec![];
+    match t {
+        T::Recursive1 => s.push(custom("batch_fit", recursive::fit_batch)),
+        T::Recursive2 => s.push(custom("arity_fit", recursive::fit_batch)),
+        T::Compressor => {}
+    }
+    s.extend([prologue(), plonk2pil()]);
+    if t == T::Recursive1 {
+        let (cfg, rerun) = (cfg.clone(), [prologue(), plonk2pil()]);
+        s.push(Step::Custom { name: "batch_retry", run: Box::new(move |c| recursive::retry_batch(&cfg, c, &rerun)) });
+    }
+    s.push(custom("compressor_check", recursive::check_compressor));
+    s.extend([
+        // After the size checks, so from the winning circom.
+        Step::WitnessLib,
+        Step::WriteFixed { source: ConstSource::Plonk },
+        Step::CompilePil,
+        Step::StarkTail { reuse: cfg.reuse, starkinfo_only: t == T::Recursive1 },
+        Step::ConstTree { required: true },
+    ]);
+    match t {
+        // The JS keeps recursive1's starkinfo only as the const tree's temp file.
+        T::Recursive1 => s.push(Step::Custom {
+            name: "drop_starkinfo",
+            run: Box::new(|c| {
+                let _ = std::fs::remove_file(c.file("starkinfo.json"));
+                Ok(())
+            }),
+        }),
+        T::Recursive2 => s.extend([custom("vks_json", recursive::write_vks_json), Step::WriteVerifierRs]),
+        T::Compressor => {}
+    }
+    s
 }
 
 #[cfg(test)]
@@ -389,15 +465,10 @@ mod tests {
     // ---- Task 3 ----
 
     #[test]
-    #[ignore = "Task 5"]
     fn circom_prologue_args_are_o1_for_recursive_o2_for_compressed() {
         use crate::proving_key::pipeline::steps::circom_args;
         use std::path::Path;
-        let rec = steps_for_recursive(&RecursiveCfg {
-            template: RecursiveTemplate::Recursive2,
-            family: HashFamily::Blake3,
-            reuse: false,
-        });
+        let rec = rec(RecursiveTemplate::Recursive2, false);
         let cmp = steps_for_compressed_final(&CompressedFinalCfg { family: HashFamily::Blake3, low_degree_test: None });
         let a = circom_args(opt_of(&rec), "goldilocks", &[], Path::new("x.circom"), Path::new("/o"));
         let b = circom_args(opt_of(&cmp), "goldilocks", &[], Path::new("x.circom"), Path::new("/o"));
@@ -448,25 +519,32 @@ mod tests {
     // ---- Task 5 ----
 
     fn rec(template: RecursiveTemplate, reuse: bool) -> Vec<Step> {
-        steps_for_recursive(&RecursiveCfg { template, family: HashFamily::Blake3, reuse })
+        steps_for_recursive(&RecursiveCfg {
+            template,
+            family: HashFamily::Blake3,
+            reuse,
+            has_compressor: false,
+            multi_air: true,
+            domain_bits: 19,
+            agg_arity: 2,
+            airgroup_name: "G".into(),
+            air_name: "A".into(),
+        })
     }
 
     #[test]
-    #[ignore = "Task 5"]
     fn batch_fit_log_precedes_circom_compile() {
         let s = rec(RecursiveTemplate::Recursive1, false);
         assert!(pos(&s, "batch_fit").unwrap() < pos(&s, "circom_prologue").unwrap(), "{:?}", names(&s));
     }
 
     #[test]
-    #[ignore = "Task 5"]
     fn only_recursive1_has_a_batch_fit_step() {
         assert!(pos(&rec(RecursiveTemplate::Recursive2, false), "batch_fit").is_none());
         assert!(pos(&rec(RecursiveTemplate::Compressor, false), "batch_fit").is_none());
     }
 
     #[test]
-    #[ignore = "Task 5"]
     fn compressor_check_follows_plonk2pil_and_precedes_the_tail() {
         for t in [RecursiveTemplate::Compressor, RecursiveTemplate::Recursive1, RecursiveTemplate::Recursive2] {
             let s = rec(t, false);
@@ -478,7 +556,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "Task 5"]
     fn reuse_and_fresh_lists_differ_only_in_the_stark_tail_flag() {
         let fresh = rec(RecursiveTemplate::Recursive2, false);
         let reused = rec(RecursiveTemplate::Recursive2, true);
@@ -490,7 +567,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "Task 5"]
     fn recursive_kinds_compile_at_o1_with_the_goldilocks_verifier() {
         for t in [RecursiveTemplate::Compressor, RecursiveTemplate::Recursive1, RecursiveTemplate::Recursive2] {
             let s = rec(t, false);

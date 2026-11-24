@@ -18,8 +18,6 @@ use std::path::{Path, PathBuf};
 use anyhow::{bail, Context, Result};
 use proofman_common::hash_family::HashFamily;
 
-use crate::proving_key::util::exact_log2;
-
 /// Blowup buys constraint degree: an air whose constraints reach degree d needs
 /// `2^blowup + 1 >= d`. The poseidon aggregator is built at degree 8 and so needs 3; blake3's is
 /// built at degree 5 (`PlonkOptions::max_constraint_degree`), which 2 already covers. Blowup
@@ -128,13 +126,11 @@ impl std::error::Error for NeedsCompressorError {}
 
 use serde_json::Value;
 
-use pil2_pilout::pilout_proxy::PilOutProxy;
-use pil2_stark_recurser::plonk2pil::r1cs_types::PlonkOptions;
-use pil2_stark_recurser::plonk2pil::{self, PlonkResult};
+use pil2_stark_recurser::stark2circom::CircomGenOptions;
 
-use crate::proving_key::bctree;
-use crate::io::fixed_cols;
 use crate::output::witness_gen::WitnessTracker;
+use crate::proving_key::pipeline::kinds::{self, RecursiveCfg};
+use crate::proving_key::pipeline::{self, CircuitInput, PipelineCtx, Step, Tools, VerifierInput};
 
 /// Which recursive template to use.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -288,9 +284,7 @@ pub struct RecursiveSetupResult {
     pub batch_size: usize,
 }
 
-/// Run the recursive setup for a single air/template combination.
-///
-/// Ports `genRecursiveSetup()` from `generateRecursiveSetup.js`.
+/// Run the recursive setup for a single air/template combination (`genRecursiveSetup()`).
 pub fn gen_recursive_setup(
     config: &RecursiveSetupConfig<'_>,
     witness_tracker: &WitnessTracker,
@@ -299,172 +293,102 @@ pub fn gen_recursive_setup(
     let template = config.template;
     let template_str = template.as_str();
 
-    // One air runs several of these -- compressor, recursive1, recursive2 -- and the retry loop can
-    // run the same one twice. Nested under the `air` span from run_one_air (or `airgroup` for
-    // recursive2), so a line reads `air{name=X}:stage{t=recursive1}` and says which pass it belongs
-    // to. The enclosing span carries the name; repeating it here only made every line wider.
+    // Nested under the `air` (or `airgroup`) span, so a line says which pass it belongs to.
     let _span = tracing::info_span!("stage", t = %template_str).entered();
 
-    // Determine naming and paths based on template
-    let (verifier_name, name_filename, files_dir, input_challenges, verkey_input, enable_input) =
-        resolve_names_and_paths(config)?;
-
-    let airgroup_pil_name = match template {
-        RecursiveTemplate::Compressor => {
-            format!("{}_{}_{}", config.airgroup_name, config.air_name, template_str)
-        }
-        RecursiveTemplate::Recursive1 => {
-            format!("{}_{}_{}", config.airgroup_name, config.air_name, template_str)
-        }
-        RecursiveTemplate::Recursive2 => {
-            // JS uses the recursive1 airgroup_pil_name as the recursive2 name:
-            // "{airgroup_name}_{air_name}_recursive1"
-            format!("{}_{}_{}", config.airgroup_name, config.air_name, "recursive1")
-        }
+    let (verifier_name, name_filename, files_dir) = resolve_names_and_paths(config);
+    let mut ctx = PipelineCtx::new(config.build_dir.into(), files_dir, template_str, family);
+    ctx.circuit = name_filename;
+    ctx.label = match template {
+        RecursiveTemplate::Recursive2 => format!("Airgroup '{}' recursive2", config.airgroup_name),
+        _ => format!("Air '{}' {}", config.air_name, template_str),
     };
-
-    // Create directories
-    let circom_dir = PathBuf::from(config.build_dir).join("circom");
-    let build_dir_path = PathBuf::from(config.build_dir).join("build");
-    let pil_dir = PathBuf::from(config.build_dir).join("pil");
-    fs::create_dir_all(&circom_dir)?;
-    fs::create_dir_all(&build_dir_path)?;
-    fs::create_dir_all(&pil_dir)?;
-    fs::create_dir_all(&files_dir)?;
-
-    let const_root_circuit: [String; 4] = if config.const_root.iter().all(|s| s.is_empty()) {
+    ctx.tools = Tools {
+        circom_exec: config.circom_exec.into(),
+        libs: vec![config.recurser_circuits_path.into(), config.circuits_gl_path.into()],
+        std_pil_path: config.std_pil_path.into(),
+        recurser_pil_path: config.recurser_pil_path.into(),
+        circom_helpers_dir: config.circom_helpers_dir.into(),
+    };
+    ctx.witness = Some(witness_tracker.clone());
+    let const_root = if config.const_root.iter().all(|s| s.is_empty()) {
         ["0".to_string(), "0".to_string(), "0".to_string(), "0".to_string()]
     } else {
         config.const_root.clone()
     };
-    let verifier_path = circom_dir.join(&verifier_name);
-    let verifier_filenames = vec![verifier_name.clone()];
-    let circom_out_path = circom_dir.join(format!("{}.circom", name_filename));
-    let r1cs_path = build_dir_path.join(format!("{}.r1cs", name_filename));
-    let dat_src = build_dir_path.join(format!("{}_cpp", name_filename)).join(format!("{}.dat", name_filename));
-    let dat_dst = files_dir.join(format!("{}.dat", template_str));
-
-    // For recursive2, the plonk2pil airgroup name (used in pilout/fixed.bin) is
-    // hardcoded to "Recursive2" (matching JS), while airgroup_pil_name is still
-    // "FiboCPU_FibonacciSquare_recursive1" for the starkinfo.json name field.
-    let plonk_airgroup_name = match template {
-        RecursiveTemplate::Recursive2 => "Recursive2".to_string(),
-        _ => airgroup_pil_name.clone(),
-    };
-    let recursive_bits_threshold = proofman_common::hash_family::recursive_bits_threshold(config.hash);
-    let domain_bits = config.recursive_n_bits.unwrap_or(recursive_bits_threshold);
-    let mut plonk_opts = PlonkOptions {
-        airgroup_name: Some(plonk_airgroup_name),
-        max_constraint_degree: None,
-        hash_id: config.hash.to_string(),
-        merge_copies: true,
-        // blake3 chooses LANES in its own setup; None takes the air's default of 4.
-        blake3_lanes: None,
-        min_n_bits: None,
-    };
-    if template == RecursiveTemplate::Compressor {
-        plonk_opts.max_constraint_degree =
-            Some(proofman_common::hash_family::max_constraint_degree_for_blowup(recursive_blowup(template, family)));
-    }
-    // recursive1 and recursive2 share one starkSetup, so both pad to the domain; the compressor sizes itself.
-    if template != RecursiveTemplate::Compressor {
-        plonk_opts.min_n_bits = Some(domain_bits);
-    }
-    let type_compressor = match template {
-        RecursiveTemplate::Compressor => "compressor",
-        _ => "aggregation",
-    };
-
-    // pil2circom + gen_circom + compile + copy .dat + plonk2pil, for one batch size.
-    let run_circom_and_plonk = |effective_si: &serde_json::Value, batch_size: usize| -> Result<PlonkResult> {
-        // Generate verifier circom via pil2circom
-        // Each template step generates its own verifier. For recursive1 with compressor,
-        // the verifier is generated from the compressor's starkInfo/verifierInfo (passed
-        // via config), and written to {air}_compressor.verifier.circom.
-        // Batched slots switch off through `enable`, so the verifier needs that input.
-        let pil2circom_opts = crate::io::recurser::Pil2CircomOptions {
-            skip_main: true,
-            verkey_input,
-            enable_input: enable_input || batch_size > 1,
-            input_challenges,
-            hash: config.hash.to_string(),
-        };
-        let verifier_circom =
-            crate::io::recurser::pil2circom(&const_root_circuit, effective_si, config.verifier_info, &pil2circom_opts)
-                .context("pil2circom failed in recursive setup")?;
-        fs::write(&verifier_path, &verifier_circom)?;
-
-        // Generate recursive circom via gen_circom
-        let gen_opts = crate::io::recurser::GenCircomOptions {
-            airgroup_id: Some(config.airgroup_id as u64),
+    ctx.verifiers = vec![VerifierInput {
+        file: verifier_name,
+        const_root,
+        stark_info: config.stark_info.clone(),
+        verifier_info: config.verifier_info.clone(),
+    }];
+    ctx.circuit_input = Some(CircuitInput {
+        stark_infos: vec![config.stark_info.clone()],
+        vadcop_info: config.global_info.clone(),
+        basic_vk: config.verification_keys.to_vec(),
+        agg_vk: vec![],
+        publics: vec![],
+        opts: CircomGenOptions {
+            airgroup_id: Some(config.airgroup_id),
             has_compressor: config.has_compressor,
             has_recursion: false,
             is_final: false,
             agg_arity: config.agg_arity,
-            batch_size,
-        };
-        let gen_input = crate::io::recurser::GenCircomInput {
-            template_name: template.ejs_template(),
-            stark_infos: std::slice::from_ref(effective_si),
-            vadcop_info: config.global_info,
-            verifier_filenames: &verifier_filenames,
-            basic_verification_keys: config.verification_keys,
-            agg_verification_keys: &[],
-            publics: &[],
-            options: &gen_opts,
-        };
-        let circom_str = crate::io::recurser::gen_circom(&gen_input).context("gen_circom failed in recursive setup")?;
-        fs::write(&circom_out_path, &circom_str)?;
-
-        // Compile circom
-        tracing::info!("Compiling {}...", name_filename);
-        let compile_status = std::process::Command::new(config.circom_exec)
-            .args([
-                // plonk2pil merges the linear constraints itself: --O2 yields the same air, slower.
-                "--O1",
-                "--r1cs",
-                "--prime",
-                "goldilocks",
-                "--c",
-                "--verbose",
-                "-l",
-                config.recurser_circuits_path,
-                "-l",
-                config.circuits_gl_path,
-            ])
-            .arg(circom_out_path.to_str().unwrap())
-            .arg("-o")
-            .arg(build_dir_path.to_str().unwrap())
-            .output()
-            .context("Failed to execute circom compiler")?;
-        if !compile_status.status.success() {
-            let stderr = String::from_utf8_lossy(&compile_status.stderr);
-            bail!("Circom compilation failed for {}: {}", name_filename, stderr);
-        }
-
-        // Copy .dat file
-        tracing::info!("Copying circom files...");
-        if dat_src.exists() {
-            fs::copy(&dat_src, &dat_dst)?;
-        }
-
-        // plonk2pil: convert R1CS to PIL
-        let r1cs_data =
-            fs::read(&r1cs_path).with_context(|| format!("Failed to read R1CS file: {}", r1cs_path.display()))?;
-        plonk2pil::plonk2pil(&r1cs_data, type_compressor, &plonk_opts).context("plonk2pil failed in recursive setup")
+            batch_size: 1,
+        },
+    });
+    ctx.settings = recursive_stark_settings(template, family, config.recursion_settings);
+    // recursive2 keeps the recursive1 name: "{airgroup}_{air}_recursive1".
+    let key_template = if template == RecursiveTemplate::Recursive2 { "recursive1" } else { template_str };
+    ctx.key = crate::pil::stark_setup::KeyIdentity {
+        name: Some(format!("{}_{}_{}", config.airgroup_name, config.air_name, key_template)),
+        ids: Some((config.airgroup_id, config.air_id)),
+        ..Default::default()
     };
+    ctx.reuse_pil_info = config.existing_pil_info.clone();
 
+    let cfg = RecursiveCfg {
+        template,
+        family,
+        reuse: config.existing_pil_info.is_some(),
+        has_compressor: config.has_compressor,
+        multi_air: multi_air(config.global_info),
+        domain_bits: config
+            .recursive_n_bits
+            .unwrap_or(proofman_common::hash_family::recursive_bits_threshold(config.hash)),
+        agg_arity: config.agg_arity,
+        airgroup_name: config.airgroup_name.to_string(),
+        air_name: config.air_name.to_string(),
+    };
+    pipeline::run(&kinds::steps_for_recursive(&cfg), &mut ctx)?;
+
+    let plonk = ctx.plonk.take().context("no plonk2pil result")?;
+    let (si, vi, ei) = ctx.pil_info.take().context("no starkinfo")?;
+    Ok(RecursiveSetupResult {
+        const_root: ctx.const_root.context("no const root")?,
+        pil_str: plonk.pil_str,
+        stark_info: Some(si),
+        verifier_info: Some(vi),
+        expressions_info: Some(ei),
+        n_bits: plonk.n_bits,
+        batch_size: ctx.batch_size,
+    })
+}
+
+/// Logs the batch fit before compiling, so a run that bails still shows it; sets recursive1's batch
+/// and fails a recursive2 that cannot host its own arity.
+pub(crate) fn fit_batch(cfg: &RecursiveCfg, ctx: &mut PipelineCtx) -> Result<()> {
+    let template = cfg.template;
+    let domain_bits = cfg.domain_bits;
+    let inner = &ctx.verifiers.first().context("recursive circuit without its inner proof")?.stark_info;
     // Budgets are affine in k, so the largest k that fits also fills the domain.
     let lanes = pil2_stark_recurser::plonk2pil::setups::blake3::DEFAULT_LANES;
-    let fit = (template != RecursiveTemplate::Compressor)
-        .then(|| recursion_batch_fit(family, domain_bits, lanes, config.stark_info))
-        .flatten();
-    // Logged before compiling, so a run that bails still shows it.
+    let fit = recursion_batch_fit(cfg.family, domain_bits, lanes, inner);
     if let Some(fit) = fit {
         let head = format!(
             "Batch fit ({}): one verification of this shape costs {} compressions at {} queries, \
              {:.1}% of the {} a 2^{} aggregator hosts at LANES {}",
-            template_str,
+            template.as_str(),
             fit.per_proof,
             fit.n_queries,
             100.0 * fit.per_proof as f64 / fit.capacity as f64,
@@ -476,19 +400,12 @@ pub fn gen_recursive_setup(
         if template == RecursiveTemplate::Recursive2 {
             tracing::info!(
                 "{head} -> aggregates {} of them ({:.1}% packed); {} would fit",
-                config.agg_arity,
-                packed(config.agg_arity),
+                cfg.agg_arity,
+                packed(cfg.agg_arity),
                 fit.k
             );
-        } else {
-            tracing::info!("{head} -> will verify {} ({:.1}% packed)", fit.k, packed(fit.k));
-        }
-    }
-
-    // recursive2's fit is its self-fit: fail with the cause, not just a size.
-    if template == RecursiveTemplate::Recursive2 {
-        if let Some(fit) = fit {
-            if fit.k < config.agg_arity {
+            // recursive2's fit is its self-fit: fail with the cause, not just a size.
+            if fit.k < cfg.agg_arity {
                 bail!(
                     "recursive2 at LANES {} fits {} proof(s) of its own shape in 2^{} but aggregates {}: \
                      one verification costs {} of the {} compressions available. RAISE the aggregator's LANES \
@@ -497,459 +414,127 @@ pub fn gen_recursive_setup(
                     fit.lanes,
                     fit.k,
                     domain_bits,
-                    config.agg_arity,
+                    cfg.agg_arity,
                     fit.per_proof,
                     fit.capacity
                 );
             }
+        } else {
+            tracing::info!("{head} -> will verify {} ({:.1}% packed)", fit.k, packed(fit.k));
         }
     }
-    let mut batch = if template == RecursiveTemplate::Recursive1 {
-        fit.map_or(1, |f| f.k).min(pil2_stark_recurser::stark2circom::circuit_templates::MAX_RECURSIVE1_BATCH)
-    } else {
-        1
-    };
+    if template == RecursiveTemplate::Recursive1 {
+        ctx.batch_size =
+            fit.map_or(1, |f| f.k).min(pil2_stark_recurser::stark2circom::circuit_templates::MAX_RECURSIVE1_BATCH);
+    }
+    Ok(())
+}
 
-    let plonk_result = loop {
-        let r = run_circom_and_plonk(config.stark_info, batch)?;
-        if r.n_bits_natural <= domain_bits || batch == 1 {
-            break r;
+/// recursive1 whose band binds before its hashing does: `rerun` the prologue at a smaller batch.
+pub(crate) fn retry_batch(cfg: &RecursiveCfg, ctx: &mut PipelineCtx, rerun: &[Step]) -> Result<()> {
+    loop {
+        let (r, batch) = (ctx.plonk()?, ctx.batch_size);
+        if r.n_bits_natural <= cfg.domain_bits || batch == 1 {
+            break;
         }
-        // The band binds, not the hashing. `n_used` is affine in k, so scale, not decrement.
-        let scaled = (batch as u64).saturating_mul(1u64 << domain_bits) / (r.n_used as u64).max(1);
+        // `n_used` is affine in k, so scale, not decrement.
+        let scaled = (batch as u64).saturating_mul(1u64 << cfg.domain_bits) / (r.n_used as u64).max(1);
         let next = (scaled as usize).clamp(1, batch - 1);
         tracing::info!(
             "Recursive1 for air '{}' at k={} packs to 2^{} (n_used={}), past 2^{}; retrying at k={}",
-            config.air_name,
+            cfg.air_name,
             batch,
             r.n_bits_natural,
             r.n_used,
-            domain_bits,
+            cfg.domain_bits,
             next
         );
-        batch = next;
-    };
-    if batch > 1 {
-        tracing::info!("Recursive1 for air '{}' verifies {} proofs per circuit", config.air_name, batch);
+        ctx.batch_size = next;
+        pipeline::run(rerun, ctx)?;
     }
-
-    // Too big even alone: ask for a compressor, before the floor check makes it fatal.
-    if needs_compressor(template, config.has_compressor, plonk_result.n_bits_natural, domain_bits) {
-        tracing::warn!(
-            "Recursive1 for air '{}' has n_bits={} > {} — compressor needed",
-            config.air_name,
-            plonk_result.n_bits_natural,
-            domain_bits
-        );
-        return Err(anyhow::Error::new(NeedsCompressorError { n_bits: plonk_result.n_bits }));
+    if ctx.batch_size > 1 {
+        tracing::info!("Recursive1 for air '{}' verifies {} proofs per circuit", cfg.air_name, ctx.batch_size);
     }
-
-    // Unreconcilable: a compressor is already applied, the batch is 1, and a floor only pads up.
-    if let Some(floor) = plonk_opts.min_n_bits {
-        if plonk_result.n_bits > floor {
-            let why = if config.has_compressor {
-                "this air already has a compressor and is still too big, so the compressor is not \
-                 the answer here: either raise the pin, or take rows out of the air."
-            } else {
-                "the recursion runs at that size (--recursive-n-bits, or the family threshold). \
-                 Either raise it, or take rows out of this air -- for blake3 the gate rows placed \
-                 outside the blake3 bands are the slack, since a band leaves the plonk columns free \
-                 on all but its first LANES rows."
-            };
-            bail!("{} compiles to 2^{} rows but must be 2^{}: {}", name_filename, plonk_result.n_bits, floor, why);
-        }
-    }
-
-    // Generate witness library (background) — after the size checks, so from the winning circom.
-    witness_tracker.run_witness_library_generation(
-        config.build_dir,
-        files_dir.to_str().unwrap_or(""),
-        &name_filename,
-        template_str,
-        config.circom_helpers_dir,
-    );
-
-    // Write fixed polynomials binary
-    let fixed_bin_path = build_dir_path.join(format!("{}.fixed.bin", name_filename));
-    let fixed_info: Vec<(String, Vec<u32>, Vec<u64>)> =
-        plonk_result.fixed_pols.iter().map(|fp| (fp.name.clone(), vec![fp.index as u32], fp.values.clone())).collect();
-    fixed_cols::write_fixed_pols_bin(
-        fixed_bin_path.to_str().unwrap(),
-        &plonk_result.airgroup_name,
-        &plonk_result.air_name,
-        1u64 << plonk_result.n_bits,
-        &fixed_info,
-    )?;
-
-    // Write PIL source
-    let pil_path = pil_dir.join(format!("{}.pil", name_filename));
-    fs::write(&pil_path, &plonk_result.pil_str)?;
-
-    // Write exec buffer
-    let exec_path = files_dir.join(format!("{}.exec", template_str));
-    let exec_bytes: Vec<u8> = plonk_result.exec.iter().flat_map(|v| v.to_le_bytes()).collect();
-    fs::write(&exec_path, &exec_bytes)?;
-
-    // Compile PIL via JS pil2com (pil2-compiler npm package)
-    let pilout_path = build_dir_path.join(format!("{}.pilout", name_filename));
-    compile_pil(
-        pil_path.to_str().unwrap(),
-        pilout_path.to_str().unwrap(),
-        config.std_pil_path,
-        config.recurser_pil_path,
-    )?;
-
-    // Const file writing is deferred until after pil_info, which determines
-    // the true nConstants (may be larger than plonk2pil's fixedPols count).
-    // The plonk2pil fixed columns are kept for later use.
-    let const_path = files_dir.join(format!("{}.const", template_str));
-    let plonk_n_rows = 1usize << plonk_result.n_bits;
-    let plonk_n_fixed = plonk_result.fixed_pols.len();
-
-    // Run real starkSetup via pil_info on the compiled pilout, or reuse an
-    // existing result.  The JS equivalent is the `setupAggregation_` parameter:
-    // when if it is passed (non-null), starkSetup is skipped and the existing
-    // starkInfo/verifierInfo/expressionsInfo are reused as-is.  This matters
-    // for the 2nd+ airs in an airgroup and for recursive2 — they all share the
-    // same circuit structure and therefore the same setup.
-    tracing::info!("Running starkSetup for recursive circuit...");
-    let starkinfo_path = files_dir.join(format!("{}.starkinfo.json", template_str));
-
-    let (setup_stark_info, setup_verifier_info, setup_expressions_info) =
-        if let Some((existing_si, existing_vi, existing_ei)) = config.existing_pil_info.as_ref() {
-            // Reuse the provided setup — skip pil_info.
-            tracing::info!("Reusing existing starkSetup for {} (skipping pil_info)", template_str);
-
-            // We still need to write the JSON and binary files for this air's
-            // directory (the const tree needs a starkinfo.json on disk).
-            let stark_info_loaded = crate::types::stark_info::StarkInfo::from_json(existing_si)?;
-            tracing::info!(
-                "Air '{}' {} low-degree test (reused): {}",
-                config.air_name,
-                template_str,
-                stark_info_loaded.stark_struct.low_degree_test.describe()
-            );
-
-            // The reused setup assumes every air's circuit has the same shape; a mismatch
-            // would otherwise surface as a bare exit inside the C++ const-tree loader.
-            if (1u64 << stark_info_loaded.stark_struct.n_bits) != (1u64 << plonk_result.n_bits) {
-                bail!(
-                    "{} for air '{}' has 2^{} rows but the reused setup expects 2^{} — the \
-                     recursive circuits are not uniform (query-count equalization failed?)",
-                    template_str,
-                    config.air_name,
-                    plonk_result.n_bits,
-                    stark_info_loaded.stark_struct.n_bits,
-                );
-            }
-
-            // Write const file: load pilout to get inline selector polynomial values
-            {
-                let proxy = PilOutProxy::new(pilout_path.to_str().unwrap_or(""))
-                    .map_err(|e| anyhow::anyhow!("Failed to load pilout for const file: {}", e))?;
-                if proxy.pilout.air_groups.is_empty() || proxy.pilout.air_groups[0].airs.is_empty() {
-                    bail!("Pilout has no AIR groups: {}", pilout_path.display());
-                }
-                let air = &proxy.pilout.air_groups[0].airs[0];
-                let plonk_values =
-                    fixed_cols::reorder_plonk_pols_for_pilout(&plonk_result.fixed_pols, &proxy.pilout.symbols, 0, 0);
-                fixed_cols::write_const_file(const_path.to_str().unwrap(), air, &plonk_values)?;
-                tracing::info!(
-                    "Wrote {} const file (reused setup): {} cols, {} rows",
-                    template_str,
-                    air.fixed_cols.len(),
-                    air.num_rows.unwrap_or(0)
-                );
-            }
-
-            // Write starkinfo so bctree (C FFI) can find it on disk; deleted
-            // after bctree for recursive1 to match JS temp-file behaviour.
-            fs::write(&starkinfo_path, serde_json::to_string_pretty(existing_si)?)?;
-
-            // JS: verifierinfo/expressionsinfo JSON and bin files are only written
-            // for compressor and recursive2, not for recursive1.
-            if template != RecursiveTemplate::Recursive1 {
-                fs::write(
-                    files_dir.join(format!("{}.verifierinfo.json", template_str)),
-                    serde_json::to_string_pretty(existing_vi)?,
-                )?;
-                fs::write(
-                    files_dir.join(format!("{}.expressionsinfo.json", template_str)),
-                    serde_json::to_string_pretty(existing_ei)?,
-                )?;
-
-                let ei_loaded = crate::types::stark_info::ExpressionsInfo::from_json(existing_ei)?;
-                crate::io::bin_file::write_expressions_bin_file(
-                    files_dir.join(format!("{}.bin", template_str)).to_str().unwrap(),
-                    &stark_info_loaded,
-                    &ei_loaded,
-                )?;
-            }
-
-            (Some(existing_si.clone()), Some(existing_vi.clone()), Some(existing_ei.clone()))
-        } else {
-            // Load the compiled pilout and run the real pil_info pipeline
-            let pilout_path_str = pilout_path.to_str().unwrap_or("");
-            if !Path::new(pilout_path_str).exists() {
-                bail!("Pilout not found at {}. Cannot run starkSetup for recursive circuit.", pilout_path_str);
-            }
-
-            let proxy =
-                PilOutProxy::new(pilout_path_str).map_err(|e| anyhow::anyhow!("Failed to load pilout: {}", e))?;
-            let pilout = &proxy.pilout;
-            if pilout.air_groups.is_empty() || pilout.air_groups[0].airs.is_empty() {
-                bail!("Compiled pilout has no AIR groups: {}", pilout_path_str);
-            }
-            let air = &pilout.air_groups[0].airs[0];
-            let num_rows_air = u64::from(air.num_rows.unwrap_or(0));
-            let n_bits_air = if num_rows_air > 0 {
-                exact_log2(num_rows_air).with_context(|| format!("{airgroup_pil_name} row count"))?
-            } else {
-                plonk_result.n_bits
-            };
-
-            // Generate stark struct for this recursive circuit.
-            let stark_struct = crate::types::stark_struct::generate_stark_struct(
-                &recursive_stark_settings(template, family, config.recursion_settings),
-                n_bits_air,
-                config.hash,
-            );
-
-            // Run pil_info to get real starkinfo/expressionsinfo/verifierinfo
-            let key = crate::pil::stark_setup::KeyIdentity {
-                name: Some(airgroup_pil_name.clone()),
-                ids: Some((config.airgroup_id, config.air_id)),
-                ..Default::default()
-            };
-            let pil_info_result =
-                crate::pil::stark_setup::stark_setup(pilout, 0, 0, &stark_struct, &Default::default(), &key)?;
-
-            let starkinfo_output = pil_info_result.starkinfo;
-
-            // Say which low-degree test this circuit runs, with the solved schedule
-            // (recursive2 is one circuit per airgroup, the others one per air).
-            let circuit = match template {
-                RecursiveTemplate::Recursive2 => format!("Airgroup '{}' recursive2", config.airgroup_name),
-                _ => format!("Air '{}' {}", config.air_name, template_str),
-            };
-            tracing::info!("{} low-degree test: {}", circuit, starkinfo_output.stark_struct.low_degree_test.describe());
-
-            let verifier_info_ref = &pil_info_result.pil_code.verifier_info;
-            let expressions_info_ref = &pil_info_result.pil_code.expressions_info;
-            let si_json = serde_json::to_value(&starkinfo_output)?;
-
-            // Write starkinfo so bctree (C FFI) can find it on disk; deleted
-            // after bctree for recursive1 to match JS temp-file behaviour.
-            fs::write(&starkinfo_path, crate::output::json::to_json_string(&starkinfo_output)?)?;
-
-            // JS: verifierinfo/expressionsinfo JSON and bin files are only written
-            // for compressor and recursive2, not for recursive1.
-            let stark_info_loaded = crate::types::stark_info::StarkInfo::from_json(&si_json)?;
-
-            if template != RecursiveTemplate::Recursive1 {
-                fs::write(
-                    files_dir.join(format!("{}.verifierinfo.json", template_str)),
-                    crate::output::json::to_json_string(verifier_info_ref)?,
-                )?;
-                fs::write(
-                    files_dir.join(format!("{}.expressionsinfo.json", template_str)),
-                    crate::output::json::to_json_string(expressions_info_ref)?,
-                )?;
-
-                let expressions_loaded = crate::types::stark_info::ExpressionsInfo::try_from(expressions_info_ref)?;
-                crate::io::bin_file::write_expressions_bin_file(
-                    files_dir.join(format!("{}.bin", template_str)).to_str().unwrap(),
-                    &stark_info_loaded,
-                    &expressions_loaded,
-                )?;
-            }
-
-            // Write const file: use air already loaded above (for pil_info) which has
-            // inline selector polynomial values for columns beyond plonk2pil's output.
-            {
-                let plonk_values =
-                    fixed_cols::reorder_plonk_pols_for_pilout(&plonk_result.fixed_pols, &pilout.symbols, 0, 0);
-                fixed_cols::write_const_file(const_path.to_str().unwrap(), air, &plonk_values)?;
-                tracing::info!(
-                    "Wrote {} const file: {} cols ({} from plonk + {} from pilout), {} rows",
-                    template_str,
-                    air.fixed_cols.len(),
-                    plonk_n_fixed,
-                    air.fixed_cols.len().saturating_sub(plonk_n_fixed),
-                    plonk_n_rows
-                );
-            }
-
-            (
-                Some(si_json),
-                Some(serde_json::to_value(verifier_info_ref)?),
-                Some(serde_json::to_value(expressions_info_ref)?),
-            )
-        };
-
-    // Compute const tree and verkey
-    let verkey_json_path = files_dir.join(format!("{}.verkey.json", template_str));
-    let const_root = if const_path.exists() && starkinfo_path.exists() {
-        let root = bctree::compute_const_tree(
-            const_path.to_str().unwrap(),
-            starkinfo_path.to_str().unwrap(),
-            verkey_json_path.to_str().unwrap(),
-        )?;
-
-        // Write verkey.bin
-        let mut verkey_bin = Vec::with_capacity(32);
-        for &val in root.iter() {
-            verkey_bin.extend_from_slice(&val.to_le_bytes());
-        }
-        fs::write(files_dir.join(format!("{}.verkey.bin", template_str)), &verkey_bin)?;
-
-        root
-    } else {
-        bail!(
-            "Cannot compute const tree: const file ({}) or starkinfo ({}) missing",
-            const_path.display(),
-            starkinfo_path.display()
-        );
-    };
-
-    // JS writes starkinfo to a temp file for bctree and only persists it to
-    // filesDir when template != "recursive1".  We wrote to the permanent path
-    // so the C FFI bctree call could find it; clean it up now for recursive1.
-    if template == RecursiveTemplate::Recursive1 {
-        let _ = fs::remove_file(&starkinfo_path);
-    }
-
-    // JSON files already written by the real pil_info pipeline above
-
-    // For recursive2, write vks.json and verifier.rs
-    if template == RecursiveTemplate::Recursive2 {
-        // JS stores rootCRecursives1 as a flat 2-D array: [[air0_vk], [air1_vk], ...]
-        // where each air_vk = [v0,v1,v2,v3].  config.verification_keys is
-        // &[Vec<Vec<String>>] = &[ag_vkeys], so we unwrap the outer slice level.
-        let r1_vks = config.verification_keys.first().cloned().unwrap_or_default();
-        let root_c_recursive2: Vec<serde_json::Value> =
-            const_root.iter().map(|&v| serde_json::Value::from(v)).collect();
-        let r1_vks_numeric: Vec<Vec<serde_json::Value>> = r1_vks
-            .iter()
-            .map(|air_vk| {
-                air_vk
-                    .iter()
-                    .map(|v| {
-                        v.parse::<u64>()
-                            .map(serde_json::Value::from)
-                            .unwrap_or_else(|_| serde_json::Value::String(v.clone()))
-                    })
-                    .collect()
-            })
-            .collect();
-        let vks = serde_json::json!({
-            "rootCRecursives1": r1_vks_numeric,
-            "rootCRecursive2": root_c_recursive2,
-        });
-        fs::write(files_dir.join(format!("{}.vks.json", template_str)), serde_json::to_string_pretty(&vks)?)?;
-
-        // Write verifier Rust file using the real starkinfo and verifierinfo
-        if let (Some(ref si_val), Some(ref vi_val)) = (&setup_stark_info, &setup_verifier_info) {
-            let si_loaded = crate::types::stark_info::StarkInfo::from_json(si_val)?;
-            let vi_loaded = crate::types::stark_info::VerifierInfo::from_json(vi_val)?;
-            crate::output::verifier::write_verifier_rust_file(
-                files_dir.join(format!("{}.verifier.rs", template_str)).to_str().unwrap(),
-                &si_loaded,
-                &vi_loaded,
-                true, // recursive2 uses VadcopFinalProof
-                config.hash,
-            )?;
-        }
-    }
-
-    Ok(RecursiveSetupResult {
-        const_root,
-        pil_str: plonk_result.pil_str,
-        stark_info: setup_stark_info,
-        verifier_info: setup_verifier_info,
-        expressions_info: setup_expressions_info,
-        n_bits: plonk_result.n_bits,
-        batch_size: batch,
-    })
+    Ok(())
 }
 
-/// Resolve names and output paths based on the template type.
-fn resolve_names_and_paths(
-    config: &RecursiveSetupConfig<'_>,
-) -> Result<(
-    String,  // verifier_name
-    String,  // name_filename
-    PathBuf, // files_dir
-    bool,    // input_challenges
-    bool,    // verkey_input
-    bool,    // enable_input
-)> {
-    let template = config.template;
-    let build_dir = PathBuf::from(config.build_dir);
-
-    match template {
-        RecursiveTemplate::Compressor => {
-            let verifier_name = format!("{}.verifier.circom", config.air_name);
-            let name_filename = format!("{}_{}", config.air_name, template.as_str());
-            let files_dir = build_dir
-                .join("provingKey")
-                .join(get_global_name(config.global_info))
-                .join(config.airgroup_name)
-                .join("airs")
-                .join(config.air_name)
-                .join(template.as_str());
-            Ok((verifier_name, name_filename, files_dir, true, false, false))
-        }
-        RecursiveTemplate::Recursive1 if !config.has_compressor => {
-            let verifier_name = format!("{}.verifier.circom", config.air_name);
-            let name_filename = format!("{}_{}", config.air_name, template.as_str());
-            let files_dir = build_dir
-                .join("provingKey")
-                .join(get_global_name(config.global_info))
-                .join(config.airgroup_name)
-                .join("airs")
-                .join(config.air_name)
-                .join(template.as_str());
-            Ok((verifier_name, name_filename, files_dir, true, false, false))
-        }
-        RecursiveTemplate::Recursive1 => {
-            // With compressor
-            let verifier_name = format!("{}_compressor.verifier.circom", config.air_name);
-            let name_filename = format!("{}_{}", config.air_name, template.as_str());
-            let files_dir = build_dir
-                .join("provingKey")
-                .join(get_global_name(config.global_info))
-                .join(config.airgroup_name)
-                .join("airs")
-                .join(config.air_name)
-                .join("recursive1");
-            Ok((verifier_name, name_filename, files_dir, false, false, false))
-        }
-        RecursiveTemplate::Recursive2 => {
-            let verifier_name = format!("{}_recursive2.verifier.circom", config.airgroup_name);
-            let name_filename = format!("{}_{}", config.airgroup_name, template.as_str());
-            let files_dir = build_dir
-                .join("provingKey")
-                .join(get_global_name(config.global_info))
-                .join(config.airgroup_name)
-                .join(template.as_str());
-
-            // enableInput is true when there are multiple airgroups or multiple airs
-            let n_airgroups =
-                config.global_info.get("air_groups").and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(1);
-            let n_airs_first = config
-                .global_info
-                .get("airs")
-                .and_then(|v| v.as_array())
-                .and_then(|a| a.first())
-                .and_then(|v| v.as_array())
-                .map(|a| a.len())
-                .unwrap_or(1);
-            let enable_input = n_airgroups > 1 || n_airs_first > 1;
-
-            Ok((verifier_name, name_filename, files_dir, false, true, enable_input))
-        }
+/// Too big even alone: ask for a compressor, before the floor check makes it fatal.
+pub(crate) fn check_compressor(cfg: &RecursiveCfg, ctx: &mut PipelineCtx) -> Result<()> {
+    let p = ctx.plonk()?;
+    if needs_compressor(cfg.template, cfg.has_compressor, p.n_bits_natural, cfg.domain_bits) {
+        tracing::warn!(
+            "Recursive1 for air '{}' has n_bits={} > {} — compressor needed",
+            cfg.air_name,
+            p.n_bits_natural,
+            cfg.domain_bits
+        );
+        return Err(anyhow::Error::new(NeedsCompressorError { n_bits: p.n_bits }));
     }
+    // Unreconcilable: a compressor is already applied, the batch is 1, and a floor only pads up.
+    if cfg.template != RecursiveTemplate::Compressor && p.n_bits > cfg.domain_bits {
+        let why = if cfg.has_compressor {
+            "this air already has a compressor and is still too big, so the compressor is not \
+             the answer here: either raise the pin, or take rows out of the air."
+        } else {
+            "the recursion runs at that size (--recursive-n-bits, or the family threshold). \
+             Either raise it, or take rows out of this air -- for blake3 the gate rows placed \
+             outside the blake3 bands are the slack, since a band leaves the plonk columns free \
+             on all but its first LANES rows."
+        };
+        bail!("{} compiles to 2^{} rows but must be 2^{}: {}", ctx.circuit, p.n_bits, cfg.domain_bits, why);
+    }
+    Ok(())
+}
+
+/// recursive2's `vks.json`: the recursive1 roots it accepts and its own.
+pub(crate) fn write_vks_json(_cfg: &RecursiveCfg, ctx: &mut PipelineCtx) -> Result<()> {
+    let r1_vks = ctx.circuit_input.as_ref().and_then(|c| c.basic_vk.first().cloned()).unwrap_or_default();
+    let root = ctx.const_root.context("vks.json before the const tree")?;
+    let num = |v: &String| v.parse::<u64>().map(Value::from).unwrap_or_else(|_| Value::String(v.clone()));
+    let vks = serde_json::json!({
+        "rootCRecursives1": r1_vks.iter().map(|vk| vk.iter().map(num).collect::<Vec<_>>()).collect::<Vec<_>>(),
+        "rootCRecursive2": root.iter().map(|&v| Value::from(v)).collect::<Vec<_>>(),
+    });
+    fs::write(ctx.file("vks.json"), serde_json::to_string_pretty(&vks)?)?;
+    Ok(())
+}
+
+/// (verifier circom file, circuit name, files dir) of `config.template`.
+fn resolve_names_and_paths(config: &RecursiveSetupConfig<'_>) -> (String, String, PathBuf) {
+    let template = config.template;
+    let airgroup_dir = PathBuf::from(config.build_dir)
+        .join("provingKey")
+        .join(get_global_name(config.global_info))
+        .join(config.airgroup_name);
+    match template {
+        RecursiveTemplate::Compressor | RecursiveTemplate::Recursive1 => {
+            let verifier = if template == RecursiveTemplate::Recursive1 && config.has_compressor {
+                format!("{}_compressor.verifier.circom", config.air_name)
+            } else {
+                format!("{}.verifier.circom", config.air_name)
+            };
+            let files_dir = airgroup_dir.join("airs").join(config.air_name).join(template.as_str());
+            (verifier, format!("{}_{}", config.air_name, template.as_str()), files_dir)
+        }
+        RecursiveTemplate::Recursive2 => (
+            format!("{}_recursive2.verifier.circom", config.airgroup_name),
+            format!("{}_{}", config.airgroup_name, template.as_str()),
+            airgroup_dir.join(template.as_str()),
+        ),
+    }
+}
+
+/// More than one airgroup, or more than one air in the first.
+fn multi_air(global_info: &Value) -> bool {
+    let n_airgroups = global_info.get("air_groups").and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(1);
+    let n_airs_first = global_info
+        .get("airs")
+        .and_then(|v| v.as_array())
+        .and_then(|a| a.first())
+        .and_then(|v| v.as_array())
+        .map(|a| a.len())
+        .unwrap_or(1);
+    n_airgroups > 1 || n_airs_first > 1
 }
 
 /// Extract the global name from vadcopInfo.
