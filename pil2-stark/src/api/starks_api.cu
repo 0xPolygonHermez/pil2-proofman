@@ -4078,7 +4078,8 @@ int64_t commit_witness_streaming_gpu(void *d_buffers_, uint64_t slotIdx,
     TimerStopGPU(timer, STARK_GPU_COMMIT);
     if (rc == 0) memcpy(root, hRoot, STREAM_COMMIT_HOST_ROOT_WORDS * sizeof(uint64_t));
     if (rc == 0) {
-        std::vector<uint64_t> upper(hUpper, hUpper + upperWords);
+        std::vector<uint64_t> upper;
+        if (hUpper != nullptr) upper.assign(hUpper, hUpper + upperWords);   // empty when ineligible
         std::lock_guard<std::mutex> lk(d_buffers->cm1UpperMutex);
         if (upper.empty()) {
             d_buffers->cm1Upper.erase(instanceId);
