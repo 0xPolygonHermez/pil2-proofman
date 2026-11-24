@@ -1,3 +1,4 @@
+// TODO(piece 3): pilfflonk's old path; delete once pilfflonk builds from the core.
 use crate::expr::print::{print_bounded, PrintCtx};
 use crate::types::pilout_info::{SetupResult, SymbolInfo};
 

@@ -1,7 +1,7 @@
 //! Strict pilout -> ConstraintSystem; rejects, never repairs.
 
 use num_bigint::BigUint;
-use pil2_pilout::pilout::{self as pb, SymbolType};
+use pil2_pilout::pilout as pb;
 
 use super::ir::{
     map_expr, visit, Boundary, ColType, Column, Constraint, ConstraintSystem, CustomCommit, Expr, Hint, HintField,
@@ -166,7 +166,6 @@ struct Tables<'a> {
     stage_widths: &'a [u32],
     custom_commits: &'a [pc::CustomCommit],
     n_fixed: u32,
-    n_periodic: u32,
     n_air_values: usize,
     n_airgroup_values: usize,
     num_challenges: &'a [u32],
@@ -219,10 +218,7 @@ fn lower_operand(o: &pc::Operand, parent: usize, t: &Tables) -> Result<Expr, Pil
             within(f.idx < t.n_fixed, parent, "fixed column out of range")?;
             Expr::Col { col: ColType::Fixed, commit_id: None, id: f.idx, offset: i64::from(f.row_offset) }
         }
-        O::PeriodicCol(p) => {
-            within(p.idx < t.n_periodic, parent, "periodic column out of range")?;
-            Expr::Col { col: ColType::Fixed, commit_id: None, id: p.idx, offset: i64::from(p.row_offset) }
-        }
+        O::PeriodicCol(_) => return Err(bad(parent, "a periodic column operand, which the STARK does not read")),
         O::PublicValue(idx) => {
             check_public(t.n_publics, *idx, parent)?;
             Expr::Public(*idx)
@@ -250,7 +246,7 @@ pub(crate) fn check_public(n_publics: u32, idx: u32, parent: usize) -> Result<()
     within(idx < n_publics, parent, "public value out of range")
 }
 
-/// The proof-value index is bounded by the sum over stages (per-stage vs global idx is unconfirmed).
+/// The proof-value index is global: bounded by the sum over stages.
 pub(crate) fn check_proof_value(per_stage: &[u32], idx: u32, parent: usize) -> Result<(), PiloutError> {
     within(u64::from(idx) < per_stage.iter().map(|n| u64::from(*n)).sum(), parent, "proof value out of range")
 }
@@ -382,7 +378,7 @@ fn staged(cells: Vec<(String, Lengths)>, stages: &[u32]) -> Result<Vec<NamedValu
     Ok(stages.iter().enumerate().map(|(i, st)| NamedValue { name: at(i).0, stage: *st, lengths: at(i).1 }).collect())
 }
 
-/// Lowers air (`airgroup`, `air`) of `pilout`: only that air, its symbols and its hints are read.
+/// Lowers air (`airgroup`, `air`) of `pilout`: `from_pilout_core` over that air and `from_pb`'s globals.
 pub fn from_pilout(
     pilout: &pb::PilOut,
     airgroup: usize,
@@ -393,25 +389,7 @@ pub fn from_pilout(
     let unknown = PiloutError::UnknownAir { airgroup, air };
     let ag = pilout.air_groups.get(airgroup).ok_or(unknown.clone())?;
     let a = pc::air_of(ag.airs.get(air).ok_or(unknown)?, airgroup, air)?;
-    let at =
-        |g: Option<u32>, x: Option<u32>| g.map(|g| g as usize) == Some(airgroup) && x.map(|x| x as usize) == Some(air);
-    let own = |s: &&pb::Symbol| {
-        let agv = s.r#type == SymbolType::AirGroupValue as i32;
-        s.air_group_id.is_none_or(|g| g as usize == airgroup) && (agv || s.air_id.is_none_or(|x| x as usize == air))
-    };
-    let globals = PiloutCore {
-        num_challenges: pilout.num_challenges.clone(),
-        num_proof_values: pilout.num_proof_values.clone(),
-        num_public_values: pilout.num_public_values,
-        air_groups: Vec::new(),
-        symbols: (pilout.symbols.iter().filter(own))
-            .filter_map(|s| pc::symbol_of(s).transpose())
-            .collect::<Result<_, _>>()?,
-        hints: (pilout.hints.iter().filter(|h| at(h.air_group_id, h.air_id)))
-            .map(pc::hint_of)
-            .collect::<Result<_, _>>()?,
-    };
-    lower(&globals, &pc::air_group_values(ag)?, &a, airgroup, air, field, opening)
+    lower(&PiloutCore::globals_of(pilout)?, &pc::air_group_values(ag)?, &a, airgroup, air, field, opening)
 }
 
 /// Lowers air (`airgroup`, `air`) of `core`.
@@ -460,11 +438,13 @@ fn lower(
     check_limits(core, a)?;
     let unknown = || PiloutError::UnknownAir { airgroup, air };
     let (g32, a32) = (u32::try_from(airgroup).map_err(|_| unknown())?, u32::try_from(air).map_err(|_| unknown())?);
+    if a.constraints.is_empty() {
+        return Err(PiloutError::NoConstraints { airgroup, air });
+    }
     let tables = Tables {
         stage_widths: &a.stage_widths,
         custom_commits: &a.custom_commits,
         n_fixed: a.n_fixed_cols,
-        n_periodic: a.n_periodic_cols,
         n_air_values: a.air_values.len(),
         n_airgroup_values: agvs.len(),
         num_challenges: &core.num_challenges,
@@ -533,19 +513,26 @@ fn lower(
             Ok(Hint { name: h.name.clone(), fields })
         })
         .collect::<Result<Vec<_>, PiloutError>>()?;
+    let n_publics = core.num_public_values;
     let custom_commits = a
         .custom_commits
         .iter()
-        .map(|c| CustomCommit {
-            name: c.name.clone(),
-            public_values: c.public_values.clone(),
-            stage_widths: c.stage_widths.clone(),
+        .map(|c| match c.public_values.iter().find(|&&idx| idx >= n_publics) {
+            Some(&idx) => Err(PiloutError::CommitPublic { commit: c.name.clone(), idx, declared: n_publics }),
+            None => Ok(CustomCommit {
+                name: c.name.clone(),
+                public_values: c.public_values.clone(),
+                stage_widths: c.stage_widths.clone(),
+            }),
         })
-        .collect();
+        .collect::<Result<_, _>>()?;
     let publics = named(global(core, SymbolKind::PublicValue), |s, k| {
         let (name, lengths) = cell(s, k);
         Ok(NamedValue { name, stage: 1, lengths })
     })?;
+    if publics.len() != n_publics as usize {
+        return Err(PiloutError::PublicCount { declared: n_publics, named: publics.len() });
+    }
     let cells = |kind, air| named(of_air(core, kind, g32, air), |s, k| Ok(cell(s, k)));
     let air_values = staged(cells(SymbolKind::AirValue, Some(a32))?, &a.air_values)?;
     let agv_stages: Vec<u32> = agvs.iter().map(|v| v.stage).collect();

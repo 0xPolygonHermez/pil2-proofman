@@ -27,7 +27,7 @@ pub fn full(mut p: PilOut) -> Option<Full> {
         let settings = StarkSettings { initial_blowup_factor: Some(bits), ..Default::default() };
         let ss = generate_stark_struct(&settings, N_BITS, "blake3");
         let Some(run) = common::run(&p, 0, 0, ss.n_bits_ext - ss.n_bits) else { continue };
-        let r = stark_setup(&p, 0, 0, &ss, &PrepareOptions::default()).ok()?;
+        let r = stark_setup(&p, 0, 0, &ss, &PrepareOptions::default(), &Default::default()).ok()?;
         let si = StarkInfo::from_json(&serde_json::to_value(&r.starkinfo).ok()?).ok()?;
         let vi = VerifierInfo::try_from(&r.pil_code.verifier_info).ok()?;
         return Some(Full { run, si, vi });

@@ -18,6 +18,18 @@ use crate::pil::prepare::PrepareOptions;
 use crate::types::stark_info::{StarkInfo, VerifierInfo};
 use crate::types::stark_struct::StarkStruct;
 
+/// What names a key beside its pilout air; each `None` takes the pilout's.
+#[derive(Clone, Debug, Default)]
+pub struct KeyIdentity {
+    pub name: Option<String>,
+    /// The key's (airgroup id, air id).
+    pub ids: Option<(usize, usize)>,
+    /// Basic airs only: what their transcript and stage-1 contribution absorb.
+    pub circuit_type: Option<u64>,
+    /// The proof travels as a Merkle multiproof.
+    pub multiproof: bool,
+}
+
 /// Assemble the pil info of one air through the thin core.
 ///
 /// Fails on a pilout the core rejects, a starkStruct that does not fit the air, and a constraint
@@ -29,6 +41,7 @@ pub fn stark_setup(
     air_id: usize,
     stark_struct: &StarkStruct,
     options: &PrepareOptions,
+    key: &KeyIdentity,
 ) -> Result<PilInfoResult> {
     let at = || format!("the STARK setup of air {air_id} of airgroup {airgroup_id}");
     let failed = |step: &str, e: &dyn std::fmt::Debug| anyhow!("{}: {step}: {e:?}", at());
@@ -58,6 +71,8 @@ pub fn stark_setup(
         n_bits: stark_struct.n_bits as u32,
         n_bits_ext: stark_struct.n_bits_ext as u32,
         c_exp_id: exprs.roles.c_exp as u32,
+        circuit_type: key.circuit_type,
+        multiproof: key.multiproof,
     };
     let emitted =
         emit_prover(&cs, &im, &lay, &ops, &chk, exprs, &EmitParams { air_id, airgroup_id }).with_context(at)?;
@@ -65,7 +80,9 @@ pub fn stark_setup(
 
     // the 128-bit gate sits inside the solve
     let ldt = solve_low_degree_test(stark_struct, core.verifier.fri_batch_size.max(1) as u64);
-    let starkinfo = build_starkinfo_output_from_core(&core, stark_struct, &ldt, airgroup_id, air_id, None, &air_name)?;
+    let name = key.name.as_deref().unwrap_or(&air_name);
+    let (key_airgroup, key_air) = key.ids.unwrap_or((airgroup_id, air_id));
+    let starkinfo = build_starkinfo_output_from_core(&core, stark_struct, &ldt, key_airgroup, key_air, name)?;
     let mut pil_code = emitted.code;
     let si = StarkInfo::from_json(&serde_json::to_value(&starkinfo)?)?;
     let vi = VerifierInfo::try_from(&pil_code.verifier_info)?;
@@ -109,7 +126,9 @@ mod tests {
         (0..1000u64)
             .filter_map(|seed| {
                 let p = sized(common::random_pilout(seed).0);
-                (1..=3).find_map(|b| stark_setup(&p, 0, 0, stark_struct(b), &opts).ok()).map(|r| (seed, r))
+                (1..=3)
+                    .find_map(|b| stark_setup(&p, 0, 0, stark_struct(b), &opts, &KeyIdentity::default()).ok())
+                    .map(|r| (seed, r))
             })
             .take(n)
             .collect()
@@ -145,7 +164,7 @@ mod tests {
             vec![common::sub(common::witness(0, 0), common::constant("1"))],
             vec![common::first_row(0)],
         ));
-        let err = match stark_setup(&p, 0, 0, stark_struct(1), &PrepareOptions::default()) {
+        let err = match stark_setup(&p, 0, 0, stark_struct(1), &PrepareOptions::default(), &KeyIdentity::default()) {
             Ok(_) => panic!("a firstRow constraint was accepted"),
             Err(e) => format!("{e:#}"),
         };
@@ -164,7 +183,9 @@ mod tests {
             crate::types::stark_struct::LowDegreeTest::Fri(f) => f.log_degrees[1] += 1,
             crate::types::stark_struct::LowDegreeTest::Stir(f) => f.log_degrees[1] += 1,
         }
-        let run = std::panic::catch_unwind(|| stark_setup(&p, 0, 0, &ss, &PrepareOptions::default()));
+        let run = std::panic::catch_unwind(|| {
+            stark_setup(&p, 0, 0, &ss, &PrepareOptions::default(), &KeyIdentity::default())
+        });
         let msg = match run {
             Ok(r) => panic!("a refused schedule set up: ok={}", r.is_ok()),
             Err(e) => e.downcast_ref::<String>().cloned().or_else(|| e.downcast_ref::<&str>().map(|s| s.to_string())),

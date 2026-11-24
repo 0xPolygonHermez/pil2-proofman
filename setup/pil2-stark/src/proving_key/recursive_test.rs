@@ -226,15 +226,18 @@ pub fn gen_recursive_test_setup(
     settings.initial_blowup_factor = Some(blowup);
     let stark_struct = generate_stark_struct(&settings, n_bits_air, hash);
 
-    let pil_info_result = crate::pil::stark_setup::stark_setup(pilout, 0, 0, &stark_struct, &Default::default())?;
+    // The test circuit is proven as air 0 of airgroup 0.
+    let key = crate::pil::stark_setup::KeyIdentity {
+        name: Some(NAME_FILE.into()),
+        circuit_type: Some(proofman_common::circuit_type_of(0, 1)),
+        ..Default::default()
+    };
+    let pil_info_result = crate::pil::stark_setup::stark_setup(pilout, 0, 0, &stark_struct, &Default::default(), &key)?;
 
     // -------------------------------------------------------------------------
     // Step 10: Build and write starkinfo JSON.
     // -------------------------------------------------------------------------
-    let mut starkinfo_output = pil_info_result.starkinfo;
-    // The test circuit is proven as air 0 of airgroup 0.
-    starkinfo_output.circuit_type = Some(proofman_common::circuit_type_of(0, 1));
-    starkinfo_output.name = NAME_FILE.into();
+    let starkinfo_output = pil_info_result.starkinfo;
     tracing::info!(
         "Circuit '{}' low-degree test: {}",
         circom_name,

@@ -1,4 +1,5 @@
 //! Global constraints.
+//! TODO(piece 3): wire into globalConstraints.json and read `PiloutCore`, not `pb`.
 
 use pil2_pilout::pilout::{self as pb, global_expression as gx, global_operand as go};
 

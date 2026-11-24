@@ -319,6 +319,7 @@ pub fn generate_pil_code(
     // Pre-compute witness symbol index for O(1) lookups in fix_commit_pol
     let witness_index = build_witness_index(symbols, params.air_id, params.airgroup_id);
 
+    // TODO(piece 3): qVerifier from `lower_to_code`, delete this generator
     let mut q_verifier =
         generate_constraint_polynomial_verifier_code(params, symbols, expressions, &mut ev_map_items, &witness_index)?;
 

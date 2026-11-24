@@ -300,7 +300,7 @@ pub fn random_pilout_in(seed: u64, opening: Opening) -> (pb::PilOut, ConstraintS
             .collect();
         let p = pilout(&["a", "b", "c", "d"], &[], exprs, cons);
         let Ok(cs) = from_pilout(&p, 0, 0, &gl(), opening) else { continue };
-        let degs: Vec<u32> = cs.constraints.iter().map(|c| degree(&cs, &c.e)).collect();
+        let degs: Vec<u32> = cs.constraints.iter().map(|c| degree(&cs, &c.e).unwrap()).collect();
         if degs.iter().all(|d| (1..=24).contains(d)) {
             return (p, cs);
         }

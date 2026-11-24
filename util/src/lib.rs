@@ -1,4 +1,7 @@
 pub mod cli;
+
+/// The starkinfo key format: the setup writes it, the provers refuse any other (2: canonical expression and im order).
+pub const KEY_VERSION: u32 = 2;
 pub mod timer_macro;
 use std::ffi::c_void;
 

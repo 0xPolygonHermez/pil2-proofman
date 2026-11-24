@@ -139,7 +139,8 @@ fn cm_pols(
     };
     for (k, &e) in im.exprs.iter().enumerate() {
         let at = |t: &[u32]| t.get(e as usize).copied().ok_or_else(|| Unresolved(format!("expression {e}")));
-        let stage = if params.im_pols_stages { at(&stages)? } else { n };
+        // a fixed-only im is still a witness column: stage 1 at the earliest
+        let stage = if params.im_pols_stages { at(&stages)?.max(1) } else { n };
         m.push(pol(format!("{}.ImPol", params.air_name), stage, at(&dims)?, true));
         debug_assert_eq!(m.len(), crate::core::im::im_column_id(cs, k) as usize + 1);
     }
@@ -182,11 +183,7 @@ fn challenges(cs: &ConstraintSystem, params: &LayoutParams) -> (Vec<ChallengeEnt
     let entry = |name: &str, stage, stage_id| ChallengeEntry { name: name.into(), stage, dim: ext, stage_id };
     let mut m: Vec<ChallengeEntry> = ch.iter().map(|c| entry(&c.2, c.0, c.1)).collect();
     let vc = m.len();
-    m.push(entry("std_vc", n + 1, 0));
-    // today's cExp builder registers `std_xi` only when there is a constraint
-    if !cs.constraints.is_empty() {
-        m.push(entry("std_xi", n + 2, 0));
-    }
+    m.extend([entry("std_vc", n + 1, 0), entry("std_xi", n + 2, 0)]);
     if params.deep_challenges {
         m.extend([entry("std_vf1", n + 3, 0), entry("std_vf2", n + 3, 1)]);
     }
@@ -220,13 +217,13 @@ fn number_stages(m: &mut [PolMap]) {
     }
 }
 
-/// Dimension of today's cExp: a fold of two or more roots carries `std_vc`, a lone root its own, none is 1.
+/// Dimension of today's cExp: a fold of two or more roots carries `std_vc`, a lone root its own.
 pub fn quotient_dim(cs: &ConstraintSystem, im: &ImChoice) -> Result<u32, LayoutError> {
     let roots = cs.constraints.iter().map(|c| &c.e);
     let ims: Vec<Expr> = im.exprs.iter().map(|&e| Expr::Ref(e)).collect();
     let all: Vec<&Expr> = roots.chain(&ims).collect();
     Ok(match all.as_slice() {
-        [] => 1,
+        [] => return Err(LayoutError::Inconsistent { what: "an air with no constraint".into() }),
         [e] => dim(cs, e)?,
         _ => cs.field.ext_dim() as u32,
     })

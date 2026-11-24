@@ -101,6 +101,7 @@ fn lowers_column_kinds_and_offsets() {
     p.num_challenges = vec![1];
     p.num_public_values = 3;
     p.symbols.push(symbol("c", SymbolType::Challenge, 1, 0));
+    p.symbols.extend((0..3).map(|i| symbol("p", SymbolType::PublicValue, 1, i)));
     p.air_groups[0].airs[0].air_values = vec![pb::AirValue { stage: 1 }];
     let cs = from_pilout(&p, 0, 0, &gl(), Opening::Deep).unwrap();
     let e0 =
@@ -158,10 +159,10 @@ fn degree_follows_rules() {
         mul_e(Expr::Challenge { stage: 1, stage_id: 0 }, col(0, 0)),
         Expr::Add(Box::new(ab), Box::new(col(0, 0))),
     ];
-    let d = |e: &Expr| degree(&cs, &Expr::Ref(find(&cs, e)));
+    let d = |e: &Expr| degree(&cs, &Expr::Ref(find(&cs, e))).unwrap();
     assert_eq!(bodies.each_ref().map(d), [2, 3, 1, 1, 2]);
-    assert_eq!(degree(&cs, &Expr::Const(BigUint::from(3u32))), 0);
-    assert_eq!(degree(&cs, &Expr::Neg(Box::new(col(0, 0)))), 1);
+    assert_eq!(degree(&cs, &Expr::Const(BigUint::from(3u32))), Ok(0));
+    assert_eq!(degree(&cs, &Expr::Neg(Box::new(col(0, 0)))), Ok(1));
 }
 
 /// Every air of every example pilout lowers, the global constraints too.
@@ -240,4 +241,30 @@ fn rejects_surplus_value_symbols() {
     let mut p = pilout(&["a"], &[], vec![add(witness(0, 0), constant("1"))], vec![every_row(0)]);
     p.symbols.push(symbol("av", SymbolType::AirValue, 1, 0));
     assert!(from_pilout(&p, 0, 0, &gl(), Opening::Deep).is_err());
+}
+
+#[test]
+fn rejects_a_periodic_operand() {
+    let periodic = op(operand::Operand::PeriodicCol(operand::PeriodicCol { idx: 0, row_offset: 0 }));
+    let mut p = pilout(&["a"], &[], vec![sub(witness(0, 0), periodic)], vec![every_row(0)]);
+    p.air_groups[0].airs[0].periodic_cols = vec![Default::default()];
+    let err = from_pilout(&p, 0, 0, &gl(), Opening::Deep).unwrap_err();
+    assert!(matches!(err, PiloutError::BadOperand { expr: 0, .. }), "{err:?}");
+}
+
+#[test]
+fn publics_are_tied_to_num_public_values() {
+    let mut p = pilout(&["a"], &[], vec![sub(witness(0, 0), constant("1"))], vec![every_row(0)]);
+    p.num_public_values = 2;
+    p.symbols.push(symbol("p", SymbolType::PublicValue, 1, 0));
+    let err = from_pilout(&p, 0, 0, &gl(), Opening::Deep).unwrap_err();
+    assert_eq!(err, PiloutError::PublicCount { declared: 2, named: 1 });
+    p.symbols.push(symbol("q", SymbolType::PublicValue, 1, 1));
+    p.air_groups[0].airs[0].custom_commits = vec![pb::CustomCommit {
+        name: Some("rom".into()),
+        public_values: vec![pb::global_operand::PublicValue { idx: 2 }],
+        ..Default::default()
+    }];
+    let err = from_pilout(&p, 0, 0, &gl(), Opening::Deep).unwrap_err();
+    assert_eq!(err, PiloutError::CommitPublic { commit: "rom".into(), idx: 2, declared: 2 });
 }

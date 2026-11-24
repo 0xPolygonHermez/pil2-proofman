@@ -50,7 +50,8 @@ fn sections(l: &Layout) -> BTreeMap<String, u32> {
 
 #[test]
 fn witness_columns_keep_pilout_order() {
-    let cs = cs_of(&pilout(&["z", "a", "m"], &["F1", "F0"], vec![], vec![]));
+    let cs =
+        cs_of(&pilout(&["z", "a", "m"], &["F1", "F0"], vec![sub(witness(0, 0), constant("1"))], vec![every_row(0)]));
     let l = lay_of(&cs, &[], 0);
     let cols: Vec<_> =
         l.cm_pols_map.iter().map(|p| (p.name.as_str(), p.stage, p.dim, p.stage_id, p.stage_pos)).collect();
@@ -101,6 +102,16 @@ fn im_pols_stages_true() {
     // a promoted expression that reads a stage-2 column lands in stage 2 either way
     let l = layout(&cs, &choice(&[1]), &LayoutParams { im_pols_stages: true, ..lp(0) }).unwrap();
     assert_eq!((l.cm_pols_map[4].stage, l.cm_pols_map[4].dim), (2, 3));
+}
+
+/// A fixed-only im is still a witness column: stage 1, never 0.
+#[test]
+fn im_pols_stages_true_fixed_only_im_is_stage_1() {
+    let e = vec![mul(fixed(0), fixed(1)), mul(exp(0), witness(0, 0))];
+    let cs = cs_of(&pilout(&["a"], &["F0", "F1"], e, vec![every_row(1)]));
+    let l = layout(&cs, &choice(&[0]), &LayoutParams { im_pols_stages: true, ..lp(0) }).unwrap();
+    assert_eq!(l.cm_pols_map[1].stage, 1);
+    assert!(l.map_sections_n.iter().all(|(k, _)| k != "cm0"));
 }
 
 #[test]
@@ -325,7 +336,7 @@ fn doubling_chain_is_not_inlined() {
 // ---- projection ------------------------------------------------------------------------------
 
 fn params() -> StarkParams {
-    StarkParams { n_bits: 4, n_bits_ext: 5, c_exp_id: 7 }
+    StarkParams { n_bits: 4, n_bits_ext: 5, c_exp_id: 7, circuit_type: None, multiproof: false }
 }
 
 /// Everything `stark_info` reads, for the two-stage system with e0 promoted.
@@ -364,7 +375,7 @@ fn projection_has_no_decisions() {
     assert_eq!(core.prover.im_exp_ids, im.exprs);
     assert_eq!(core.verifier.fri_batch_size, fri_batch_size(&o));
     // the parameters are copied and nothing else moves with them
-    let (_, _, _, _, core2, _) = projected(&StarkParams { n_bits: 11, n_bits_ext: 13, c_exp_id: 3 });
+    let (_, _, _, _, core2, _) = projected(&StarkParams { c_exp_id: 3, n_bits: 11, n_bits_ext: 13, ..params() });
     let want = StarkInfoCore {
         verifier: VerifierView { n_bits: 11, n_bits_ext: 13, c_exp_id: 3, ..core.verifier.clone() },
         prover: core.prover.clone(),
@@ -383,9 +394,8 @@ fn boundaries_are_every_row_only_for_deep() {
         let o = openings(cs, &im, &l).unwrap();
         stark_info(cs, &im, &chk, &l, &o, &params()).unwrap().verifier.boundaries
     };
-    // Deep: always everyRow, even with no constraint
+    // Deep: always everyRow
     assert_eq!(project(&system(chain(), &[1]), true), [Boundary::EveryRow]);
-    assert_eq!(project(&system(chain(), &[]), true), [Boundary::EveryRow]);
     // Shplonk keeps pilfflonk's, distinct in first-appearance order
     let e = vec![sub(witness(0, 0), constant("1"))];
     let cons = vec![last_row(0), every_row(0), first_row(0), last_row(0), every_frame(0, 0, 1)];

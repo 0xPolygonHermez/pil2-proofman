@@ -13,7 +13,6 @@ pub fn build_starkinfo_output_from_core(
     ldt: &LowDegreeTest,
     airgroup_id: usize,
     air_id: usize,
-    circuit_type: Option<u64>,
     air_name: &str,
 ) -> anyhow::Result<StarkInfoOutput> {
     let security = SecurityInfo {
@@ -22,10 +21,8 @@ pub fn build_starkinfo_output_from_core(
         regime: ldt.regime_identifier().to_string(),
     };
     let ss = stark_struct_output(stark_struct, ldt);
-    let mut out = pil_info::core::project::starkinfo_output(core, air_name, airgroup_id, air_id, ss, Some(security))
-        .map_err(|e| anyhow::anyhow!("starkinfo: {e:?}"))?;
-    out.circuit_type = circuit_type;
-    Ok(out)
+    pil_info::core::project::starkinfo_output(core, air_name, airgroup_id, air_id, ss, Some(security))
+        .map_err(|e| anyhow::anyhow!("starkinfo: {e:?}"))
 }
 
 /// The stark struct with the solved query counts and grinding bits.
@@ -75,6 +72,7 @@ pub fn compute_log_folding_factors(stark_struct: &StarkStruct) -> Vec<u32> {
 /// test the stark struct selects, for a DEEP polynomial batching `batch_size`
 /// openings. The 128-bit JBR target and the geometry (rate, tree arity, pow
 /// bits) come from the stark struct, as the FRI-only callers always did.
+/// The gate covers the low-degree test only: the DEEP-ALI terms (~qDeg, nConstraints over |GL³| ≈ 2^192) are negligible.
 pub fn solve_low_degree_test(stark_struct: &StarkStruct, batch_size: u64) -> LowDegreeTest {
     let ldt = solve_low_degree_test_unchecked(stark_struct, batch_size);
     match security::check::check_low_degree_test(stark_struct, &ldt, batch_size) {

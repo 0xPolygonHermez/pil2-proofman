@@ -7,6 +7,7 @@ use std::collections::BTreeSet;
 use common::*;
 use num_bigint::BigUint;
 use pil2_pilout::pilout as pb;
+use pil_info::core::from_pilout::{from_pilout, PiloutError};
 use pil_info::core::im::{check_im, im_order, substitute, Checked, ImError};
 use pil_info::core::layout::quotient_dim;
 use pil_info::core::ir::{degree, eval_expr, visit, Boundary, ColRef, ColType, Env, Expr};
@@ -96,7 +97,7 @@ fn substitute_resolves_refs_and_promoted_become_columns() {
     let mut refs = 0;
     visit(&sub_root, &mut |n| refs += matches!(n, Expr::Ref(_)) as u32);
     assert_eq!(refs, 0, "no Ref survives");
-    assert_eq!(degree(&cs, &sub_root), 2);
+    assert_eq!(degree(&cs, &sub_root), Ok(2));
     // each promoted Ref is its own distinct, offset-0 column past the witness columns
     let cols: Vec<Expr> = im.exprs.iter().map(|i| substitute(&cs, &im, &Expr::Ref(*i)).unwrap()).collect();
     let mut ids = Vec::new();
@@ -116,7 +117,7 @@ fn substitute_resolves_refs_and_promoted_become_columns() {
     for (c, i) in cols.iter().zip(&im.exprs) {
         let Expr::Col { id, .. } = c else { unreachable!() };
         let k = ColRef { col: ColType::Witness, commit_id: None, id: *id, offset: 0 };
-        full.cols.insert(k, eval_expr(&cs, &Expr::Ref(*i), &env));
+        full.cols.insert(k, eval_expr(&cs, &Expr::Ref(*i), &env).unwrap());
     }
     assert_eq!(eval_expr(&cs, &sub_root, &full), eval_expr(&cs, &root, &env));
     // an empty choice only inlines
@@ -214,18 +215,17 @@ fn memo_hazard_regression() {
         let im = im_order(&cs, &set).unwrap();
         let got = check_im(&cs, &im, policy.max_constraint_degree() as u32, stark_floor(&policy))
             .unwrap_or_else(|e| panic!("{policy:?}: set rejected: {e:?}"));
-        let roots = cs.constraints.iter().map(|c| degree(&cs, &substitute(&cs, &im, &c.e).unwrap())).max().unwrap();
+        let roots =
+            cs.constraints.iter().map(|c| degree(&cs, &substitute(&cs, &im, &c.e).unwrap()).unwrap()).max().unwrap();
         assert_eq!((roots, got.q_deg), (2, 2), "{policy:?}: the im root drives q_deg");
     }
 }
 
 #[test]
-fn empty_system_has_q_deg_zero_or_the_floor() {
-    let cs = system(chain(), &[]);
-    let want = Checked { q_deg: 0, root_degrees: vec![], im_degrees: vec![] };
-    assert_eq!(check_im(&cs, &choice(&[]), 3, false).unwrap(), want);
-    assert_eq!(check_im(&cs, &choice(&[]), 3, true).unwrap().q_deg, 1);
-    assert_eq!(search_im(&cs, &DegreePolicy::FromBlowup { blowup_bits: 1 }, 1).unwrap(), BTreeSet::new());
+fn an_air_without_constraints_is_rejected() {
+    let p = pilout(&["a", "b", "c", "d"], &[], chain(), vec![]);
+    let err = from_pilout(&p, 0, 0, &gl(), Opening::Deep).unwrap_err();
+    assert_eq!(err, PiloutError::NoConstraints { airgroup: 0, air: 0 });
 }
 
 /// 64 levels of `x_{k+1} = x_k + x_k`: inlining would be 2^64 nodes, the memoised degree is linear.

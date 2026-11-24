@@ -590,11 +590,11 @@ pub fn gen_recursivef_setup(
 
     let stark_struct_rf = generate_stark_struct(settings, n_bits_rf, config.hash);
 
+    let key = crate::pil::stark_setup::KeyIdentity { name: Some("Recursivef".into()), ..Default::default() };
     let pil_result_rf =
-        crate::pil::stark_setup::stark_setup(pilout_inner, 0, 0, &stark_struct_rf, &Default::default())?;
+        crate::pil::stark_setup::stark_setup(pilout_inner, 0, 0, &stark_struct_rf, &Default::default(), &key)?;
 
-    let mut starkinfo_rf = pil_result_rf.starkinfo;
-    starkinfo_rf.name = "Recursivef".into();
+    let starkinfo_rf = pil_result_rf.starkinfo;
     tracing::info!("Circuit 'recursivef' low-degree test: {}", starkinfo_rf.stark_struct.low_degree_test.describe());
     let starkinfo_rf_json = crate::output::json::to_json_string(&starkinfo_rf)?;
     let starkinfo_rf_path = recursivef_dir.join("recursivef.starkinfo.json");

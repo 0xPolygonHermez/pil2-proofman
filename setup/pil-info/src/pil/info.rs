@@ -1,5 +1,6 @@
 //! Orchestrates the symbolic passes for a single air: `run` from a pilout, or `pil_info` after
 //! `prepare_pil`.
+//! TODO(piece 3): pilfflonk's old path; delete once pilfflonk builds from the core.
 
 use pil2_pilout::pilout as pb;
 

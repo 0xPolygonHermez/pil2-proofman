@@ -286,12 +286,15 @@ pub fn gen_compressed_final_setup(config: &CompressedFinalConfig<'_>, witness_tr
         bail!("Compressed final pilout has no AIR groups");
     }
 
+    let key = crate::pil::stark_setup::KeyIdentity {
+        name: Some("compressed_final".into()),
+        multiproof,
+        ..Default::default()
+    };
     let pil_info_result =
-        crate::pil::stark_setup::stark_setup(pilout, 0, 0, &compressed_stark_struct, &Default::default())?;
+        crate::pil::stark_setup::stark_setup(pilout, 0, 0, &compressed_stark_struct, &Default::default(), &key)?;
 
-    let mut starkinfo_output = pil_info_result.starkinfo;
-    starkinfo_output.name = "compressed_final".into();
-    starkinfo_output.multiproof = multiproof;
+    let starkinfo_output = pil_info_result.starkinfo;
     tracing::info!(
         "Circuit '{}' low-degree test: {}",
         template,

@@ -121,12 +121,12 @@ fn a_proof_value_without_a_symbol_below_the_last_is_an_error() {
     assert!(matches!(lower(&p), Err(PiloutError::BadOperand { .. })), "{:?}", lower(&p).map(|c| c.proof_values));
 }
 
-/// A symbol of unknown type in another air fails the whole-pilout adapter, not this air.
+/// A symbol of unknown type anywhere fails both entries alike.
 #[test]
-fn a_bad_symbol_of_another_air_does_not_fail_this_air() {
+fn a_bad_symbol_of_another_air_fails_both_entries() {
     let mut p = base();
     p.symbols.push(pb::Symbol { r#type: 99, air_id: Some(1), ..symbol("z", SymbolType::WitnessCol, 1, 0) });
-    assert!(lower(&p).is_ok());
+    assert!(lower(&p).is_err());
     assert!(PiloutCore::from_pb(&p).is_err());
 }
 
@@ -235,7 +235,13 @@ fn a_hand_written_core_input_parses_and_lowers() {
 fn starkinfo_output_has_the_core_owned_keys() {
     let r = run_any(&pilout(&["a", "b", "c", "d"], &[], chain(), vec![every_row(3)]), 0, 0).expect("feasible");
     let out = core_out(&r);
-    let sp = StarkParams { n_bits: 4, n_bits_ext: 5, c_exp_id: out.exprs.roles.c_exp as u32 };
+    let sp = StarkParams {
+        n_bits: 4,
+        n_bits_ext: 5,
+        c_exp_id: out.exprs.roles.c_exp as u32,
+        circuit_type: None,
+        multiproof: false,
+    };
     let core = stark_info(&r.cs, &r.im, &r.chk, &out.lay, &out.ops, &sp).unwrap();
     let j = serde_json::to_value(starkinfo_output(&core, &r.air_name, 0, 0, (), None::<()>).unwrap()).unwrap();
     for k in ["cmPolsMap", "constPolsMap", "evMap", "openingPoints", "qDeg", "qDim", "nStages", "boundaries"] {

@@ -186,12 +186,12 @@ fn table_passes_match_inlining_on_random_pilouts() {
     for seed in 0..60 {
         let (_, cs) = random_pilout(seed);
         let env = small_env(&mut rng);
-        let (dg, dm, ev) = (degree_table(&cs), dim_table(&cs).unwrap(), eval_table(&cs, &env));
+        let (dg, dm, ev) = (degree_table(&cs).unwrap(), dim_table(&cs).unwrap(), eval_table(&cs, &env).unwrap());
         for i in 0..cs.exprs.len() {
             let flat = inlined(&cs, &Expr::Ref(i as u32));
-            assert_eq!(dg[i], degree(&cs, &flat), "degree seed {seed} expr {i}");
+            assert_eq!(Ok(dg[i]), degree(&cs, &flat), "degree seed {seed} expr {i}");
             assert_eq!(dm[i], dim(&cs, &flat).unwrap(), "dim seed {seed} expr {i}");
-            assert_eq!(ev[i], eval_expr(&cs, &flat, &env), "eval seed {seed} expr {i}");
+            assert_eq!(Ok(ev[i].clone()), eval_expr(&cs, &flat, &env), "eval seed {seed} expr {i}");
         }
     }
 }
@@ -216,16 +216,17 @@ fn table_passes_match_inlining_on_real_pilouts() {
             for a in 0..ag.airs.len() {
                 let Ok(cs) = from_pilout(&p, g, a, &gl(), Opening::Deep) else { continue };
                 let env = small_env(&mut rng);
-                let (dg, dm, ev) = (degree_table(&cs), dim_table(&cs).unwrap(), eval_table(&cs, &env));
+                let (dg, dm, ev) =
+                    (degree_table(&cs).unwrap(), dim_table(&cs).unwrap(), eval_table(&cs, &env).unwrap());
                 for (i, n) in inlined_sizes(&cs).into_iter().enumerate() {
                     if n > 1000 {
                         continue;
                     }
                     let flat = inlined(&cs, &Expr::Ref(i as u32));
                     let at = format!("{path:?} {g}/{a} expr {i}");
-                    assert_eq!(dg[i], degree(&cs, &flat), "{at}");
+                    assert_eq!(Ok(dg[i]), degree(&cs, &flat), "{at}");
                     assert_eq!(dm[i], dim(&cs, &flat).unwrap(), "{at}");
-                    assert_eq!(ev[i], eval_expr(&cs, &flat, &env), "{at}");
+                    assert_eq!(Ok(ev[i].clone()), eval_expr(&cs, &flat, &env), "{at}");
                     checked += 1;
                 }
             }
@@ -243,12 +244,12 @@ fn table_passes_finish_fast_on_a_doubling_chain() {
     }
     let cs = system(e, &[64]);
     let t = std::time::Instant::now();
-    let dg = degree_table(&cs);
+    let dg = degree_table(&cs).unwrap();
     let dm = dim_table(&cs).unwrap();
     let mut env = Env::default();
     env.cols.insert(ColRef { col: ColType::Witness, commit_id: None, id: 0, offset: 1 }, BigUint::from(3u32));
     env.cols.insert(ColRef { col: ColType::Witness, commit_id: None, id: 1, offset: 0 }, BigUint::from(5u32));
-    let ev = eval_table(&cs, &env);
+    let ev = eval_table(&cs, &env).unwrap();
     assert!(t.elapsed().as_secs() < 2, "{:?}", t.elapsed());
     assert_eq!((dg[64], dm[64]), (2, 1));
     assert_eq!(ev[64], (BigUint::from(15u32) << 64usize) % cs.field.modulus());

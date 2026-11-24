@@ -206,7 +206,7 @@ pub fn eval_code(code: &[CodeOperation], ctx: &LowerCtx, inp: &GlInputs) -> Resu
     at(&tmp, last.dest.id, "temporary")
 }
 
-/// TEMPORARY: `dag` against `vi`'s qVerifier code on three seeds; the error says "differs" on a mismatch.
+/// TODO(piece 3): delete once qVerifier comes from `lower_to_code`. `dag` against `vi`'s qVerifier code on three seeds; the error says "differs" on a mismatch.
 /// (`dag` is an added parameter: `si` and `vi` alone carry no DAG.)
 pub fn check_dag_parity(dag: &ConstraintDag, si: &StarkInfo, vi: &VerifierInfo) -> Result<()> {
     let ctx = lower_ctx(si)?;
@@ -436,7 +436,7 @@ mod tests {
             // an im column is its defining expression's value
             for (m, &e) in im.exprs.iter().enumerate() {
                 let id = im_column_id(cs, m);
-                let v = eval_expr(cs, &Expr::Ref(e), &env);
+                let v = eval_expr(cs, &Expr::Ref(e), &env).unwrap();
                 env.cols.insert(ColRef { col: ColType::Witness, commit_id: None, id, offset: 0 }, v.clone());
                 if let Some(j) = ev_of(id as u64, 0) {
                     inp.evals[j] = base(&v);
@@ -445,10 +445,10 @@ mod tests {
             let p = BigUint::from(P);
             let vc_at = si.challenges_map.iter().position(|c| c.name == "std_vc").unwrap();
             let vc = fe(inp.challenges[vc_at][0]);
-            let mut roots: Vec<BigUint> = cs.constraints.iter().map(|c| eval_expr(cs, &c.e, &env)).collect();
+            let mut roots: Vec<BigUint> = cs.constraints.iter().map(|c| eval_expr(cs, &c.e, &env).unwrap()).collect();
             for (m, &e) in im.exprs.iter().enumerate() {
                 let col = Expr::Col { col: ColType::Witness, commit_id: None, id: im_column_id(cs, m), offset: 0 };
-                roots.push(eval_expr(cs, &Expr::Sub(Box::new(col), Box::new(Expr::Ref(e))), &env));
+                roots.push(eval_expr(cs, &Expr::Sub(Box::new(col), Box::new(Expr::Ref(e))), &env).unwrap());
             }
             let mut it = roots.into_iter();
             let first = it.next().unwrap();

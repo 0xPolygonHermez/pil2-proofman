@@ -1,3 +1,4 @@
+// TODO(piece 3): the format_* pb readers go once pilfflonk, the emit round-trip and globals read the core.
 use indexmap::IndexMap;
 use num_bigint::BigUint;
 

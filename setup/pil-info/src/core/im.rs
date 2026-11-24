@@ -134,17 +134,17 @@ fn check_refs(cs: &ConstraintSystem) -> Result<(), ImError> {
 
 pub fn check_im(cs: &ConstraintSystem, im: &ImChoice, max_deg: u32, stark_min_q: bool) -> Result<Checked, ImError> {
     check_refs(cs)?;
-    let plain = degree_table(cs);
+    let plain = degree_table(cs).map_err(ImError::Unresolved)?;
     for &id in &im.exprs {
         if plain.get(id as usize).is_none_or(|d| *d == 0) {
             return Err(ImError::NotPromotable { expr: id });
         }
     }
     check_order(cs, im)?;
-    let read = degree_table_with(cs, &im.exprs);
+    let read = degree_table_with(cs, &im.exprs).map_err(ImError::Unresolved)?;
     let mut root_degrees = Vec::with_capacity(cs.constraints.len());
     for (k, c) in cs.constraints.iter().enumerate() {
-        let d = degree_of(&c.e, &read).saturating_add(boundary_degree(&c.boundary));
+        let d = degree_of(&c.e, &read).map_err(ImError::Unresolved)?.saturating_add(boundary_degree(&c.boundary));
         if d > max_deg {
             return Err(ImError::RootTooHigh { constraint: k, degree: d, max: max_deg });
         }
@@ -153,7 +153,7 @@ pub fn check_im(cs: &ConstraintSystem, im: &ImChoice, max_deg: u32, stark_min_q:
     let mut im_degrees = Vec::with_capacity(im.exprs.len());
     for &id in &im.exprs {
         // the body, not `Ref(id)`: only the OTHER promoted ones read as columns
-        let d = degree_of(&cs.exprs[id as usize], &read);
+        let d = degree_of(&cs.exprs[id as usize], &read).map_err(ImError::Unresolved)?;
         if d > max_deg {
             return Err(ImError::ImTooHigh { expr: id, degree: d, max: max_deg });
         }

@@ -1,7 +1,6 @@
 //! Typed Expr, ConstraintSystem, the only traversal and degree.
 
 use std::collections::BTreeMap;
-use std::convert::Infallible;
 
 use num_bigint::BigUint;
 use serde::{Deserialize, Serialize};
@@ -207,9 +206,38 @@ fn table<T, E>(cs: &ConstraintSystem, mut node: impl FnMut(&Expr, &[T]) -> Resul
     Ok(t)
 }
 
-/// A table entry; a `Ref` past `t` breaks the topological numbering `from_pilout` guarantees.
-fn read<T: Clone>(t: &[T], id: ExprId) -> Result<T, Unresolved> {
-    t.get(id as usize).cloned().ok_or_else(|| Unresolved(format!("expression {id} read before it is numbered")))
+/// An operation with its operands' values, or a leaf other than `Ref`.
+enum Node<'a, T> {
+    Add(T, T),
+    Sub(T, T),
+    Mul(T, T),
+    Neg(T),
+    Leaf(&'a Expr),
+}
+
+/// THE fold behind degree, dim, stage and eval: `f` values a node from its operands', `Ref(i)` reads `t[i]`.
+fn fold<T: Clone>(e: &Expr, t: &[T], f: &impl Fn(Node<T>) -> Result<T, Unresolved>) -> Result<T, Unresolved> {
+    match e {
+        Expr::Add(a, b) => f(Node::Add(fold(a, t, f)?, fold(b, t, f)?)),
+        Expr::Sub(a, b) => f(Node::Sub(fold(a, t, f)?, fold(b, t, f)?)),
+        Expr::Mul(a, b) => f(Node::Mul(fold(a, t, f)?, fold(b, t, f)?)),
+        Expr::Neg(a) => f(Node::Neg(fold(a, t, f)?)),
+        // past `t` breaks the topological numbering `from_pilout` guarantees
+        Expr::Ref(id) => t
+            .get(*id as usize)
+            .cloned()
+            .ok_or_else(|| Unresolved(format!("expression {id} read before it is numbered"))),
+        leaf => f(Node::Leaf(leaf)),
+    }
+}
+
+/// The largest operand's value, `leaf` for a leaf (dim and stage).
+fn max_of(n: Node<u32>, leaf: impl Fn(&Expr) -> Result<u32, Unresolved>) -> Result<u32, Unresolved> {
+    match n {
+        Node::Add(a, b) | Node::Sub(a, b) | Node::Mul(a, b) => Ok(a.max(b)),
+        Node::Neg(a) => Ok(a),
+        Node::Leaf(e) => leaf(e),
+    }
 }
 
 /// `f` of each witness column, by id.
@@ -219,42 +247,36 @@ fn by_witness_id(cs: &ConstraintSystem, f: impl Fn(&Column) -> u32) -> Vec<Optio
     v
 }
 
+fn witness_at(witness: &[Option<u32>], id: u32) -> Result<u32, Unresolved> {
+    witness.get(id as usize).copied().flatten().ok_or_else(|| Unresolved(format!("witness column {id}")))
+}
+
 /// THE degree rule: columns 1, constants/challenges/values 0, `Ref(i)` = `t[i]`.
-pub fn degree_of(e: &Expr, t: &[u32]) -> u32 {
-    match e {
-        Expr::Add(a, b) | Expr::Sub(a, b) => degree_of(a, t).max(degree_of(b, t)),
-        Expr::Mul(a, b) => degree_of(a, t).saturating_add(degree_of(b, t)),
-        Expr::Neg(a) => degree_of(a, t),
-        Expr::Col { .. } => 1,
-        Expr::Const(_)
-        | Expr::Challenge { .. }
-        | Expr::Public(_)
-        | Expr::ProofValue(_)
-        | Expr::AirValue(_)
-        | Expr::AirgroupValue { .. } => 0,
-        Expr::Ref(id) => {
-            debug_assert!((*id as usize) < t.len(), "Ref {id} past the table: lowering numbers topologically");
-            t.get(*id as usize).copied().unwrap_or(0)
-        }
-    }
+pub fn degree_of(e: &Expr, t: &[u32]) -> Result<u32, Unresolved> {
+    fold(e, t, &|n| {
+        Ok(match n {
+            Node::Add(a, b) | Node::Sub(a, b) => a.max(b),
+            Node::Mul(a, b) => a.saturating_add(b),
+            Node::Neg(a) => a,
+            Node::Leaf(l) => u32::from(matches!(l, Expr::Col { .. })),
+        })
+    })
 }
 
 /// Degree of each expression as a `Ref` reads it: a `promoted` one is its column (1).
-pub fn degree_table_with(cs: &ConstraintSystem, promoted: &[ExprId]) -> Vec<u32> {
+pub fn degree_table_with(cs: &ConstraintSystem, promoted: &[ExprId]) -> Result<Vec<u32>, Unresolved> {
     // `t.len()` is the index of `e`
-    let t =
-        table(cs, |e, t| Ok::<_, Infallible>(if promoted.contains(&(t.len() as u32)) { 1 } else { degree_of(e, t) }));
-    t.unwrap_or_else(|never| match never {})
+    table(cs, |e, t| if promoted.contains(&(t.len() as u32)) { Ok(1) } else { degree_of(e, t) })
 }
 
 /// Degree of every expression, one pass in index order.
-pub fn degree_table(cs: &ConstraintSystem) -> Vec<u32> {
+pub fn degree_table(cs: &ConstraintSystem) -> Result<Vec<u32>, Unresolved> {
     degree_table_with(cs, &[])
 }
 
 /// `degree_of` over a fresh table; a pass over many expressions builds the table once instead.
-pub fn degree(cs: &ConstraintSystem, e: &Expr) -> u32 {
-    degree_of(e, &degree_table(cs))
+pub fn degree(cs: &ConstraintSystem, e: &Expr) -> Result<u32, Unresolved> {
+    degree_of(e, &degree_table(cs)?)
 }
 
 /// Dimension of `e`: the largest of its leaves (witness/values by stage, challenges extension), `Ref(i)` = `t[i]`.
@@ -264,22 +286,17 @@ fn dim_of(cs: &ConstraintSystem, witness: &[Option<u32>], e: &Expr, t: &[u32]) -
         Some(v) => Ok(if v.stage == 1 { 1 } else { ext }),
         None => Err(Unresolved(format!("{what} {i}"))),
     };
-    Ok(match e {
-        Expr::Add(a, b) | Expr::Sub(a, b) | Expr::Mul(a, b) => {
-            dim_of(cs, witness, a, t)?.max(dim_of(cs, witness, b, t)?)
-        }
-        Expr::Neg(a) => dim_of(cs, witness, a, t)?,
-        Expr::Col { col: ColType::Witness, id, .. } => {
-            witness.get(*id as usize).copied().flatten().ok_or_else(|| Unresolved(format!("witness column {id}")))?
-        }
+    let leaf = |e: &Expr| match e {
+        Expr::Col { col: ColType::Witness, id, .. } => witness_at(witness, *id),
         // fixed and custom columns are stage 0 (custom of another stage is rejected at ingestion)
-        Expr::Col { .. } | Expr::Const(_) | Expr::Public(_) => 1,
-        Expr::Challenge { .. } | Expr::AirgroupValue { airgroup: Some(_), .. } => ext,
-        Expr::AirValue(i) => by_stage(&cs.air_values, *i, "air value")?,
-        Expr::ProofValue(i) => by_stage(&cs.proof_values, *i, "proof value")?,
-        Expr::AirgroupValue { airgroup: None, id } => by_stage(&cs.airgroup_values, *id, "airgroup value")?,
-        Expr::Ref(id) => read(t, *id)?,
-    })
+        Expr::Col { .. } | Expr::Const(_) | Expr::Public(_) => Ok(1),
+        Expr::AirValue(i) => by_stage(&cs.air_values, *i, "air value"),
+        Expr::ProofValue(i) => by_stage(&cs.proof_values, *i, "proof value"),
+        Expr::AirgroupValue { airgroup: None, id } => by_stage(&cs.airgroup_values, *id, "airgroup value"),
+        // challenges and another airgroup's values
+        _ => Ok(ext),
+    };
+    fold(e, t, &|n| max_of(n, leaf))
 }
 
 /// Dimension of every expression, one pass in index order.
@@ -298,22 +315,17 @@ fn stage_of(cs: &ConstraintSystem, witness: &[Option<u32>], e: &Expr, t: &[u32])
     let at = |v: &[NamedValue], i: u32, what: &str| {
         v.get(i as usize).map(|x| x.stage).ok_or_else(|| Unresolved(format!("{what} {i}")))
     };
-    Ok(match e {
-        Expr::Add(a, b) | Expr::Sub(a, b) | Expr::Mul(a, b) => {
-            stage_of(cs, witness, a, t)?.max(stage_of(cs, witness, b, t)?)
-        }
-        Expr::Neg(a) => stage_of(cs, witness, a, t)?,
-        Expr::Col { col: ColType::Witness, id, .. } => {
-            witness.get(*id as usize).copied().flatten().ok_or_else(|| Unresolved(format!("witness column {id}")))?
-        }
-        Expr::Challenge { stage, .. } => *stage,
-        Expr::Public(_) => 1,
-        Expr::ProofValue(i) => at(&cs.proof_values, *i, "proof value")?,
-        Expr::AirValue(i) => at(&cs.air_values, *i, "air value")?,
-        Expr::AirgroupValue { airgroup: None, id } => at(&cs.airgroup_values, *id, "airgroup value")?,
-        Expr::Col { .. } | Expr::Const(_) | Expr::AirgroupValue { .. } => 0,
-        Expr::Ref(id) => read(t, *id)?,
-    })
+    let leaf = |e: &Expr| match e {
+        Expr::Col { col: ColType::Witness, id, .. } => witness_at(witness, *id),
+        Expr::Challenge { stage, .. } => Ok(*stage),
+        Expr::Public(_) => Ok(1),
+        Expr::ProofValue(i) => at(&cs.proof_values, *i, "proof value"),
+        Expr::AirValue(i) => at(&cs.air_values, *i, "air value"),
+        Expr::AirgroupValue { airgroup: None, id } => at(&cs.airgroup_values, *id, "airgroup value"),
+        // fixed/custom columns, constants and another airgroup's values
+        _ => Ok(0),
+    };
+    fold(e, t, &|n| max_of(n, leaf))
 }
 
 /// Stage of every expression, one pass in index order.
@@ -350,15 +362,10 @@ pub fn visit(e: &Expr, f: &mut impl FnMut(&Expr)) {
 }
 
 /// Value of `e` under `env` (a missing entry reads as 0), `Ref(i)` = `t[i]`.
-fn eval_of(cs: &ConstraintSystem, env: &Env, e: &Expr, t: &[Fe]) -> Fe {
+fn eval_of(cs: &ConstraintSystem, env: &Env, e: &Expr, t: &[Fe]) -> Result<Fe, Unresolved> {
     let p = cs.field.modulus();
     let get = |m: &BTreeMap<u32, Fe>, k: &u32| m.get(k).cloned().unwrap_or_default();
-    let ev = |x: &Expr| eval_of(cs, env, x, t);
-    match e {
-        Expr::Add(a, b) => (ev(a) + ev(b)) % p,
-        Expr::Sub(a, b) => (ev(a) + p - ev(b) % p) % p,
-        Expr::Mul(a, b) => (ev(a) * ev(b)) % p,
-        Expr::Neg(a) => (p - ev(a) % p) % p,
+    let leaf = |e: &Expr| match e {
         Expr::Const(c) => c % p,
         Expr::Col { col, commit_id, id, offset } => {
             let k = ColRef { col: *col, commit_id: *commit_id, id: *id, offset: *offset };
@@ -369,20 +376,26 @@ fn eval_of(cs: &ConstraintSystem, env: &Env, e: &Expr, t: &[Fe]) -> Fe {
         Expr::ProofValue(i) => get(&env.proof_values, i),
         Expr::AirValue(i) => get(&env.air_values, i),
         Expr::AirgroupValue { airgroup, id } => env.airgroup_values.get(&(*airgroup, *id)).cloned().unwrap_or_default(),
-        Expr::Ref(id) => {
-            debug_assert!((*id as usize) < t.len(), "Ref {id} past the table: lowering numbers topologically");
-            t.get(*id as usize).cloned().unwrap_or_default()
-        }
-    }
+        // operations and `Ref` never reach a leaf
+        _ => Fe::default(),
+    };
+    fold(e, t, &|n| {
+        Ok(match n {
+            Node::Add(a, b) => (a + b) % p,
+            Node::Sub(a, b) => (a + p - b % p) % p,
+            Node::Mul(a, b) => (a * b) % p,
+            Node::Neg(a) => (p - a % p) % p,
+            Node::Leaf(l) => leaf(l),
+        })
+    })
 }
 
 /// Value of every expression under `env`, one pass in index order.
-pub fn eval_table(cs: &ConstraintSystem, env: &Env) -> Vec<Fe> {
-    let t = table(cs, |e, t| Ok::<_, Infallible>(eval_of(cs, env, e, t)));
-    t.unwrap_or_else(|never| match never {})
+pub fn eval_table(cs: &ConstraintSystem, env: &Env) -> Result<Vec<Fe>, Unresolved> {
+    table(cs, |e, t| eval_of(cs, env, e, t))
 }
 
 /// Reference evaluator over the field (tests only), over a fresh table.
-pub fn eval_expr(cs: &ConstraintSystem, e: &Expr, env: &Env) -> Fe {
-    eval_of(cs, env, e, &eval_table(cs, env))
+pub fn eval_expr(cs: &ConstraintSystem, e: &Expr, env: &Env) -> Result<Fe, Unresolved> {
+    eval_of(cs, env, e, &eval_table(cs, env)?)
 }

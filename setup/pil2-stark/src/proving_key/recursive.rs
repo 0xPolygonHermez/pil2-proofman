@@ -715,13 +715,15 @@ pub fn gen_recursive_setup(
             );
 
             // Run pil_info to get real starkinfo/expressionsinfo/verifierinfo
+            let key = crate::pil::stark_setup::KeyIdentity {
+                name: Some(airgroup_pil_name.clone()),
+                ids: Some((config.airgroup_id, config.air_id)),
+                ..Default::default()
+            };
             let pil_info_result =
-                crate::pil::stark_setup::stark_setup(pilout, 0, 0, &stark_struct, &Default::default())?;
+                crate::pil::stark_setup::stark_setup(pilout, 0, 0, &stark_struct, &Default::default(), &key)?;
 
-            let mut starkinfo_output = pil_info_result.starkinfo;
-            starkinfo_output.airgroup_id = config.airgroup_id;
-            starkinfo_output.air_id = config.air_id;
-            starkinfo_output.name = airgroup_pil_name.clone();
+            let starkinfo_output = pil_info_result.starkinfo;
 
             // Say which low-degree test this circuit runs, with the solved schedule
             // (recursive2 is one circuit per airgroup, the others one per air).

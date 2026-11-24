@@ -359,10 +359,11 @@ pub fn gen_final_setup(config: &FinalSetupConfig<'_>, witness_tracker: &WitnessT
         bail!("vadcop_final pilout has no AIR groups");
     }
 
-    let pil_info_result = crate::pil::stark_setup::stark_setup(pilout, 0, 0, &final_stark_struct, &Default::default())?;
+    let key = crate::pil::stark_setup::KeyIdentity { name: Some("vadcop_final".into()), ..Default::default() };
+    let pil_info_result =
+        crate::pil::stark_setup::stark_setup(pilout, 0, 0, &final_stark_struct, &Default::default(), &key)?;
 
-    let mut starkinfo_output = pil_info_result.starkinfo;
-    starkinfo_output.name = "vadcop_final".into();
+    let starkinfo_output = pil_info_result.starkinfo;
     tracing::info!(
         "Circuit 'vadcop_final' low-degree test: {}",
         starkinfo_output.stark_struct.low_degree_test.describe()

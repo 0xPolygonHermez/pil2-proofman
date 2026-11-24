@@ -91,8 +91,14 @@ pub fn run_stats(opts: &StatsOptions) -> Result<()> {
             let prepare_opts = PrepareOptions { im_pols_stages: opts.im_pols_stages, inplace_stage_commit: true };
 
             tracing::info!("Computing stats for air '{}'", air_name);
-            let pil_result =
-                crate::pil::stark_setup::stark_setup(&pilout, ag_idx, air_idx, &stark_struct, &prepare_opts)?;
+            let pil_result = crate::pil::stark_setup::stark_setup(
+                &pilout,
+                ag_idx,
+                air_idx,
+                &stark_struct,
+                &prepare_opts,
+                &Default::default(),
+            )?;
 
             // Both the native and the in-circuit verifier run the same algorithm, so one count
             // serves both; only the price of a single hash differs.

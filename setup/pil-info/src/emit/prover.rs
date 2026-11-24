@@ -173,16 +173,12 @@ fn fold_quotient(
     let field = &cs.field;
     let st = RefCell::new(FoldState {
         arena,
-        boundaries: vec![Boundary::EveryRow],
         im_roots: Vec::new(),
         q_stage: cs.n_stages as usize + 1,
         vc_id: lay.vc_index(),
         field,
     });
     let mut roots: Vec<Root> = (0..cs.constraints.len()).map(Root::Constraint).collect();
-    if roots.is_empty() {
-        roots.push(Root::Zero);
-    }
     roots.extend((0..im.exprs.len()).map(Root::Im));
     let ctx = Ctx { cs, im, lay, constraints: &constraints };
     let roots: Vec<Result<Node>> = roots.into_iter().map(|r| Ok(Node::Root(r))).collect();
@@ -248,8 +244,6 @@ fn ref_id(e: &Expr) -> Result<usize> {
 enum Root {
     Constraint(usize),
     Im(usize),
-    /// Today's placeholder cExp of an air without constraints.
-    Zero,
 }
 
 /// A fold operand: a root not yet pushed, an arena id, or `vc * id` awaiting its sum.
@@ -268,7 +262,6 @@ struct Ctx<'a> {
 
 struct FoldState<'a> {
     arena: Vec<Expression>,
-    boundaries: Vec<Boundary>,
     /// (sub id, stage) per im root, in fold order.
     im_roots: Vec<(usize, usize)>,
     q_stage: usize,
@@ -330,38 +323,9 @@ impl FoldState<'_> {
 
     fn root(&mut self, ctx: &Ctx, r: Root) -> Result<usize> {
         match r {
-            Root::Zero => {
-                let e = Expression { op: "number".into(), value: Some("0".into()), dim: 1, ..Default::default() };
-                Ok(self.push(e))
-            }
-            Root::Constraint(k) => {
-                let e = ctx.constraints[k].e;
-                let b = &ctx.cs.constraints[k].boundary;
-                if *b == Boundary::EveryRow {
-                    return Ok(e);
-                }
-                let boundary_id = match self.boundaries.iter().position(|x| x == b) {
-                    Some(i) => i,
-                    None => {
-                        self.boundaries.push(b.clone());
-                        self.boundaries.len() - 1
-                    }
-                };
-                let zi = Expression {
-                    op: "Zi".into(),
-                    boundary_id: Some(boundary_id),
-                    boundary: Some(ctx.constraints[k].boundary.clone()),
-                    ..Default::default()
-                };
-                let mut ee = Expression { op: "exp".into(), id: Some(e), row_offset: Some(0), ..Default::default() };
-                ee.stage = self.q_stage;
-                let m = Expression {
-                    op: "mul".into(),
-                    values: vec![ExprChild::Inline(Box::new(ee)), ExprChild::Inline(Box::new(zi))],
-                    ..Default::default()
-                };
-                Ok(self.push(m))
-            }
+            // the STARK takes only everyRow (from_pilout rejects the others)
+            Root::Constraint(k) if ctx.cs.constraints[k].boundary == Boundary::EveryRow => Ok(ctx.constraints[k].e),
+            Root::Constraint(_) => Err(fold_bug()),
             Root::Im(k) => {
                 let exp_id = ctx.im.exprs[k] as usize;
                 let pol_id = im_column_id(ctx.cs, k) as usize;
@@ -390,7 +354,7 @@ fn fold_bug() -> PilInfoError {
     PilInfoError::InvalidPilout("the quotient fold met an unexpected operand".into())
 }
 
-/// The old formatter's inputs, rebuilt from the typed IR.
+/// The old formatter's inputs, rebuilt from the typed IR. TODO(piece 3): emit from the IR, drop this pb round-trip.
 struct Tables {
     exprs: Vec<pb::Expression>,
     stage_widths: Vec<u32>,

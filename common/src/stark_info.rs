@@ -339,8 +339,8 @@ pub struct StarkInfo {
     pub security: SecurityInfo,
 }
 
-/// The starkinfo `keyVersion` this prover reads (the setup's `KEY_VERSION`).
-pub const KEY_VERSION: u64 = 2;
+/// The starkinfo `keyVersion` this prover reads.
+pub use proofman_util::KEY_VERSION;
 
 impl StarkInfo {
     /// Panics on a key of another `keyVersion` (checked before the full parse) or malformed JSON.
@@ -351,7 +351,7 @@ impl StarkInfo {
             key_version: Option<u64>,
         }
         let v: Version = serde_json::from_str(stark_info_json).expect("Failed to parse JSON file");
-        if v.key_version != Some(KEY_VERSION) {
+        if v.key_version != Some(u64::from(KEY_VERSION)) {
             panic!("starkinfo keyVersion {:?}, this prover reads {KEY_VERSION}: regenerate the setup", v.key_version);
         }
         serde_json::from_str(stark_info_json).expect("Failed to parse JSON file")
@@ -441,5 +441,15 @@ mod tests {
     #[should_panic(expected = "regenerate the setup")]
     fn starkinfo_with_wrong_key_version_is_rejected() {
         StarkInfo::from_json(r#"{"keyVersion": 1}"#);
+    }
+
+    /// The C++ prover's constant is the same `KEY_VERSION`.
+    #[test]
+    fn cpp_key_version_matches() {
+        let hpp = concat!(env!("CARGO_MANIFEST_DIR"), "/../pil2-stark/src/starkpil/stark_info.hpp");
+        let src = std::fs::read_to_string(hpp).unwrap();
+        let line = src.lines().find(|l| l.contains("STARK_INFO_KEY_VERSION =")).unwrap();
+        let n = line.rsplit('=').next().unwrap().trim().trim_end_matches(';');
+        assert_eq!(n.parse::<u32>().unwrap(), KEY_VERSION, "{line}");
     }
 }

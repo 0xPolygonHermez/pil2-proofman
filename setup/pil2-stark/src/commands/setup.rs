@@ -271,18 +271,21 @@ pub fn run_setup(opts: &SetupOptions) -> Result<()> {
                 let starkinfo_path = files_dir.join(format!("{}.starkinfo.json", item.air_name));
 
                 let prepare_opts = PrepareOptions { im_pols_stages: false, inplace_stage_commit: true };
+                let key = crate::pil::stark_setup::KeyIdentity {
+                    name: Some(item.air_name.clone()),
+                    circuit_type: Some(proofman_common::circuit_type_of(item.ag_idx as u64, item.air_idx as u64 + 1)),
+                    ..Default::default()
+                };
                 let pil_result = crate::pil::stark_setup::stark_setup(
                     &pilout,
                     item.ag_idx,
                     item.air_idx,
                     &stark_struct,
                     &prepare_opts,
+                    &key,
                 )?;
                 let pil_code = &pil_result.pil_code;
-                let mut starkinfo_output = pil_result.starkinfo;
-                starkinfo_output.circuit_type =
-                    Some(proofman_common::circuit_type_of(item.ag_idx as u64, item.air_idx as u64 + 1));
-                starkinfo_output.name = item.air_name.clone();
+                let starkinfo_output = pil_result.starkinfo;
 
                 // Say which low-degree test this air runs, with the solved schedule.
                 tracing::info!(

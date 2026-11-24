@@ -32,6 +32,12 @@ pub enum PiloutError {
     MissingStage { symbol: String },
     #[error("custom column `{symbol}` declares no commit_id")]
     MissingCommitId { symbol: String },
+    #[error("air {air} of airgroup {airgroup} has no constraints")]
+    NoConstraints { airgroup: usize, air: usize },
+    #[error("the pilout declares {declared} public values and its symbols name {named}")]
+    PublicCount { declared: u32, named: usize },
+    #[error("custom commit `{commit}` binds public {idx}, past the {declared} public values")]
+    CommitPublic { commit: String, idx: u32, declared: u32 },
     #[error("{what} does not fit in 32 bits")]
     Overflow { what: String },
     #[error("pilout core input: {why}")]
@@ -251,13 +257,17 @@ impl PiloutCore {
             let airs = ag.airs.iter().enumerate().map(|(a, x)| air_of(x, g, a)).collect::<Result<_, _>>()?;
             air_groups.push(AirGroup { air_group_values: air_group_values(ag)?, airs });
         }
-        let symbols = p.symbols.iter().filter_map(|s| symbol_of(s).transpose()).collect::<Result<_, _>>()?;
+        Ok(PiloutCore { air_groups, ..Self::globals_of(p)? })
+    }
+
+    /// `from_pb` without the airgroups: the pilout-wide tables, every symbol and every hint.
+    pub(crate) fn globals_of(p: &pb::PilOut) -> Result<Self, PiloutError> {
         Ok(PiloutCore {
             num_challenges: p.num_challenges.clone(),
             num_proof_values: p.num_proof_values.clone(),
             num_public_values: p.num_public_values,
-            air_groups,
-            symbols,
+            air_groups: Vec::new(),
+            symbols: p.symbols.iter().filter_map(|s| symbol_of(s).transpose()).collect::<Result<_, _>>()?,
             hints: p.hints.iter().map(hint_of).collect::<Result<_, _>>()?,
         })
     }
@@ -357,7 +367,7 @@ fn constraint_of(c: &pb::Constraint, k: usize) -> Result<Constraint, PiloutError
 }
 
 /// `None` for a symbol kind the core does not read (imCol, periodicCol, publicTable).
-pub(crate) fn symbol_of(s: &pb::Symbol) -> Result<Option<Symbol>, PiloutError> {
+fn symbol_of(s: &pb::Symbol) -> Result<Option<Symbol>, PiloutError> {
     let kind = match SymbolType::try_from(s.r#type) {
         Ok(SymbolType::FixedCol) => SymbolKind::FixedCol,
         Ok(SymbolType::WitnessCol) => SymbolKind::WitnessCol,
@@ -383,7 +393,7 @@ pub(crate) fn symbol_of(s: &pb::Symbol) -> Result<Option<Symbol>, PiloutError> {
     }))
 }
 
-pub(crate) fn hint_of(h: &pb::Hint) -> Result<Hint, PiloutError> {
+fn hint_of(h: &pb::Hint) -> Result<Hint, PiloutError> {
     let fields = h.hint_fields.iter().map(|f| hint_field_of(f, &h.name)).collect::<Result<_, _>>()?;
     Ok(Hint { name: h.name.clone(), air_group_id: h.air_group_id, air_id: h.air_id, fields })
 }

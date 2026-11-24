@@ -75,21 +75,68 @@ impl<'a> Builder<'a> {
         cs.exprs.get(id as usize).ok_or_else(|| unbuildable(format!("expression {id} out of range")))
     }
 
-    fn expr(&mut self, e: &Expr) -> Result<u32, DagError> {
-        let leaf = match e {
-            Expr::Add(a, b) | Expr::Sub(a, b) | Expr::Mul(a, b) => {
-                let (a, b) = (self.expr(a)?, self.expr(b)?);
-                return Ok(self.node(match e {
-                    Expr::Add(..) => DagNode::Add { a, b },
-                    Expr::Sub(..) => DagNode::Sub { a, b },
-                    _ => DagNode::Mul { a, b },
-                }));
+    /// Post-order over `e` with an explicit stack (the recursion's node order; depth is not bounded by the stack).
+    fn expr(&mut self, e: &'a Expr) -> Result<u32, DagError> {
+        enum Step<'e> {
+            Enter(&'e Expr),
+            Op(&'e Expr),
+            Done(ExprId),
+        }
+        let (mut todo, mut vals) = (vec![Step::Enter(e)], Vec::new());
+        let pop = |v: &mut Vec<u32>| v.pop().ok_or_else(|| unbuildable("the walk lost an operand".into()));
+        while let Some(step) = todo.pop() {
+            match step {
+                Step::Enter(n @ (Expr::Add(a, b) | Expr::Sub(a, b) | Expr::Mul(a, b))) => {
+                    todo.extend([Step::Op(n), Step::Enter(b), Step::Enter(a)]);
+                }
+                Step::Enter(n @ Expr::Neg(a)) => todo.extend([Step::Op(n), Step::Enter(a)]),
+                Step::Enter(Expr::Ref(id)) => {
+                    if let Some(&col) = self.promoted.get(id) {
+                        vals.push(self.node(DagNode::Col {
+                            col: ColType::Witness,
+                            commit_id: None,
+                            id: col,
+                            offset: 0,
+                        }));
+                        continue;
+                    }
+                    match self.memo.get(id) {
+                        Some(Some(n)) => vals.push(*n),
+                        Some(None) => return Err(unbuildable(format!("expression {id} is cyclic"))),
+                        None => {
+                            self.memo.insert(*id, None);
+                            todo.extend([Step::Done(*id), Step::Enter(self.target(*id)?)]);
+                        }
+                    }
+                }
+                Step::Enter(leaf) => {
+                    let n = self.leaf(leaf)?;
+                    vals.push(self.node(n));
+                }
+                Step::Op(Expr::Neg(_)) => {
+                    let a = pop(&mut vals)?;
+                    vals.push(self.node(DagNode::Neg { a }));
+                }
+                Step::Op(op) => {
+                    let (b, a) = (pop(&mut vals)?, pop(&mut vals)?);
+                    vals.push(self.node(match op {
+                        Expr::Add(..) => DagNode::Add { a, b },
+                        Expr::Sub(..) => DagNode::Sub { a, b },
+                        _ => DagNode::Mul { a, b },
+                    }));
+                }
+                // a walked, non-promoted `Ref` is memoised once
+                Step::Done(id) => {
+                    let n = *vals.last().ok_or_else(|| unbuildable("the walk lost an operand".into()))?;
+                    self.memo.insert(id, Some(n));
+                }
             }
-            Expr::Neg(a) => {
-                let a = self.expr(a)?;
-                return Ok(self.node(DagNode::Neg { a }));
-            }
-            Expr::Ref(id) => return self.reference(*id),
+        }
+        pop(&mut vals)
+    }
+
+    fn leaf(&self, e: &Expr) -> Result<DagNode, DagError> {
+        Ok(match e {
             Expr::Const(c) => DagNode::Const { value: (c % self.cs.field.modulus()).to_string() },
             Expr::Col { col, commit_id, id, offset } => {
                 DagNode::Col { col: *col, commit_id: *commit_id, id: *id, offset: *offset }
@@ -102,24 +149,8 @@ impl<'a> Builder<'a> {
             Expr::AirgroupValue { airgroup: Some(g), id } => {
                 return Err(unbuildable(format!("airgroup value {id} of airgroup {g} in an air")))
             }
-        };
-        Ok(self.node(leaf))
-    }
-
-    /// A promoted `Ref` is its im column; any other is walked once and memoised.
-    fn reference(&mut self, id: ExprId) -> Result<u32, DagError> {
-        if let Some(&col) = self.promoted.get(&id) {
-            return Ok(self.node(DagNode::Col { col: ColType::Witness, commit_id: None, id: col, offset: 0 }));
-        }
-        match self.memo.get(&id) {
-            Some(Some(n)) => return Ok(*n),
-            Some(None) => return Err(unbuildable(format!("expression {id} is cyclic"))),
-            None => {}
-        }
-        self.memo.insert(id, None);
-        let n = self.expr(self.target(id)?)?;
-        self.memo.insert(id, Some(n));
-        Ok(n)
+            _ => return Err(unbuildable("an operation where a leaf was expected".into())),
+        })
     }
 }
 

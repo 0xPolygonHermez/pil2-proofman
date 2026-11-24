@@ -13,6 +13,10 @@ pub struct StarkParams {
     pub n_bits_ext: u32,
     /// The arena id of Q (`Roles::c_exp`).
     pub c_exp_id: u32,
+    /// Basic airs only: what their transcript and stage-1 contribution absorb.
+    pub circuit_type: Option<u64>,
+    /// The proof travels as a Merkle multiproof.
+    pub multiproof: bool,
 }
 
 /// What a verifier reads (stark struct sizes, maps that resolve the evMap, Merkle widths): a bug here costs soundness.
@@ -47,6 +51,8 @@ pub struct VerifierView {
     pub custom_commits: Vec<CustomCommit>,
     /// `(aggType, stage)` of each of the airgroup's values.
     pub airgroup_values: Vec<(i32, u32)>,
+    pub circuit_type: Option<u64>,
+    pub multiproof: bool,
 }
 
 /// Read by the prover only: a bug in ProverLayout costs completeness only.
@@ -88,9 +94,6 @@ pub fn stark_info(
             boundaries.push(b.clone());
         }
     }
-    if boundaries.is_empty() {
-        boundaries.push(Boundary::EveryRow);
-    }
     let verifier = VerifierView {
         n_stages: cs.n_stages,
         // counts below the ingestion limit
@@ -118,6 +121,8 @@ pub fn stark_info(
         c_exp_id: p.c_exp_id,
         custom_commits: cs.custom_commits.clone(),
         airgroup_values: cs.airgroup_agg_types.iter().zip(&cs.airgroup_values).map(|(a, v)| (*a, v.stage)).collect(),
+        circuit_type: p.circuit_type,
+        multiproof: p.multiproof,
     };
     Ok(StarkInfoCore { verifier, prover: ProverLayout { im_exp_ids: im.exprs.clone() } })
 }
@@ -216,8 +221,7 @@ pub struct EvMapEntry {
     pub commit_id: Option<u32>,
 }
 
-/// The key format: bumped when the same pilout gives a different key (2: canonical expression and im order).
-pub const KEY_VERSION: u32 = 2;
+pub use proofman_util::KEY_VERSION;
 
 fn key_version<S: Serializer>(_: &(), s: S) -> Result<S::Ok, S::Error> {
     s.serialize_u32(KEY_VERSION)
@@ -285,7 +289,7 @@ pub fn starkinfo_output<S, X>(
         map_sections_n: v.map_sections_n.clone(),
         air_id,
         airgroup_id,
-        circuit_type: None,
+        circuit_type: v.circuit_type,
         n_constants: v.n_constants,
         n_publics: v.n_publics,
         air_group_values: v
@@ -307,7 +311,7 @@ pub fn starkinfo_output<S, X>(
         ev_map: v.ev_map.iter().map(ev).collect(),
         fri_batch_size: v.fri_batch_size,
         security,
-        multiproof: false,
+        multiproof: v.multiproof,
     })
 }
 

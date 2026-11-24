@@ -16,7 +16,7 @@ pub fn search_im(cs: &ConstraintSystem, policy: &DegreePolicy, q_dim: usize) -> 
     let max = policy.max_constraint_degree().max(2);
     let stark_min_q = matches!(policy, DegreePolicy::FromBlowup { .. });
     let mut best: Option<(i64, Set)> = None;
-    let deg = degree_table(cs);
+    let deg = degree_table(cs).map_err(|u| PilInfoError::InvalidPilout(u.0))?;
     let dims = dim_table(cs).map_err(|u| PilInfoError::InvalidPilout(u.0))?;
     for d in 2..=max {
         let Some(set) = (Search { cs, deg: &deg, abs_max: d, memo: BTreeMap::new() }).roots() else { continue };
@@ -97,7 +97,7 @@ impl Search<'_> {
                     r => r,
                 }
             }
-            leaf if degree_of(leaf, self.deg) == 0 => (Some(set.clone()), 0),
+            leaf if !matches!(leaf, Expr::Col { .. }) => (Some(set.clone()), 0),
             _ if max_deg < 1 => (None, -1),
             _ => (Some(set.clone()), 1),
         }
@@ -110,7 +110,7 @@ impl Search<'_> {
         if is_const_leaf(b) {
             return self.expr(a, set, max_deg);
         }
-        let here = degree_of(e, self.deg) as usize;
+        let Ok(here) = degree_of(e, self.deg).map(|d| d as usize) else { return (None, -1) };
         if here <= max_deg {
             return (Some(set.clone()), here as i64);
         }
@@ -133,7 +133,7 @@ impl Search<'_> {
 
 /// A degree-0 leaf (not a composite, `Neg` being the old `mul(-1, x)`, nor a `Ref`): a product by it is skipped.
 fn is_const_leaf(e: &Expr) -> bool {
-    !matches!(e, Expr::Add(..) | Expr::Sub(..) | Expr::Mul(..) | Expr::Neg(_) | Expr::Ref(_)) && degree_of(e, &[]) == 0
+    !matches!(e, Expr::Add(..) | Expr::Sub(..) | Expr::Mul(..) | Expr::Neg(_) | Expr::Ref(_) | Expr::Col { .. })
 }
 
 fn selector() -> Expr {

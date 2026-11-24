@@ -222,6 +222,13 @@ fn parse_pol_map_array(v: &Value, key: &str) -> Vec<PolMap> {
 impl StarkInfo {
     /// Parse a StarkInfo from a serde_json::Value (the parsed starkinfo.json).
     pub fn from_json(j: &Value) -> Result<Self> {
+        let version = j.get("keyVersion").and_then(Value::as_u64);
+        if version != Some(u64::from(pil_info::core::project::KEY_VERSION)) {
+            anyhow::bail!(
+                "starkinfo keyVersion {version:?}, this setup reads {}: regenerate it",
+                pil_info::core::project::KEY_VERSION
+            );
+        }
         let ss = j.get("starkStruct").unwrap_or(&Value::Null);
         let low_degree_test: LowDegreeTest = serde_json::from_value(ss.clone())
             .map_err(|e| anyhow::anyhow!("starkinfo starkStruct: cannot parse the low-degree test schedule: {e}"))?;
