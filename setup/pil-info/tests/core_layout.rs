@@ -372,8 +372,7 @@ fn fri_batch_size_formula() {
 #[test]
 fn ev_map_matches_old() {
     let check = |run: &OldRun, what: &str| {
-        let params = LayoutParams { air_name: run.old.setup.name.clone(), ..lp(run.chk.q_deg) };
-        let o = openings(&run.cs, &run.im, &layout(&run.cs, &run.im, &params).unwrap(), &[]).unwrap();
+        let o = core_out(run).ops;
         let old = &run.old.pil_code.ev_map;
         let kind = |t: &str| match t {
             "cm" => ColType::Witness,
@@ -384,14 +383,8 @@ fn ev_map_matches_old() {
             .iter()
             .map(|e| ev(kind(&e.entry_type), e.commit_id.map(|c| c as u32), e.id as u32, e.prime, e.opening_pos as u32))
             .collect();
-        if run.cs.hints.is_empty() {
-            assert_eq!(o.opening_points, run.old.setup.opening_points, "{what}: points");
-            assert_eq!(o.ev_map, want, "{what}: evMap");
-        } else {
-            // hint expressions add points the core is not given here: compare what is read, in order
-            let strip = |v: &[EvEntry]| v.iter().map(|e| e.pol).collect::<Vec<_>>();
-            assert_eq!(strip(&o.ev_map), strip(&want), "{what}: evMap");
-        }
+        assert_eq!(o.opening_points, run.old.setup.opening_points, "{what}: points");
+        assert_eq!(o.ev_map, want, "{what}: evMap");
     };
     let mut compared = 0;
     for seed in 0..60 {

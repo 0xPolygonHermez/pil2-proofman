@@ -634,46 +634,13 @@ mod tests {
             let runs = full_random_in(10, ips);
             assert_eq!(runs.len(), 10, "not enough feasible random pilouts");
             for (k, f) in runs.iter().enumerate() {
-                let c = f.run.old.c_exp_id;
-                let new = core_starkinfo(&f.run, &f.stark_struct, &f.ldt, (0, 0, "Synthetic"), &[], c);
+                let new = core_starkinfo(&f.run, &f.stark_struct, &f.ldt, 0, 0, "Synthetic");
                 assert_eq!(to_json_string(&new).unwrap(), to_json_string(&f.old_out).unwrap(), "pilout {k} {ips}");
             }
         }
     }
 
-    /// The expressions a hint names (today's `keep`): a top-level `Expression` operand, unless the old
-    /// formatter inlines it (`leaf +/- 0`).
-    fn hint_roots(p: &pil2_pilout::pilout::PilOut, g: usize, a: usize) -> Vec<pil_info::core::ir::Expr> {
-        use pil2_pilout::pilout::{expression::Operation as Op, hint_field::Value, operand::Operand as O, HintField};
-        let exprs = &p.air_groups[g].airs[a].expressions;
-        let inlined = |idx: u32| {
-            let (l, r) = match exprs.get(idx as usize).and_then(|e| e.operation.as_ref()) {
-                Some(Op::Add(x)) => (&x.lhs, &x.rhs),
-                Some(Op::Sub(x)) => (&x.lhs, &x.rhs),
-                _ => return false,
-            };
-            let op = |o: &Option<pil2_pilout::pilout::Operand>| o.as_ref().and_then(|o| o.operand.clone());
-            let zero = matches!(op(r), Some(O::Constant(c)) if c.value.iter().all(|b| *b == 0));
-            zero && !matches!(op(l), Some(O::Expression(_)) | None)
-        };
-        fn walk(f: &HintField, out: &mut Vec<u32>) {
-            match &f.value {
-                Some(Value::HintFieldArray(arr)) => arr.hint_fields.iter().for_each(|h| walk(h, out)),
-                Some(Value::Operand(o)) => {
-                    if let Some(O::Expression(e)) = &o.operand {
-                        out.push(e.idx);
-                    }
-                }
-                _ => {}
-            }
-        }
-        let mut ids = Vec::new();
-        let mine = p.hints.iter().filter(|h| h.air_group_id == Some(g as u32) && h.air_id == Some(a as u32));
-        mine.flat_map(|h| &h.hint_fields).for_each(|f| walk(f, &mut ids));
-        ids.into_iter().filter(|i| !inlined(*i)).map(pil_info::core::ir::Expr::Ref).collect()
-    }
-
-    /// Byte-equal starkinfo on every air of every example pilout (2^18 rows), hints as extra roots.
+    /// Byte-equal starkinfo on every air of every example pilout (2^18 rows), the hints' points from the roles.
     #[test]
     fn starkinfo_matches_old_oracle_on_real_pilouts() {
         use crate::output::json::to_json_string;
@@ -703,8 +670,7 @@ mod tests {
                         old.c_exp_id,
                         old.q_deg,
                     );
-                    let extra = hint_roots(&p, g, a);
-                    let new = core_starkinfo(&run, ss, ldt, (g, a, &name), &extra, old.c_exp_id);
+                    let new = core_starkinfo(&run, ss, ldt, g, a, &name);
                     assert_eq!(to_json_string(&new).unwrap(), to_json_string(&old_out).unwrap(), "{f:?} {g}/{a}");
                     compared += 1;
                 }

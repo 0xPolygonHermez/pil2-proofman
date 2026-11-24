@@ -5,6 +5,9 @@ use num_bigint::BigUint;
 use pil_info::core::from_pilout::from_pilout;
 use pil_info::core::im::{check_im, im_order, Checked, ImChoice};
 use pil_info::core::ir::{degree, ConstraintSystem};
+use pil_info::core::layout::{layout, Layout, LayoutParams};
+use pil_info::core::openings::{openings, Openings};
+use pil_info::emit::prover::{to_arena, ProverExprs};
 use pil_info::pil::prepare::PrepareOptions;
 use pil_info::search::im::search_im;
 use pil_info::{Opening, PilInfoCfg};
@@ -344,4 +347,24 @@ pub fn old_run_with(
 /// `old_run` at the first blowup of 1..=3 bits that is feasible.
 pub fn old_run_any(p: &pb::PilOut, airgroup: usize, air: usize) -> Option<OldRun> {
     (1..=3).find_map(|b| old_run(p, airgroup, air, b))
+}
+
+/// The core chain on `run`, as Task 7 runs it: layout, the arena once, openings with the hints' points.
+pub struct CoreOut {
+    pub lay: Layout,
+    pub exprs: ProverExprs,
+    pub ops: Openings,
+}
+
+pub fn core_out(run: &OldRun) -> CoreOut {
+    let params = LayoutParams {
+        im_pols_stages: run.im_pols_stages,
+        deep_challenges: true,
+        q_deg: run.chk.q_deg,
+        air_name: run.old.setup.name.clone(),
+    };
+    let lay = layout(&run.cs, &run.im, &params).unwrap();
+    let exprs = to_arena(&run.cs, &run.im, &lay).unwrap();
+    let ops = openings(&run.cs, &run.im, &lay, &exprs.roles.hint_roots()).unwrap();
+    CoreOut { lay, exprs, ops }
 }

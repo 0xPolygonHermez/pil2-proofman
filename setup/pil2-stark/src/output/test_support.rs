@@ -83,28 +83,23 @@ pub fn full_random_in(n: usize, im_pols_stages: bool) -> Vec<Full> {
     (0..1000u64).filter_map(|seed| full_in(common::random_pilout(seed).0, im_pols_stages)).take(n).collect()
 }
 
-/// The core's starkinfo of `run`: `extra` adds opening points, `c_exp_id` is Q's arena id.
+/// The core's starkinfo of `run` through `common::core_out`, Q's id from the roles.
 pub fn core_starkinfo(
     run: &common::OldRun,
     ss: &StarkStruct,
     ldt: &LowDegreeTest,
-    (airgroup_id, air_id, air_name): (usize, usize, &str),
-    extra: &[pil_info::core::ir::Expr],
-    c_exp_id: usize,
+    airgroup_id: usize,
+    air_id: usize,
+    air_name: &str,
 ) -> StarkInfoOutput {
-    use pil_info::core::layout::{layout, LayoutParams};
-    use pil_info::core::openings::openings;
     use pil_info::core::project::{stark_info, StarkParams};
-    let lp = LayoutParams {
-        im_pols_stages: run.im_pols_stages,
-        deep_challenges: true,
-        q_deg: run.chk.q_deg,
-        air_name: air_name.into(),
+    let c = common::core_out(run);
+    let p = StarkParams {
+        n_bits: ss.n_bits as u32,
+        n_bits_ext: ss.n_bits_ext as u32,
+        c_exp_id: c.exprs.roles.c_exp as u32,
     };
-    let lay = layout(&run.cs, &run.im, &lp).unwrap();
-    let ops = openings(&run.cs, &run.im, &lay, extra).unwrap();
-    let p = StarkParams { n_bits: ss.n_bits as u32, n_bits_ext: ss.n_bits_ext as u32, c_exp_id: c_exp_id as u32 };
-    let core = stark_info(&run.cs, &run.im, &run.chk, &lay, &ops, &p).unwrap();
+    let core = stark_info(&run.cs, &run.im, &run.chk, &c.lay, &c.ops, &p).unwrap();
     let ct = Some(proofman_common::circuit_type_of(0, 1));
     build_starkinfo_output_from_core(&core, ss, ldt, airgroup_id, air_id, ct, air_name).unwrap()
 }
