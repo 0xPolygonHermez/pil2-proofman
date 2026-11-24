@@ -2252,7 +2252,7 @@ where
                 let valid = verify_proof::<F>(
                     &proof.proof,
                     setup_path.display().to_string() + ".starkinfo.json",
-                    setup_path.display().to_string() + ".verifier.bin",
+                    setup_path.display().to_string() + ".verifierinfo.json",
                     setup_path.display().to_string() + ".verkey.json",
                     Some(self.pctx.get_publics().clone()),
                     Some(self.pctx.get_proof_values().clone()),
@@ -4826,7 +4826,7 @@ where
                     let valid_proofs = verify_proof::<F>(
                         body,
                         base.clone() + ".starkinfo.json",
-                        base.clone() + ".verifier.bin",
+                        base.clone() + ".verifierinfo.json",
                         base + ".verkey.json",
                         Some(publics),
                         None,

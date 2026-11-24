@@ -96,6 +96,12 @@ StirProof<ElementType> stirProofFromJson(json &jproof, const StirParams &params,
 template <typename ElementType>
 bool starkVerify(json jproof, StarkInfo& starkInfo, ExpressionsBin& expressionsBin, string verkeyFile, Goldilocks::Element *publics, Goldilocks::Element *proofValues, bool challengesVadcop, Goldilocks::Element* globalChallenge) {
 
+    std::string dagErr;
+    if(!checkConstraintDag(expressionsBin.constraintDag, starkInfo, dagErr)) {
+        zklog.error("starkVerify: " + dagErr + "; regenerate the setup");
+        return false;
+    }
+
     json verkeyJson;
     file2json(verkeyFile, verkeyJson);
 
@@ -402,10 +408,6 @@ bool starkVerify(json jproof, StarkInfo& starkInfo, ExpressionsBin& expressionsB
     Goldilocks::Element xiChallenge[FIELD_EXTENSION];
     std::memcpy(&xiChallenge[0], &challenges[starkInfo.deepTables->xiIdx * FIELD_EXTENSION], FIELD_EXTENSION * sizeof(Goldilocks::Element));
 
-    ProverHelpers proverHelpers(starkInfo, xiChallenge);
-
-    SetupCtx setupCtx(starkInfo, expressionsBin);
-
     const DeepTables &deepT = *starkInfo.deepTables;
     const DeepConsts deepC = deepConstants(deepT, challenges, evals, starkInfo.starkStruct.nBits);
     const uint64_t nOpenings = starkInfo.openingPoints.size();
@@ -452,35 +454,17 @@ bool starkVerify(json jproof, StarkInfo& starkInfo, ExpressionsBin& expressionsB
         }   
     }
 
-    StepsParams params = {
-        .trace = trace,
-        .aux_trace = aux_trace,
-        .publicInputs = publics,
-        .proofValues = proofValues,
-        .challenges = challenges,
-        .airgroupValues = airgroupValues,
-        .airValues = airValues,
-        .evals = evals,
-        .pConstPolsAddress = constPolsVals,
-        .pConstPolsExtendedTreeAddress = nullptr,
-        .pCustomCommitsFixed = trace_custom_commits_fixed,
-    };
-
     bool isValid = true;
 
     zklog.trace("Verifying evaluations");
-    ExpressionsPack expressionsPack(setupCtx, &proverHelpers, 1);
-    
-    Goldilocks::Element buff[FIELD_EXTENSION];
-    Dest dest(buff, 1, 0);
-    dest.addParams(starkInfo.cExpId, setupCtx.expressionsBin.expressionsInfo[starkInfo.cExpId].destDim);
-    
-    expressionsPack.calculateExpressions(params, dest, 1, false, false);
+    Goldilocks::Element xN[3];
+    Goldilocks3::pow((Goldilocks3::Element &)xN, (Goldilocks3::Element &)xiChallenge, uint64_t(1) << starkInfo.starkStruct.nBits);
 
-    Goldilocks::Element xN[3] = {Goldilocks::one(), Goldilocks::zero(), Goldilocks::zero()};
-    for(uint64_t i = 0; i < uint64_t(1 << starkInfo.starkStruct.nBits); ++i) {
-        Goldilocks3::mul((Goldilocks3::Element *)xN, (Goldilocks3::Element *)xN, (Goldilocks3::Element *)xiChallenge);
-    }
+    // Zi(everyRow) = 1/(xi^N - 1), the only STARK zerofier.
+    DagInputs dagInputs = {evals, challenges, publics, proofValues, airValues, airgroupValues, {xN[0] - Goldilocks::one(), xN[1], xN[2]}};
+    Goldilocks3::inv((Goldilocks3::Element &)dagInputs.zi, (Goldilocks3::Element &)dagInputs.zi);
+    Goldilocks::Element buff[FIELD_EXTENSION];
+    evalConstraintDag(expressionsBin.constraintDag, starkInfo, dagInputs, buff);
 
     Goldilocks::Element xAcc[3] = { Goldilocks::one(), Goldilocks::zero(), Goldilocks::zero() };
     Goldilocks::Element q[3] = { Goldilocks::zero(), Goldilocks::zero(), Goldilocks::zero() };

@@ -1,13 +1,23 @@
 #include "expressions_bin.hpp"
+#include "utils.hpp"
 
 ExpressionsBin::ExpressionsBin(string file, bool globalBin, bool verifierBin) {
     binFile = file;
+    if(verifierBin) {
+        // The verifier reads <air>.verifierinfo.json, not a bin file.
+        json j;
+        file2json(file, j);
+        std::string err = "no constraintDag key";
+        if(!j.contains("constraintDag") || !readConstraintDag(j["constraintDag"], constraintDag, err)) {
+            zklog.error("ExpressionsBin: " + file + ": " + err + "; regenerate the setup");
+            exitProcess();
+        }
+        return;
+    }
     std::unique_ptr<BinFileUtils::BinFile> bin = BinFileUtils::openExisting(file, "chps", 1);
 
     if(globalBin) {
         loadGlobalBin(bin.get());
-    } else if(verifierBin) {
-        loadVerifierBin(bin.get());
     } else {
         loadExpressionsBin(bin.get());
     }
@@ -521,62 +531,6 @@ void ExpressionsBin::loadExpressionsBin(BinFileUtils::BinFile *expressionsBin) {
         }
 
         hints.push_back(hint);
-    }
-
-    expressionsBin->endReadSection();
-}
-
-void ExpressionsBin::loadVerifierBin(BinFileUtils::BinFile *expressionsBin) {
-    expressionsBin->startReadSection(EXPRESSIONS_SECTION);
-    
-    maxTmp1 = expressionsBin->readU32LE();
-    maxTmp3 = expressionsBin->readU32LE();
-    maxArgs = expressionsBin->readU32LE();
-    maxOps = expressionsBin->readU32LE();
-
-    uint32_t nOpsExpressions = expressionsBin->readU32LE();
-    uint32_t nArgsExpressions = expressionsBin->readU32LE();
-    uint32_t nNumbersExpressions = expressionsBin->readU32LE();
-   
-    expressionsBinArgsExpressions.ops = new uint8_t[nOpsExpressions];
-    expressionsBinArgsExpressions.args = new uint16_t[nArgsExpressions];
-    expressionsBinArgsExpressions.numbers = new Goldilocks::Element[nNumbersExpressions];
-    expressionsBinArgsExpressions.nNumbers = nNumbersExpressions;
-
-    uint64_t nExpressions = expressionsBin->readU32LE();
-
-    for(uint64_t i = 0; i < nExpressions; ++i) {
-        ParserParams parserParamsExpression;
-
-        uint32_t expId = expressionsBin->readU32LE();
-        
-        parserParamsExpression.expId = expId;
-        parserParamsExpression.destDim = expressionsBin->readU32LE();
-        parserParamsExpression.destId = expressionsBin->readU32LE();
-        parserParamsExpression.stage = expressionsBin->readU32LE();
-
-        parserParamsExpression.nTemp1 = expressionsBin->readU32LE();
-        parserParamsExpression.nTemp3 = expressionsBin->readU32LE();
-
-        parserParamsExpression.nOps = expressionsBin->readU32LE();
-        parserParamsExpression.opsOffset = expressionsBin->readU32LE();
-
-        parserParamsExpression.nArgs = expressionsBin->readU32LE();
-        parserParamsExpression.argsOffset = expressionsBin->readU32LE();
-
-        parserParamsExpression.line = expressionsBin->readString();
-
-        expressionsInfo[expId] = parserParamsExpression;
-    }
-
-    for(uint64_t j = 0; j < nOpsExpressions; ++j) {
-        expressionsBinArgsExpressions.ops[j] = expressionsBin->readU8LE();
-    }
-    for(uint64_t j = 0; j < nArgsExpressions; ++j) {
-        expressionsBinArgsExpressions.args[j] = expressionsBin->readU16LE();
-    }
-    for(uint64_t j = 0; j < nNumbersExpressions; ++j) {
-        expressionsBinArgsExpressions.numbers[j] = Goldilocks::fromU64(expressionsBin->readU64LE());
     }
 
     expressionsBin->endReadSection();

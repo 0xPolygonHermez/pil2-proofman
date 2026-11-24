@@ -35,7 +35,7 @@ impl VerifyStark {
         // aggregator binds the application's publics into q_verify, so a verifier
         // generated for one application rejects proofs another's correct prover
         // produced. The setup artifacts sit next to the verkey, as
-        // <base>.starkinfo.json / <base>.verifier.bin / <base>.verkey.json.
+        // <base>.starkinfo.json / <base>.verifierinfo.json / <base>.verkey.json.
         let base = self
             .verkey
             .strip_suffix(".verkey.bin")
@@ -80,7 +80,7 @@ impl VerifyStark {
         let valid = verify_proof::<Goldilocks>(
             body,
             base.clone() + ".starkinfo.json",
-            base.clone() + ".verifier.bin",
+            base.clone() + ".verifierinfo.json",
             base + ".verkey.json",
             Some(publics),
             None,

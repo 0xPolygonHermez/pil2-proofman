@@ -180,6 +180,7 @@ void StarkInfo::load(json j)
         PolMap map;
         map.name = j["airgroupValuesMap"][i]["name"];
         map.stage = j["airgroupValuesMap"][i]["stage"];
+        map.dim = map.stage == 1 ? 1 : FIELD_EXTENSION;
         airgroupValuesMap.push_back(map);
         if(map.stage == 1) {
             airgroupValuesSize += 1;
@@ -194,6 +195,7 @@ void StarkInfo::load(json j)
         PolMap map;
         map.name = j["airValuesMap"][i]["name"];
         map.stage = j["airValuesMap"][i]["stage"];
+        map.dim = map.stage == 1 ? 1 : FIELD_EXTENSION;
         airValuesMap.push_back(map);
         if(map.stage == 1) {
             airValuesSize += 1;
@@ -208,6 +210,7 @@ void StarkInfo::load(json j)
         PolMap map;
         map.name = j["proofValuesMap"][i]["name"];
         map.stage = j["proofValuesMap"][i]["stage"];
+        map.dim = map.stage == 1 ? 1 : FIELD_EXTENSION;
         proofValuesMap.push_back(map);
         if(map.stage == 1) {
             proofValuesSize += 1;

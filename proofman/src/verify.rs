@@ -1,9 +1,8 @@
 use proofman_fields::PrimeField64;
 
 use proofman_starks_lib_c::{
-    expressions_bin_free_c, expressions_bin_new_c, get_max_n_tmp1_c, get_max_n_tmp3_c, set_memory_expressions_c,
-    get_n_publics_c, get_proof_size_c, stark_info_free_c, stark_info_new_c, stark_verify_bn128_c, stark_verify_c,
-    stark_verify_from_file_c,
+    expressions_bin_free_c, expressions_bin_new_c, get_n_publics_c, get_proof_size_c, stark_info_free_c,
+    stark_info_new_c, stark_verify_bn128_c, stark_verify_c, stark_verify_from_file_c,
 };
 
 use colored::*;
@@ -15,18 +14,14 @@ use std::os::raw::c_void;
 pub fn verify_proof_from_file<F: PrimeField64>(
     proof_file: String,
     stark_info_path: String,
-    expressions_bin_path: String,
+    verifier_info_path: String,
     verkey_path: String,
     publics: Option<Vec<F>>,
     proof_values: Option<Vec<F>>,
     challenges: Option<Vec<F>>,
 ) -> bool {
     let p_stark_info = stark_info_new_c(stark_info_path.as_str(), false, false, false, true, false);
-    let p_expressions_bin = expressions_bin_new_c(expressions_bin_path.as_str(), false, true);
-
-    let n_max_tmp1 = get_max_n_tmp1_c(p_expressions_bin);
-    let n_max_tmp3 = get_max_n_tmp3_c(p_expressions_bin);
-    set_memory_expressions_c(p_stark_info, n_max_tmp1, n_max_tmp3);
+    let p_expressions_bin = expressions_bin_new_c(verifier_info_path.as_str(), false, true);
 
     let proof_challenges_ptr = match challenges {
         Some(ref challenges) => challenges.as_ptr() as *mut u8,
@@ -71,14 +66,14 @@ pub fn verify_proof_from_file<F: PrimeField64>(
 pub fn verify_proof<F: PrimeField64>(
     proof: &[u64],
     stark_info_path: String,
-    expressions_bin_path: String,
+    verifier_info_path: String,
     verkey_path: String,
     publics: Option<Vec<F>>,
     proof_values: Option<Vec<F>>,
     global_challenge: Option<Vec<F>>,
 ) -> bool {
     let p_stark_info = stark_info_new_c(stark_info_path.as_str(), false, false, false, true, false);
-    let p_expressions_bin = expressions_bin_new_c(expressions_bin_path.as_str(), false, true);
+    let p_expressions_bin = expressions_bin_new_c(verifier_info_path.as_str(), false, true);
 
     let proof_size = get_proof_size_c(p_stark_info) as usize;
     let n_publics = get_n_publics_c(p_stark_info) as usize;
@@ -101,10 +96,6 @@ pub fn verify_proof<F: PrimeField64>(
         stark_info_free_c(p_stark_info);
         return false;
     }
-
-    let n_max_tmp1 = get_max_n_tmp1_c(p_expressions_bin);
-    let n_max_tmp3 = get_max_n_tmp3_c(p_expressions_bin);
-    set_memory_expressions_c(p_stark_info, n_max_tmp1, n_max_tmp3);
 
     let global_challenge_ptr = match global_challenge {
         Some(ref global_challenge) => global_challenge.as_ptr() as *mut u8,
@@ -140,15 +131,11 @@ pub fn verify_proof<F: PrimeField64>(
 
 pub fn verify_proof_bn128<F: PrimeField64>(p_proof: *mut c_void, setup: &Setup<F>, publics: Option<Vec<F>>) -> bool {
     let stark_info_path = setup.setup_path.display().to_string() + ".starkinfo.json";
-    let expressions_bin_path = setup.setup_path.display().to_string() + ".verifier.bin";
+    let verifier_info_path = setup.setup_path.display().to_string() + ".verifierinfo.json";
     let verkey_path = setup.setup_path.display().to_string() + ".verkey.json";
 
     let p_stark_info = stark_info_new_c(stark_info_path.as_str(), false, false, false, true, false);
-    let p_expressions_bin = expressions_bin_new_c(expressions_bin_path.as_str(), false, true);
-
-    let n_max_tmp1 = get_max_n_tmp1_c(p_expressions_bin);
-    let n_max_tmp3 = get_max_n_tmp3_c(p_expressions_bin);
-    set_memory_expressions_c(p_stark_info, n_max_tmp1, n_max_tmp3);
+    let p_expressions_bin = expressions_bin_new_c(verifier_info_path.as_str(), false, true);
 
     let publics_ptr = match publics {
         Some(ref publics) => publics.as_ptr() as *mut u8,
@@ -177,7 +164,7 @@ pub fn verify_basic_proof<F: PrimeField64>(
     let setup_path = pctx.global_info.get_air_setup_path(airgroup_id, air_id, &ProofType::Basic);
 
     let stark_info_path = setup_path.display().to_string() + ".starkinfo.json";
-    let expressions_bin_path = setup_path.display().to_string() + ".verifier.bin";
+    let verifier_info_path = setup_path.display().to_string() + ".verifierinfo.json";
     let verkey_path = setup_path.display().to_string() + ".verkey.json";
     let air_name = &pctx.global_info.airs[airgroup_id][air_id].name;
 
@@ -191,7 +178,7 @@ pub fn verify_basic_proof<F: PrimeField64>(
     let is_valid_proof = verify_proof(
         proof,
         stark_info_path,
-        expressions_bin_path,
+        verifier_info_path,
         verkey_path,
         Some(pctx.get_publics().clone()),
         Some(pctx.get_proof_values().clone()),

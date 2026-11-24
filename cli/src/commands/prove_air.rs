@@ -434,12 +434,12 @@ impl ProveAirCmd {
         // challenges=None: the verifier reseeds from verkey + publics, as the prover did.
         timer_start_info!(VERIFY_RECURSIVE_PROOF);
         let stark_info_path = setup.setup_path.display().to_string() + ".starkinfo.json";
-        let expressions_bin_path = setup.setup_path.display().to_string() + ".verifier.bin";
+        let verifier_info_path = setup.setup_path.display().to_string() + ".verifierinfo.json";
         let verkey_path = setup.setup_path.display().to_string() + ".verkey.json";
         let valid = verify_proof::<Goldilocks>(
             &proof_buffer[publics_aggregation..],
             stark_info_path,
-            expressions_bin_path,
+            verifier_info_path,
             verkey_path,
             Some(publics.clone()),
             None,
