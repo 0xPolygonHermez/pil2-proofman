@@ -44,6 +44,8 @@ pub struct StarkStruct {
     pub merkle_tree_custom: bool,
     #[serde(default, rename = "lastLevelVerification")]
     pub last_level_verification: u64,
+    #[serde(default, rename = "splitLinearHash")]
+    pub split_linear_hash: bool,
     #[serde(flatten)]
     pub low_degree_test: LowDegreeTest,
 }
@@ -301,6 +303,8 @@ pub struct StarkInfo {
     pub airgroupvalues_map: Option<Vec<PolMap>>,
     #[serde(rename = "airValuesMap")]
     pub airvalues_map: Option<Vec<PolMap>>,
+    #[serde(default, rename = "proofValuesMap")]
+    pub proofvalues_map: Option<Vec<PolMap>>,
     #[serde(rename = "evMap")]
     pub ev_map: Vec<EvMap>,
     /// 0 on keys older than the field.

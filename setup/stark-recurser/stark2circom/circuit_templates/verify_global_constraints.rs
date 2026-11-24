@@ -7,8 +7,6 @@
 
 use serde_json::Value;
 
-use crate::stark2circom::transcript::Transcript;
-
 fn parse_num_proof_values(v: &Value) -> usize {
     if let Some(arr) = v.as_array() {
         arr.iter().map(|e| e.as_u64().unwrap_or(0)).sum::<u64>() as usize
@@ -346,16 +344,10 @@ pub fn gen_verify_global_constraints(vadcop_info: &Value) -> String {
     out.push_str("\n    signal input globalChallenge[3];\n\n");
     out.push_str(&format!("    signal challenges[{num_challenges_1}][3];\n"));
 
-    let hash_family = vadcop_info.get("hash").and_then(|v| v.as_str()).unwrap_or("Poseidon2");
-
-    // Transcript to derive challenges from globalChallenge
-    let mut transcript = Transcript::new(None, hash_family);
-    transcript.put("globalChallenge", 3);
-    for i in 0..num_challenges_1 {
-        transcript.get_field(&format!("challenges[{i}]"));
+    if num_challenges_1 > 0 {
+        out.push_str("    challenges <== GlobalChallenges(");
+        out.push_str(&format!("{num_challenges_1})(globalChallenge);\n"));
     }
-    out.push_str(&transcript.get_code());
-    out.push('\n');
 
     inputs_list.push("challenges".into());
 

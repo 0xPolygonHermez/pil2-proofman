@@ -2,7 +2,7 @@
 //! the reference `blake3` crate.
 //!
 //! Both the leaf hash (`LinearHash` in circuits.gl/hash/blake3/linearhash.circom)
-//! and the Fiat-Shamir transcript (emitted round by round by [`super::transcript`])
+//! and the Fiat-Shamir transcript (the library's `TranscriptEngine`, verifier/transcript_blake3.circom)
 //! are hand-written BLAKE3, and since the linearhash template writes its chunk
 //! tree out directly while the transcript emulates it with a cv stack, the two
 //! share no code. A bug in either would not show up in the other, nor in any
@@ -32,8 +32,6 @@ use std::path::PathBuf;
 use std::process::Command;
 
 use proofman_fields::{hash_state, Blake3Transcript, Goldilocks, PrimeField64};
-
-use super::transcript::Transcript;
 
 /// Runs the compiled circuit and prints the first `n_out` witness cells after
 /// the leading constant 1, i.e. the main component's outputs.
@@ -282,36 +280,33 @@ fn transcript_matches_reference_blake3() {
     let n_challenges: usize = SCRIPT.iter().map(|(_, g)| g).sum();
     assert!(n_words > 128, "script must cross a chunk boundary to exercise raw=1");
 
-    // Drive the emitter and the reference through the identical script.
+    // The library engine (verifier/transcript_blake3.circom) and the reference over the identical script.
     let inputs = sample_inputs(n_words);
-    let mut emitter = Transcript::new(None, "blake3");
     let mut oracle = Blake3Transcript::<Goldilocks>::new();
     let mut want: Vec<u64> = Vec::with_capacity(3 * n_challenges);
-
+    let mut ops: Vec<String> = Vec::new();
     let mut w = 0usize;
-    let mut c = 0usize;
     for (absorb, squeeze) in SCRIPT {
+        ops.extend([format!("0, {absorb}"), format!("1, {}", 3 * squeeze)]);
         for _ in 0..*absorb {
-            emitter.put_single(&format!("in[{w}]"));
             oracle.put(&[Goldilocks::from_u64(inputs[w])]);
             w += 1;
         }
         for _ in 0..*squeeze {
-            emitter.get_field(&format!("out[{c}]"));
             let mut got = [Goldilocks::from_u64(0); 3];
             oracle.get_field(&mut got);
             want.extend(got.iter().map(|f| f.as_canonical_u64()));
-            c += 1;
         }
     }
 
-    let body = emitter.get_code();
-    assert!(body.contains("Blake3FinalizeParent()("), "script did not reach a parent-rooted squeeze:\n{body}");
-
+    let n_out = 3 * n_challenges;
     let src = format!(
-        "pragma circom 2.1.0;\npragma custom_templates;\ninclude \"hash/blake3/blake3.circom\";\n\n\
-         template T() {{\n    signal input in[{n_words}];\n    signal output out[{n_challenges}][3];\n{body}\n}}\n\
-         component main = T();\n"
+        "pragma circom 2.1.0;\npragma custom_templates;\ninclude \"verifier/transcript_blake3.circom\";\n\n\
+         template T() {{\n    signal input in[{n_words}];\n    signal output out[{n_out}];\n    var ops[{}] = [{}];\n\
+         \x20   out <== TranscriptEngine({n_words}, {n_out}, {}, ops)(in);\n}}\ncomponent main = T();\n",
+        2 * ops.len(),
+        ops.join(", "),
+        ops.len()
     );
 
     let got = run_circuit("transcript", &src, &inputs, 3 * n_challenges);
@@ -320,7 +315,7 @@ fn transcript_matches_reference_blake3() {
 
 /// One round of the contributions lattice chain, circom against the prover.
 ///
-/// `gen_calculate_hashes` emits the blake3 chain as `Blake3Permute8` rounds eight words
+/// vadcop_hashes.circom runs the blake3 chain as `Blake3Permute8` rounds eight words
 /// wide; the prover steps it with `hash_state` at the width
 /// `TranscriptDyn::get_chain_state` returns. Those are two separate implementations of one
 /// function and they must agree, or prover and verifier derive different contributions --

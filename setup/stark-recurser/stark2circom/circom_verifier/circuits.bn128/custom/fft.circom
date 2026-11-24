@@ -131,3 +131,11 @@ template FFT(nBits, inv) {
         }
     }
 }
+
+// The FRI fold's interpolation (verifier/stark_verifier_bn128.circom): reduced, for the custom EvalPol.
+template FFTFold(nBits) {
+    signal input {maxNum} in[1 << nBits][3];
+    signal output {maxNum} out[1 << nBits][3];
+
+    out <== FFT(nBits, 1)(in);
+}

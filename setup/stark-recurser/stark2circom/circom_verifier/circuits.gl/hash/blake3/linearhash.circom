@@ -28,8 +28,8 @@ include "blake3.circom";
     rather than in block content.
 
     The transcript's incremental path (interleaved absorb and squeeze) cannot be
-    a fixed-`n` template, so it is emitted round by round from
-    stark2circom/transcript.rs against the same wrappers in blake3.circom.
+    a fixed-`n` template; it is verifier/transcript_blake3.circom's
+    TranscriptEngine, over the same wrappers in blake3.circom.
 */
 
 /*

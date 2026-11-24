@@ -1,33 +1,20 @@
-//! Circom / Solidity template generators.
-//!
-//! All non-trivial templates use **Tera** (embedded at compile time via
-//! `include_str!`).  Sibling modules build the Tera context — including, when
-//! relevant, pre-rendered code fragments emitted by the `Transcript` state
-//! machine — and delegate the final Circom shape to a `.tera` file.
-//!
-//! Tera templates:
-//! - `recursivef.circom.tera`        → [`gen_recursivef`]
-//! - `recursion_final.circom.tera`   → [`gen_recursion_final`]
-//! - `verifier.sol.tera`             → [`gen_solidity`]
-//! - `iverifier.sol.tera`            → [`gen_iverifier`]
-//! - `calculate_hashes.circom.tera`  → [`super::calculate_hashes::gen_calculate_hashes`]
-//! - `get_sha256_inputs.circom.tera` → [`super::get_sha256_inputs::gen_get_sha256_inputs`]
+//! The circom mains (generated text over `helper_circuits/`'s static templates) and the
+//! Solidity contracts, the only Tera left: `verifier.sol.tera` → [`gen_solidity`],
+//! `iverifier.sol.tera` → [`gen_iverifier`].
 
 use anyhow::{bail, Context, Result};
 use serde_json::Value;
 use tera::{Context as TeraCtx, Tera};
 
-use super::get_sha256_inputs::gen_get_sha256_inputs;
+use super::get_sha256_inputs::sha256_defs;
 use super::stark_inputs::{assign_stark_inputs, define_stark_inputs, EnableInput, StarkInputOptions};
 use super::vadcop_inputs::{
     agg_types_consistency, agg_vadcop_inputs, air_id_vars, assign_vadcop_inputs, define_vadcop_inputs,
     init_vadcop_inputs, AggVadcopOptions, AssignVadcopOptions, VadcopSignals,
 };
-use super::calculate_hashes::gen_calculate_hashes;
-use super::verify_global_challenge::gen_verify_global_challenge;
 use super::verify_global_constraints::gen_verify_global_constraints;
 use super::CircomGenOptions;
-use crate::stark2circom::circom_verifier::bn128::uses_custom_templates;
+use crate::stark2circom::circom_verifier::lib_bn128::uses_custom_templates;
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -48,16 +35,8 @@ fn parse_num_proof_values(v: &Value) -> usize {
 
 // ── Embedded Tera templates ───────────────────────────────────────────────────
 
-const RECURSIVEF_TMPL: &str = include_str!("tera/recursivef.circom.tera");
-const FINAL_TMPL: &str = include_str!("tera/recursion_final.circom.tera");
 const VERIFIER_SOL_TMPL: &str = include_str!("tera/verifier.sol.tera");
 const IVERIFIER_SOL_TMPL: &str = include_str!("tera/iverifier.sol.tera");
-const FINAL_COMPRESSED_TMPL: &str = include_str!("tera/final_compressed.circom.tera");
-const COMPRESSOR_TMPL: &str = include_str!("tera/compressor.circom.tera");
-const RECURSIVE1_TMPL: &str = include_str!("tera/recursive1.circom.tera");
-const RECURSIVE1_BATCHED_TMPL: &str = include_str!("tera/recursive1_batched.circom.tera");
-const RECURSIVE2_TMPL: &str = include_str!("tera/recursive2.circom.tera");
-const VADCOP_FINAL_TMPL: &str = include_str!("tera/vadcop_final.circom.tera");
 
 /// Render a single one-shot Tera template string (no inheritance / include).
 pub(super) fn render(template_src: &str, ctx: &TeraCtx) -> Result<String> {
@@ -68,25 +47,35 @@ pub(super) fn render(template_src: &str, ctx: &TeraCtx) -> Result<String> {
 
 // ── recursivef ────────────────────────────────────────────────────────────────
 
-/// Port of `src/recursion/templates/recursivef.circom.ejs`.
+/// The recursivef circuit: its verifier on the proof inputs, rootC (and the publics) public.
 pub fn gen_recursivef(stark_info: &Value, verifier_filenames: &[String], _opts: &CircomGenOptions) -> Result<String> {
     let def_opts = StarkInputOptions { add_publics: true, is_final: false, parallel: false, shared_publics: false };
-    let stark_signals = define_stark_inputs(stark_info, "", &def_opts);
-    let stark_assign = assign_stark_inputs("sV", "", stark_info, &def_opts, &EnableInput::None);
-    let n_publics = stark_info["nPublics"].as_u64().unwrap_or(0);
+    let publics = if stark_info["nPublics"].as_u64().unwrap_or(0) > 0 { ", publics" } else { "" };
+    Ok(format!(
+        "pragma circom 2.1.0;\npragma custom_templates;\n\n{}\ntemplate Main() {{\n    signal input rootC[4];\n\n{}\n{}\n    sV.rootC <== rootC;\n}}\n\ncomponent main {{public [ rootC{publics} ]}}= Main();\n",
+        includes(verifier_filenames),
+        define_stark_inputs(stark_info, "", &def_opts),
+        assign_stark_inputs("sV", "", stark_info, &def_opts, &EnableInput::None),
+    ))
+}
 
-    let mut ctx = TeraCtx::new();
-    ctx.insert("verifier_filenames", verifier_filenames);
-    ctx.insert("stark_signals", &stark_signals);
-    ctx.insert("stark_assign", &stark_assign);
-    ctx.insert("has_publics", &(n_publics > 0));
+/// `s` when `c`, else nothing.
+fn when(c: bool, s: impl Into<String>) -> String {
+    if c {
+        s.into()
+    } else {
+        String::new()
+    }
+}
 
-    render(RECURSIVEF_TMPL, &ctx)
+/// `include` lines, one per verifier file.
+fn includes(files: &[String]) -> String {
+    files.iter().map(|f| format!("include \"{f}\";\n")).collect()
 }
 
 // ── recursion/final ───────────────────────────────────────────────────────────
 
-/// Port of `src/recursion/templates/final.circom.ejs`.
+/// The final circuit: the recursivef's verifier and the publics hash (`GetSha256Inputs`, static).
 pub fn gen_recursion_final(
     stark_info: &Value,
     verifier_filenames: &[String],
@@ -94,31 +83,34 @@ pub fn gen_recursion_final(
     _opts: &CircomGenOptions,
 ) -> Result<String> {
     let def_opts = StarkInputOptions { add_publics: true, is_final: true, parallel: false, shared_publics: false };
-    let stark_signals = define_stark_inputs(stark_info, "", &def_opts);
-    let stark_assign = assign_stark_inputs("sV", "", stark_info, &def_opts, &EnableInput::None);
-
-    // The circuit includes the recursivef's verifier: when that one uses custom templates, circom
-    // wants the pragma here too, and the publics hash takes the verifier's LessThanGoldilocks.
-    let custom_templates = uses_custom_templates(stark_info);
-    let sha256_template = publics.map(|p| gen_get_sha256_inputs(p, custom_templates)).unwrap_or_default();
-    let n_publics = stark_info["nPublics"].as_u64().unwrap_or(0) as usize;
-    // Incoming `publics` = [rootCVadcopFinal(4) | is_vadcop_final_proof(1) | real publics].
-    // rootC takes the first 4, the flag the next 1, and the remaining
-    // `n_publics - 5` are the real publics that get hashed. The flag is verified
-    // (it stays a public input) but is excluded from `publicsProof` / the hash.
-    let n_publics_proof = n_publics.saturating_sub(5);
-
-    let mut ctx = TeraCtx::new();
-    ctx.insert("custom_templates", &custom_templates);
-    ctx.insert("verifier_filenames", verifier_filenames);
-    ctx.insert("sha256_template", &sha256_template);
-    ctx.insert("stark_signals", &stark_signals);
-    ctx.insert("stark_assign", &stark_assign);
-    ctx.insert("n_publics_proof", &n_publics_proof);
-    // Only a proof with room for a program VK can be a recurser aggregate.
-    ctx.insert("has_program_vk", &(n_publics_proof >= 4));
-
-    render(FINAL_TMPL, &ctx)
+    let (n_sha, n_defs, defs) = sha256_defs(publics.unwrap_or(&Value::Null))?;
+    // Incoming publics: [rootCVadcopFinal(4) | is_vadcop_final_proof(1) | real publics]; the flag is not hashed.
+    let n_proof = stark_info["nPublics"].as_u64().unwrap_or(0).saturating_sub(5);
+    // A custom-tree verifier wants the pragma on every file that includes it.
+    let mut out = String::from("pragma circom 2.1.0;\n");
+    if uses_custom_templates(stark_info) {
+        out += "pragma custom_templates;\n";
+    }
+    out += "\n";
+    for vf in verifier_filenames {
+        out += &format!("include \"{vf}\";\n");
+    }
+    out += "include \"sha256_inputs.circom\";\n\ntemplate Main() {\n";
+    out += &defs;
+    out += "    signal output publicsHash;\n\n";
+    out += &define_stark_inputs(stark_info, "", &def_opts);
+    out += "\n";
+    out += &assign_stark_inputs("sV", "", stark_info, &def_opts, &EnableInput::None);
+    out += "\n    signal rootC[4];\n    for (var i = 0; i < 4; i++) {\n        rootC[i] <== publics[i];\n    }\n";
+    out += "    // The fold-layer flag: verified, not hashed.\n    signal is_vadcop_final_proof;\n    is_vadcop_final_proof <== publics[4];\n";
+    out += "    is_vadcop_final_proof * (1 - is_vadcop_final_proof) === 0;\n";
+    if n_proof >= 4 {
+        out += "    // An aggregate's program VK (slots 5..9) is the key it verified under, not a key it chose.\n";
+        out += "    for (var i = 0; i < 4; i++) {\n        (1 - is_vadcop_final_proof) * (rootC[i] - publics[5 + i]) === 0;\n    }\n";
+    }
+    out += &format!("    signal publicsProof[{n_proof}];\n    for (var i = 0; i < {n_proof}; i++) {{\n        publicsProof[i] <== publics[i + 5];\n    }}\n\n");
+    out += &format!("    publicsHash <== GetSha256Inputs({n_sha}, {n_defs}, DEFS)(publicsProof, rootC);\n}}\n\ncomponent main = Main();\n");
+    Ok(out)
 }
 
 // ── Solidity contracts ────────────────────────────────────────────────────────
@@ -252,34 +244,38 @@ fn capitalise(s: &str) -> String {
 
 // ── VADCOP templates ──────────────────────────────────────────────────────────
 
-/// Port of `vadcop/templates/final_compressed.circom.ejs`.
+/// The compressed vadcop_final circuit. The incoming proof commits `[is_vadcop_final_proof | vk(4) | inputs]`
+/// as ONE public array (the witness fill reads public inputs first, in order); this proof re-exposes
+/// the flag-free rest as `publics_stripped`.
 pub fn gen_final_compressed(
     stark_info: &Value,
     verifier_filenames: &[String],
     opts: &CircomGenOptions,
 ) -> Result<String> {
-    // The vadcop_final AIR carries the `is_vadcop_final_proof` flag as public @0,
-    // ahead of the real publics. So the StarkVerifier consumes `n_publics` values,
-    // but only the `n_publics - 1` after the flag are re-exposed by this circuit —
-    // the flag is verified but stripped from the public interface. The template
-    // hand-declares the publics (flag first, then `publics[n_real]`) and rebuilds
-    // the full array for the verifier, so we emit stark_signals/stark_assign WITHOUT
-    // their auto `publics` declaration/wiring.
     let n_publics = stark_info["nPublics"].as_u64().unwrap_or(0) as usize;
-    let n_publics_real = n_publics.saturating_sub(1);
+    let n_real = n_publics.saturating_sub(1);
     let has_publics = if opts.has_recursion { n_publics > 4 } else { n_publics > 0 };
-
     let def_opts = StarkInputOptions { add_publics: false, is_final: false, parallel: false, shared_publics: false };
-
-    let mut ctx = TeraCtx::new();
-    ctx.insert("verifier_filenames", verifier_filenames);
-    ctx.insert("stark_signals", &define_stark_inputs(stark_info, "", &def_opts));
-    ctx.insert("stark_assign", &assign_stark_inputs("sV", "", stark_info, &def_opts, &EnableInput::None));
-    ctx.insert("has_publics", &has_publics);
-    ctx.insert("n_publics", &n_publics);
-    ctx.insert("n_publics_real", &n_publics_real);
-
-    render(FINAL_COMPRESSED_TMPL, &ctx)
+    let mut out = format!(
+        "pragma circom 2.1.0;\npragma custom_templates;\n\n{}\ntemplate FinalCompressed() {{\n",
+        includes(verifier_filenames)
+    );
+    if has_publics {
+        out += &format!("    signal input publics[{n_publics}];\n    signal output publics_stripped[{n_real}];\n");
+    }
+    out += &define_stark_inputs(stark_info, "", &def_opts);
+    out += "\n";
+    out += &assign_stark_inputs("sV", "", stark_info, &def_opts, &EnableInput::None);
+    out += "\n";
+    if has_publics {
+        out +=
+            &format!("    for (var i = 0; i < {n_publics}; i++) {{\n        sV.publics[i] <== publics[i];\n    }}\n");
+        out += &format!(
+            "    for (var i = 0; i < {n_real}; i++) {{\n        publics_stripped[i] <== publics[i + 1];\n    }}\n"
+        );
+    }
+    out += "}\n\ncomponent main = FinalCompressed();\n";
+    Ok(out)
 }
 
 /// Port of `vadcop/templates/compressor.circom.ejs`.
@@ -304,21 +300,28 @@ pub fn gen_compressor(
     }
     pub_names.push("globalChallenge");
 
-    let mut ctx = TeraCtx::new();
-    ctx.insert("verifier_filenames", verifier_filenames);
-    ctx.insert("calculate_hashes", &gen_calculate_hashes(stark_info, vadcop_info));
-    ctx.insert("air_id_vars", &air_id_vars(stark_info));
-    ctx.insert("has_publics", &(n_publics > 0));
-    ctx.insert("n_publics", &n_publics);
-    ctx.insert("has_proof_values", &(num_proof_values > 0));
-    ctx.insert("num_proof_values", &num_proof_values);
-    ctx.insert("stark_signals", &define_stark_inputs(stark_info, "", &def_opts));
-    ctx.insert("vadcop_define", &define_vadcop_inputs(vadcop_info, airgroup_id, "sv", VadcopSignals::Output, None));
-    ctx.insert("stark_assign", &assign_stark_inputs("sV", "", stark_info, &def_opts, &EnableInput::None));
-    ctx.insert("vadcop_init", &init_vadcop_inputs("sV", "sv", "", airgroup_id, stark_info, vadcop_info, None));
-    ctx.insert("pub_names", &pub_names.join(", "));
-
-    render(COMPRESSOR_TMPL, &ctx)
+    let mut out = format!(
+        "pragma circom 2.1.0;\npragma custom_templates;\n\n{}include \"elliptic_curve.circom\";\ninclude \"circuit_type.circom\";\ninclude \"vadcop_hashes.circom\";\n\ntemplate Compressor() {{\n{}\n",
+        includes(verifier_filenames),
+        air_id_vars(stark_info)
+    );
+    out += &when(n_publics > 0, format!("    // --> AIR public inputs\n    signal input publics[{n_publics}];\n\n"));
+    out += "    // --> VADCOP inputs\n";
+    out += &when(num_proof_values > 0, format!("    signal input proofValues[{num_proof_values}][3];\n"));
+    out += "    signal input globalChallenge[3];\n\n    // --> AIR STARK proof data\n";
+    out += &define_stark_inputs(stark_info, "", &def_opts);
+    out += "\n    // --> VADCOP outputs\n";
+    out += &define_vadcop_inputs(vadcop_info, airgroup_id, "sv", VadcopSignals::Output, None);
+    out += "\n    // --> Verify the STARK proof\n";
+    out += &assign_stark_inputs("sV", "", stark_info, &def_opts, &EnableInput::None);
+    out += "\n";
+    out += &when(
+        n_publics > 0,
+        format!("    for (var i=0; i< {n_publics}; i++) {{\n        sV.publics[i] <== publics[i];\n    }}\n\n"),
+    );
+    out += &init_vadcop_inputs("sV", "sv", "", airgroup_id, stark_info, vadcop_info, None);
+    out += &format!("\n}}\n\ncomponent main {{public [{}]}} = Compressor();\n", pub_names.join(", "));
+    Ok(out)
 }
 
 /// Port of `vadcop/templates/recursive1.circom.ejs`; `batch_size > 1` renders k proofs of one air.
@@ -342,90 +345,84 @@ pub fn gen_recursive1(
     let assign_opts =
         StarkInputOptions { add_publics: !has_compressor, is_final: false, parallel: k > 1, shared_publics: true };
 
-    let mut ctx = TeraCtx::new();
-    ctx.insert("verifier_filenames", verifier_filenames);
-    ctx.insert("has_compressor", &has_compressor);
-    ctx.insert(
-        "calculate_hashes",
-        &if !has_compressor { gen_calculate_hashes(stark_info, vadcop_info) } else { String::new() },
+    let head = format!(
+        "pragma circom 2.1.0;\npragma custom_templates;\n\ninclude \"iszero.circom\";\ninclude \"circuit_type.circom\";\n{}",
+        if k == 1 { "" } else { "include \"agg_values.circom\";\ninclude \"acc_points.circom\";\n" }
     );
-    ctx.insert("air_id_vars", &air_id_vars(stark_info));
-    ctx.insert("has_publics", &(n_publics > 0));
-    ctx.insert("n_publics", &n_publics);
-    ctx.insert("has_proof_values", &(num_proof_values > 0));
-    ctx.insert("num_proof_values", &num_proof_values);
+    let hashes = when(!has_compressor, "include \"elliptic_curve.circom\";\ninclude \"vadcop_hashes.circom\";\n");
+    let globals = format!(
+        "{}{}    signal input globalChallenge[3];\n\n    signal input rootCAgg[4];\n\n",
+        when(n_publics > 0, format!("    signal input publics[{n_publics}];\n")),
+        when(num_proof_values > 0, format!("    signal input proofValues[{num_proof_values}][3];\n"))
+    );
 
     // Only a single compressor slot re-publishes the set it was handed; anything folded is output.
     let mut publics_names: Vec<String> = Vec::new();
-    let template = if k == 1 {
+    let mut out = format!(
+        "{head}{}{hashes}\ntemplate Recursive1() {{\n{}\n",
+        includes(verifier_filenames),
+        air_id_vars(stark_info)
+    );
+    if k == 1 {
         let outer = if has_compressor { VadcopSignals::Input } else { VadcopSignals::Output };
-        ctx.insert(
-            "vadcop_define",
-            &define_vadcop_inputs(vadcop_info, airgroup_id, "sv", outer, Some(&mut publics_names)),
-        );
-        ctx.insert("stark_signals", &define_stark_inputs(stark_info, "", &def_opts));
-        ctx.insert("stark_assign", &assign_stark_inputs("sV", "", stark_info, &assign_opts, &EnableInput::None));
-        ctx.insert(
-            "vadcop_init_or_assign",
-            &if !has_compressor {
-                init_vadcop_inputs("sV", "sv", "", airgroup_id, stark_info, vadcop_info, None)
-            } else {
-                let av_opts = AssignVadcopOptions { add_prefix_agg_types: true, ..Default::default() };
-                assign_vadcop_inputs("sV", vadcop_info, airgroup_id, "sv", "", &av_opts)
-            },
-        );
-        RECURSIVE1_TMPL
+        out += &define_vadcop_inputs(vadcop_info, airgroup_id, "sv", outer, Some(&mut publics_names));
+        out += "\n";
+        out += &define_stark_inputs(stark_info, "", &def_opts);
+        out += "\n";
+        out += &globals;
+        out += &assign_stark_inputs("sV", "", stark_info, &assign_opts, &EnableInput::None);
+        out += "\n\n";
+        out += &if !has_compressor {
+            init_vadcop_inputs("sV", "sv", "", airgroup_id, stark_info, vadcop_info, None)
+        } else {
+            let av_opts = AssignVadcopOptions { add_prefix_agg_types: true, ..Default::default() };
+            assign_vadcop_inputs("sV", vadcop_info, airgroup_id, "sv", "", &av_opts)
+        };
+        out += "\n";
     } else {
-        ctx.insert(
-            "vadcop_define_sv",
-            &define_vadcop_inputs(vadcop_info, airgroup_id, "sv", VadcopSignals::Output, None),
-        );
+        out += &define_vadcop_inputs(vadcop_info, airgroup_id, "sv", VadcopSignals::Output, None);
+        out += "\n";
+        out += &globals;
         let letters: Vec<String> = (0..k).map(|i| ((b'a' + i as u8) as char).to_string()).collect();
         let prefixes: Vec<String> = letters.iter().map(|l| format!("{l}_sv")).collect();
         // Compressor slots receive their values; basic slots mint them.
         let kind = if has_compressor { VadcopSignals::Input } else { VadcopSignals::Internal };
         let av_opts = AssignVadcopOptions { add_prefix_agg_types: true, set_enable_input: true, parallel: true };
-        let slots: Vec<serde_json::Value> = letters
-            .iter()
-            .zip(prefixes.iter())
-            .map(|(l, pfx)| {
-                let comp = format!("v{}", l.to_uppercase());
-                let vadcop_define = define_vadcop_inputs(vadcop_info, airgroup_id, pfx, kind, None);
-                let enable =
-                    if has_compressor { EnableInput::None } else { EnableInput::Expr(format!("1 - {l}_isNull")) };
-                let vadcop_assign = if has_compressor {
-                    assign_vadcop_inputs(&comp, vadcop_info, airgroup_id, pfx, l, &av_opts)
-                } else {
-                    init_vadcop_inputs(
-                        &comp,
-                        pfx,
-                        l,
-                        airgroup_id,
-                        stark_info,
-                        vadcop_info,
-                        Some(&format!("{l}_isNull")),
-                    )
-                };
-                serde_json::json!({
-                    "lower": l,
-                    "upper": l.to_uppercase(),
-                    "prefix": pfx,
-                    "vadcop_define": vadcop_define,
-                    "stark_signals": define_stark_inputs(stark_info, l, &def_opts),
-                    "stark_assign": assign_stark_inputs(&comp, l, stark_info, &assign_opts, &enable),
-                    "vadcop_assign": vadcop_assign,
-                })
-            })
-            .collect();
-        ctx.insert("slots", &slots);
-        ctx.insert(
-            "agg_types_consistency",
-            &agg_types_consistency(vadcop_info, airgroup_id, &prefixes, has_compressor),
-        );
+        let (mut assign, mut vadcop) = (String::new(), String::new());
+        for (l, pfx) in letters.iter().zip(&prefixes) {
+            let comp = format!("v{}", l.to_uppercase());
+            out += &define_vadcop_inputs(vadcop_info, airgroup_id, pfx, kind, None);
+            out += "\n";
+            out += &define_stark_inputs(stark_info, l, &def_opts);
+            out += "\n";
+            let enable = if has_compressor { EnableInput::None } else { EnableInput::Expr(format!("1 - {l}_isNull")) };
+            assign += &assign_stark_inputs(&comp, l, stark_info, &assign_opts, &enable);
+            assign += "\n";
+            vadcop += &if has_compressor {
+                assign_vadcop_inputs(&comp, vadcop_info, airgroup_id, pfx, l, &av_opts)
+            } else {
+                init_vadcop_inputs(&comp, pfx, l, airgroup_id, stark_info, vadcop_info, Some(&format!("{l}_isNull")))
+            };
+            vadcop += "\n";
+        }
+        if !has_compressor {
+            out += "    // 1 = empty slot, dropped from the fold and the count.\n";
+            out += &letters.iter().map(|l| format!("    signal input {l}_isNull;\n")).collect::<String>();
+            out += "\n";
+            out += &letters.iter().map(|l| format!("    {l}_isNull * ({l}_isNull - 1) === 0;\n")).collect::<String>();
+        }
+        out += "\n";
+        out += &assign;
+        out += &vadcop;
+        out += "\n";
+        out += &agg_types_consistency(vadcop_info, airgroup_id, &prefixes, has_compressor);
+        out += "\n\n";
         let agg_opts = AggVadcopOptions { own_circuit_type: true, force_null: true };
-        ctx.insert("agg_vadcop", &agg_vadcop_inputs(vadcop_info, airgroup_id, &prefixes, "sv", &agg_opts));
-        RECURSIVE1_BATCHED_TMPL
-    };
+        out += &agg_vadcop_inputs(vadcop_info, airgroup_id, &prefixes, "sv", &agg_opts);
+        out += "\n\n    // An all-empty batch would prove nothing, and vadcop_final drops the count that shows it.\n";
+        out += "    signal {binary} noProofs <== IsZero()(sv_aggregatedProofs);\n    noProofs === 0;\n\n";
+        out += "    // The air's own type: the aggregated one would make recursive2 select rootCAgg.\n    sv_circuitType <== circuitType;\n";
+    }
 
     // Only a single compressor slot's sv_* are public inputs; batched slots stay private (recursive2's nPublics).
     let mut pub_names: Vec<String> = Vec::new();
@@ -440,9 +437,8 @@ pub fn gen_recursive1(
     }
     pub_names.push("globalChallenge".into());
     pub_names.push("rootCAgg".into());
-    ctx.insert("pub_names", &pub_names.join(", "));
-
-    render(template, &ctx)
+    out += &format!("}}\n\ncomponent main {{public [{}]}} = Recursive1();\n", pub_names.join(", "));
+    Ok(out)
 }
 
 /// Port of `vadcop/templates/recursive2.circom.ejs`.
@@ -508,43 +504,50 @@ pub fn gen_recursive2(
     pub_names.push("globalChallenge");
     pub_names.push("rootCAgg");
 
-    let mut ctx = TeraCtx::new();
-    ctx.insert("verifier_filenames", verifier_filenames);
-    ctx.insert("airs_in_group", &airs_in_group);
-    ctx.insert("rootc_basics", &rootc_basics);
-    ctx.insert("vadcop_define_sv", &define_vadcop_inputs(vadcop_info, airgroup_id, "sv", VadcopSignals::Output, None));
-    ctx.insert("has_publics", &(n_publics_vad > 0));
-    ctx.insert("n_publics", &n_publics_vad);
-    ctx.insert("has_proof_values", &(num_proof_values > 0));
-    ctx.insert("num_proof_values", &num_proof_values);
-    // serde_json values, not tera::Context: a Context is not Serialize and cannot be
-    // nested inside another Context.
-    let slots: Vec<serde_json::Value> = slot_names
+    let mut out = format!(
+        "pragma circom 2.1.0;\npragma custom_templates;\n\ninclude \"select_vk.circom\";\ninclude \"agg_values.circom\";\ninclude \"acc_points.circom\";\n\n{}",
+        includes(verifier_filenames)
+    );
+    out += &format!(
+        "template Recursive2() {{\n    var airgroupId = {airgroup_id};\n    var circuitType = circuitTypeOf(airgroupId, 0);\n    var rootCBasics[{airs_in_group}][4];\n\n{rootc_basics}\n"
+    );
+    out += &define_vadcop_inputs(vadcop_info, airgroup_id, "sv", VadcopSignals::Output, None);
+    out += "\n";
+    out += &when(n_publics_vad > 0, format!("    signal input publics[{n_publics_vad}];\n"));
+    out += &when(num_proof_values > 0, format!("    signal input proofValues[{num_proof_values}][3];\n"));
+    out += "    signal input globalChallenge[3];\n    signal input rootCAgg[4];\n\n";
+    let slots: Vec<(String, String, String)> = slot_names
         .iter()
-        .zip(slot_prefixes.iter())
-        .map(|(name, prefix)| {
-            let upper = name.to_uppercase();
-            let comp = format!("v{upper}");
-            serde_json::json!({
-                "lower": name,
-                "upper": upper,
-                "prefix": prefix,
-                "vadcop_define": define_vadcop_inputs(vadcop_info, airgroup_id, prefix, VadcopSignals::Input, None),
-                "stark_signals": define_stark_inputs(stark_info, name, &def_opts),
-                "stark_assign": assign_stark_inputs(&comp, name, stark_info, &par_opts, &EnableInput::None),
-                "vadcop_assign": assign_vadcop_inputs(&comp, vadcop_info, airgroup_id, prefix, name, &av_opts),
-            })
-        })
+        .zip(&slot_prefixes)
+        .map(|(name, prefix)| (name.clone(), name.to_uppercase(), prefix.clone()))
         .collect();
-    ctx.insert("slots", &slots);
-    ctx.insert("agg_types_consistency", &agg_types_consistency(vadcop_info, airgroup_id, &slot_prefixes, false));
-    ctx.insert("sel_fn", sel_fn);
-    ctx.insert("airgroup_id", &airgroup_id);
-    ctx.insert("agg_vadcop", &agg_vadcop_inputs(vadcop_info, airgroup_id, &slot_prefixes, "sv", &Default::default()));
-    ctx.insert("n_publics_minus_4", &(n_publics_raw - 4));
-    ctx.insert("pub_names", &pub_names.join(", "));
-
-    render(RECURSIVE2_TMPL, &ctx)
+    for (name, _, prefix) in &slots {
+        out += &define_vadcop_inputs(vadcop_info, airgroup_id, prefix, VadcopSignals::Input, None);
+        out += "\n";
+        out += &define_stark_inputs(stark_info, name, &def_opts);
+        out += "\n";
+    }
+    out += &agg_types_consistency(vadcop_info, airgroup_id, &slot_prefixes, false);
+    out += "\n";
+    for (name, upper, _) in &slots {
+        out += &assign_stark_inputs(&format!("v{upper}"), name, stark_info, &par_opts, &EnableInput::None);
+        out += "\n";
+    }
+    for (name, upper, prefix) in &slots {
+        out += &assign_vadcop_inputs(&format!("v{upper}"), vadcop_info, airgroup_id, prefix, name, &av_opts);
+        out += "\n";
+    }
+    for (_, upper, prefix) in &slots {
+        out += &format!("    v{upper}.rootC <== {sel_fn}({airs_in_group}, airgroupId)({prefix}_circuitType, rootCBasics, rootCAgg);\n");
+    }
+    out += "\n";
+    out += &agg_vadcop_inputs(vadcop_info, airgroup_id, &slot_prefixes, "sv", &Default::default());
+    out += "\n\n    for (var i=0; i<4; i++) {\n";
+    for (_, upper, _) in &slots {
+        out += &format!("        v{upper}.publics[{} + i] <== rootCAgg[i];\n", n_publics_raw - 4);
+    }
+    out += &format!("    }}\n}}\n\ncomponent main {{public [{}]}} = Recursive2();\n", pub_names.join(", "));
+    Ok(out)
 }
 
 /// Port of `vadcop/templates/final.circom.ejs`.
@@ -665,34 +668,79 @@ pub fn gen_vadcop_final(
     }
 
     // (verifyGlobalConstraints input, source) for each airgroup that has airgroupvalues
-    let airgroupvalues_wires: Vec<serde_json::Value> = agg_types
+    let airgroupvalues_wires: Vec<(String, String)> = agg_types
         .iter()
         .enumerate()
         .filter(|(_, ag)| ag.as_array().map(|a| a.len()).unwrap_or(0) > 0)
-        .map(|(i, _)| serde_json::json!({ "dst": format!("s{i}_airgroupvalues"), "src": src(i, "airgroupvalues") }))
+        .map(|(i, _)| (format!("s{i}_airgroupvalues"), src(i, "airgroupvalues")))
         .collect();
+    let stage1hash_srcs: Vec<String> = (0..agg_types.len()).map(|i| src(i, "stage1Hash")).collect();
 
-    let stage1hash_indices: Vec<usize> = (0..agg_types.len()).collect();
-    let stage1hash_srcs: Vec<String> = stage1hash_indices.iter().map(|&i| src(i, "stage1Hash")).collect();
-
-    let mut ctx = TeraCtx::new();
-    ctx.insert("verifier_filenames", verifier_filenames);
-    ctx.insert("verify_global_challenge", &gen_verify_global_challenge(stark_info_0, vadcop_info));
-    ctx.insert("verify_global_constraints", &gen_verify_global_constraints(vadcop_info));
-    ctx.insert("has_publics", &(n_publics > 0));
-    ctx.insert("n_publics", &n_publics);
-    ctx.insert("has_proof_values", &(num_proof_values > 0 || !proof_values_map.is_empty()));
-    ctx.insert("num_proof_values", &num_proof_values);
-    ctx.insert("define_sections", &define_sections);
-    ctx.insert("assign_sections", &assign_sections);
-    ctx.insert("stage1hash_indices", &stage1hash_indices);
-    ctx.insert("stage1hash_srcs", &stage1hash_srcs);
-    ctx.insert("airgroupvalues_wires", &airgroupvalues_wires);
-    ctx.insert("multi_air", &multi_air);
-    ctx.insert("null_sections", &null_sections);
-    ctx.insert("n_airgroups", &agg_types.len());
-
-    render(VADCOP_FINAL_TMPL, &ctx)
+    let has_pv = num_proof_values > 0 || !proof_values_map.is_empty();
+    let n_ag = agg_types.len();
+    let mut out = format!(
+        "pragma circom 2.1.0;\npragma custom_templates;\n\n{}include \"iszero.circom\";\ninclude \"select_vk.circom\";\ninclude \"agg_values.circom\";\ninclude \"vadcop_hashes.circom\";\n\n{}\n\n",
+        includes(verifier_filenames),
+        gen_verify_global_constraints(vadcop_info)
+    );
+    out += "template Final() {\n    signal output is_vadcop_final_proof <== 1;\n\n";
+    out += &when(n_publics > 0, format!("    signal input publics[{n_publics}];\n"));
+    out += &when(has_pv, format!("    signal input proofValues[{num_proof_values}][3];\n"));
+    out += "    signal input globalChallenge[3];\n\n";
+    for sec in define_sections.iter().chain(&assign_sections).chain(&null_sections) {
+        out += sec;
+        out += "\n";
+    }
+    // The global challenge is the transcript of the publics, stage-1 proof values and contributions.
+    let pv: Vec<String> = proof_values_map.iter().map(|v| v["stage"].as_u64().unwrap_or(0).to_string()).collect();
+    let w = if curve == "None" { lattice_size } else { 10 };
+    out += &format!(
+        "    component verifyChallenges = VerifyGlobalChallenges({n_publics}, {}, [{}], {n_ag}, {w});\n",
+        pv.len(),
+        if pv.is_empty() { "0".to_string() } else { pv.join(", ") }
+    );
+    out += &if n_publics > 0 {
+        "    verifyChallenges.publics <== publics;\n".to_string()
+    } else {
+        "    verifyChallenges.publics <== [0];\n".into()
+    };
+    out += &if pv.is_empty() {
+        "    verifyChallenges.proofValues <== [[0, 0, 0]];\n".to_string()
+    } else {
+        "    verifyChallenges.proofValues <== proofValues;\n".into()
+    };
+    for (i, src) in stage1hash_srcs.iter().enumerate() {
+        out += &if curve == "None" {
+            format!("    verifyChallenges.stage1Hash[{i}] <== {src};\n")
+        } else {
+            let flat: Vec<String> = (0..10).map(|k| format!("{src}[{}][{}]", k / 5, k % 5)).collect();
+            format!("    verifyChallenges.stage1Hash[{i}] <== [{}];\n", flat.join(", "))
+        };
+    }
+    out += "    verifyChallenges.globalChallenge <== globalChallenge;\n\n";
+    out += "    // Verify global constraints\n    component verifyGlobalConstraints = VerifyGlobalConstraints();\n";
+    out += &when(n_publics > 0, "    verifyGlobalConstraints.publics <== publics;\n");
+    out += &when(has_pv, "    verifyGlobalConstraints.proofValues <== proofValues;\n");
+    out += "    verifyGlobalConstraints.globalChallenge <== globalChallenge;\n";
+    for (dst, src) in &airgroupvalues_wires {
+        out += &format!("    verifyGlobalConstraints.{dst} <== {src};\n");
+    }
+    out += &format!("    signal {{binary}} isNull[{n_ag}];\n    signal nAggregatedProofs[{n_ag}];\n");
+    for i in 0..n_ag {
+        out += &if multi_air {
+            format!("    isNull[{i}] <== s{i}_sv_isNull;\n")
+        } else {
+            format!("    isNull[{i}] <== IsZero()(s{i}_sv_circuitType);\n")
+        };
+        out += &format!("    nAggregatedProofs[{i}] <== s{i}_sv_aggregatedProofs;\n");
+    }
+    out += &if multi_air {
+        format!("    signal totalAggregatedProofs <== AggregateProofsNull({n_ag})(nAggregatedProofs, isNull);\n    signal noAggregatedProofs <== IsZero()(totalAggregatedProofs);\n    noAggregatedProofs === 0;\n")
+    } else {
+        format!("    _ <== AggregateProofsNull({n_ag})(nAggregatedProofs, isNull);\n")
+    };
+    out += &format!("}}\n\ncomponent main {}= Final();\n", if n_publics > 0 { "{public [publics]} " } else { "" });
+    Ok(out)
 }
 
 #[cfg(test)]
@@ -732,11 +780,14 @@ mod tests {
             "security": {"regime": "test"},
             "nPublics": 6,
             "nConstants": 3,
-            "evMap": [{"type": "const", "id": 0, "prime": 0, "openingPos": 0}],
-            "cmPolsMap": [],
+            "evMap": [{"type": "const", "id": 0, "prime": 0, "openingPos": 0}, {"type": "cm", "id": 0, "prime": 0, "openingPos": 0}],
+            "cmPolsMap": [{"name": "q", "stage": 3, "stagePos": 0, "stageId": 0, "dim": 3}],
             "customCommits": [],
             "customCommitsMap": [],
-            "challengesMap": [],
+            "challengesMap": [
+                {"name": "std_vc", "stage": 3, "stageId": 0}, {"name": "xi", "stage": 4, "stageId": 0},
+                {"name": "vf1", "stage": 5, "stageId": 0}, {"name": "vf2", "stage": 5, "stageId": 1}
+            ],
             "boundaries": [{"name": "everyRow"}],
             "airgroupValuesMap": [],
             "airValuesMap": [],
@@ -766,7 +817,7 @@ mod tests {
         let out = final_circuit(true);
         assert!(
             out.starts_with(
-                "pragma circom 2.1.0;\npragma custom_templates;\n\n    include \"recursivef.verifier.circom\";\n"
+                "pragma circom 2.1.0;\npragma custom_templates;\n\ninclude \"recursivef.verifier.circom\";\n"
             ),
             "out:\n{out}"
         );
@@ -775,10 +826,7 @@ mod tests {
     #[test]
     fn final_without_custom_trees_is_unchanged() {
         let out = final_circuit(false);
-        assert!(
-            out.starts_with("pragma circom 2.1.0;\n\n    include \"recursivef.verifier.circom\";\n"),
-            "out:\n{out}"
-        );
+        assert!(out.starts_with("pragma circom 2.1.0;\n\ninclude \"recursivef.verifier.circom\";\n"), "out:\n{out}");
         assert!(!out.contains("custom_templates"), "out:\n{out}");
     }
 
@@ -862,7 +910,7 @@ mod tests {
         let libraries = Path::new(env!("CARGO_MANIFEST_DIR")).join("stark2circom/circom_verifier");
 
         let stark_info = recursivef_stark_info(true);
-        let verifier_info = json!({ "qVerifier": { "code": [] } });
+        let verifier_info = json!({ "constraintDag": { "version": 1, "field": "gl", "extDim": 3, "nodes": [[5, 1, 0, 0]], "roots": [[0, 0, "c"]] } });
         let opts = Pil2CircomOptions { skip_main: true, ..Pil2CircomOptions::default() };
         let root_c = ["1".to_string(), "0".to_string(), "0".to_string(), "0".to_string()];
         let verifier = gen_stark_verifier_bn128(Some(&root_c), &stark_info, &verifier_info, &opts).unwrap();

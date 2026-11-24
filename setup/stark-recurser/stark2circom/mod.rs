@@ -6,12 +6,6 @@
 //! Sub-modules:
 //! - [`gencircom`] — circuit-level template generators (recursivef, recursive1/2, …)
 //! - [`pil2circom`] — per-air stark verifier circom generator (GL + BN128)
-//!
-//! Shared:
-//! - [`transcript`] — GL Poseidon2 transcript helper (used by both groups)
-
-/// GL Poseidon2 transcript builder — shared by `pil2circom` and `gencircom`.
-pub(crate) mod transcript;
 
 /// Compiles and runs the emitted BLAKE3 circom against the reference `blake3`
 /// crate. Skips when circom or a C++ toolchain is unavailable.

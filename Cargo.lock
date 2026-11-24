@@ -1285,6 +1285,7 @@ version = "1.5.0-alpha"
 dependencies = [
  "anyhow",
  "num-bigint",
+ "pil-info",
  "pilfflonk-setup",
  "proofman-common",
  "proofman-fields",

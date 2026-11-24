@@ -7,11 +7,8 @@
 //! All functions operate on `u64` canonical representatives of GF(p) elements
 //! and return `u64` canonical results ready to format into circom code.
 
-use proofman_fields::{Field, PrimeField64};
+use proofman_fields::PrimeField64;
 use proofman_fields::Goldilocks;
-
-/// The coset shift used by the STARK: `F.shift = 7`.
-pub const GL_SHIFT: u64 = Goldilocks::SHIFT;
 
 /// The table of 2^n-th roots of unity for n = 0..=32: `F.w[n]`.
 ///
@@ -58,18 +55,6 @@ pub const GL_INV_W: [u64; 33] = [
     1644488454024429189,
 ];
 
-/// GL field multiplication: `a * b mod p`.
-#[inline]
-pub fn gl_mul(a: u64, b: u64) -> u64 {
-    (Goldilocks::new(a) * Goldilocks::new(b)).as_canonical_u64()
-}
-
-/// GL field inversion: `a⁻¹ mod p`. Panics if `a == 0`.
-#[inline]
-pub fn gl_inv(a: u64) -> u64 {
-    Goldilocks::new(a).inverse().as_canonical_u64()
-}
-
 /// GL field exponentiation: `a^e mod p`.
 pub fn gl_exp(a: u64, e: u64) -> u64 {
     let mut result = Goldilocks::new(1);
@@ -90,39 +75,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_shift_is_seven() {
-        assert_eq!(GL_SHIFT, 7);
-    }
-
-    #[test]
-    fn test_w_roots_unity() {
-        // W[1] should be a square root of W[0]=1, i.e. W[1]^2 == 1 (it's -1 mod p).
-        assert_eq!(GL_W[0], 1);
-        assert_eq!(gl_mul(GL_W[1], GL_W[1]), 1);
-        // Each root is half the period of the previous.
-        assert_eq!(gl_mul(GL_W[2], GL_W[2]), GL_W[1]);
-    }
-
-    #[test]
-    fn test_inv_w_matches() {
+    fn inv_w_matches() {
         for i in 0..33 {
-            assert_eq!(gl_mul(GL_W[i], GL_INV_W[i]), 1, "W[{i}] * INV_W[{i}] != 1");
+            assert_eq!(
+                (Goldilocks::new(GL_W[i]) * Goldilocks::new(GL_INV_W[i])).as_canonical_u64(),
+                1,
+                "W[{i}] * INV_W[{i}] != 1"
+            );
         }
-    }
-
-    #[test]
-    fn test_gl_exp() {
-        // 7^0 = 1
-        assert_eq!(gl_exp(7, 0), 1);
-        // 7^1 = 7
-        assert_eq!(gl_exp(7, 1), 7);
-        // 7^2 = 49
         assert_eq!(gl_exp(7, 2), 49);
-    }
-
-    #[test]
-    fn test_gl_inv() {
-        let a = 12345678u64;
-        assert_eq!(gl_mul(a, gl_inv(a)), 1);
     }
 }

@@ -288,6 +288,32 @@ mod tests {
     /// Reporting harness: print the raw-vs-merged cell breakdown for one R1CS.
     /// Point it at any `.r1cs` via the `ESTIMATE_R1CS` env var (no fixture committed):
     ///   ESTIMATE_R1CS=path/to/x.r1cs cargo test -p pil2-stark-recurser estimate_report -- --ignored --nocapture
+    /// A BN128 r1cs's fingerprint (LC terms, gate uses) and, with ESTIMATE_BN_FAMILY, its wrap's rows:
+    ///   ESTIMATE_BN_R1CS=final.r1cs [ESTIMATE_BN_FAMILY=blake3BN128|PoseidonBN128] cargo test ... estimate_bn128 -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn estimate_bn128() {
+        use crate::plonk2pil::r1cs::types::{read_r1cs_from_bytes, PlonkOptions};
+        let Ok(f) = std::env::var("ESTIMATE_BN_R1CS") else { return };
+        let r1cs = read_r1cs_from_bytes::<proofman_fields::Bn128>(&std::fs::read(&f).unwrap()).unwrap();
+        let terms: usize = r1cs.constraints.iter().map(|c| c.a.len() + c.b.len() + c.c.len()).sum();
+        let mut uses = std::collections::BTreeMap::new();
+        for u in &r1cs.custom_gates_uses {
+            let g = &r1cs.custom_gates[u.id as usize];
+            *uses.entry(format!("{}{:?}", g.template_name, g.parameters)).or_insert(0usize) += 1;
+        }
+        eprintln!("\n=== {f}\nconstraints={} terms={terms} gate_uses={uses:?}", r1cs.constraints.len());
+        let (pc, pa, _) = r1cs2plonk_merged(&r1cs, true);
+        let rows = crate::plonk2pil::setups::blake3::aggregation::plan_plonk_rows(&pc, 0, 1, 1, 4).rows_needed;
+        eprintln!("plonk constraints={} additions={} rows(4/row)={rows}", pc.len(), pa.len());
+        if let Ok(family) = std::env::var("ESTIMATE_BN_FAMILY") {
+            let r =
+                crate::plonk2pil::packers::pack_wrap(&r1cs, &PlonkOptions { hash_id: family, ..Default::default() })
+                    .unwrap();
+            eprintln!("wrap n_used={} n_bits={}", r.n_used, r.n_bits);
+        }
+    }
+
     #[test]
     #[ignore]
     fn estimate_report() {

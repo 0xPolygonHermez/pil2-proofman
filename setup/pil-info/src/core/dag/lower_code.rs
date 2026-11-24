@@ -240,18 +240,8 @@ pub fn stark_roots(dag: &ConstraintDag) -> Result<Vec<u32>, DagError> {
         .collect()
 }
 
-/// One instruction per operation node in node order, then the fold (`core::fold::fold_roots`) times `Zi`.
-/// Shplonk first multiplies each non-everyRow root by its boundary's `Zi`.
-pub fn lower_to_code(dag: &ConstraintDag, ctx: &LowerCtx, fold: Fold<'_>) -> Result<VerifierCode, DagError> {
-    let ext = ctx.tables().ext_dim;
-    if dag.ext_dim as usize != ext {
-        return Err(DagError::NonCanonical { node: 0, why: "the DAG's extDim is not the lowering context's" });
-    }
-    let (roots, every_row) = match fold {
-        Fold::Stark => (stark_roots(dag)?.into_iter().map(|n| (n, None)).collect(), 0),
-        Fold::Shplonk { boundaries } => shplonk_roots(dag, boundaries)?,
-    };
-    let zi = |boundary: u32| Src { operand: Operand::Zi { boundary }, dim: ext };
+/// One instruction per operation node in node order (the only traversal); `val[i]` is node `i`'s value.
+fn lower_nodes(dag: &ConstraintDag, ctx: &LowerCtx) -> Result<(Vec<Instr>, Vec<Src>), DagError> {
     let mut code: Vec<Instr> = Vec::new();
     let mut val: Vec<Src> = Vec::with_capacity(dag.nodes.len());
     for (i, n) in dag.nodes.iter().enumerate() {
@@ -270,6 +260,32 @@ pub fn lower_to_code(dag: &ConstraintDag, ctx: &LowerCtx, fold: Fold<'_>) -> Res
         };
         val.push(emit(&mut code, op, src));
     }
+    Ok((code, val))
+}
+
+/// The node code and every STARK root as an operand, unfolded (the circom verifier folds them itself).
+pub fn lower_roots(dag: &ConstraintDag, ctx: &LowerCtx) -> Result<(Vec<Instr>, Vec<Src>), DagError> {
+    let (code, val) = lower_nodes(dag, ctx)?;
+    let roots = stark_roots(dag)?
+        .into_iter()
+        .map(|node| val.get(node as usize).cloned().ok_or(DagError::ForwardRef { node }))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok((code, roots))
+}
+
+/// One instruction per operation node in node order, then the fold (`core::fold::fold_roots`) times `Zi`.
+/// Shplonk first multiplies each non-everyRow root by its boundary's `Zi`.
+pub fn lower_to_code(dag: &ConstraintDag, ctx: &LowerCtx, fold: Fold<'_>) -> Result<VerifierCode, DagError> {
+    let ext = ctx.tables().ext_dim;
+    if dag.ext_dim as usize != ext {
+        return Err(DagError::NonCanonical { node: 0, why: "the DAG's extDim is not the lowering context's" });
+    }
+    let (roots, every_row) = match fold {
+        Fold::Stark => (stark_roots(dag)?.into_iter().map(|n| (n, None)).collect(), 0),
+        Fold::Shplonk { boundaries } => shplonk_roots(dag, boundaries)?,
+    };
+    let zi = |boundary: u32| Src { operand: Operand::Zi { boundary }, dim: ext };
+    let (mut code, val) = lower_nodes(dag, ctx)?;
     let vc = Src { operand: ctx.vc_operand()?, dim: ext };
     let mut folded = Vec::with_capacity(roots.len());
     for (node, boundary) in roots {

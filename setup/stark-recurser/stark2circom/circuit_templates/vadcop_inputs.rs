@@ -274,10 +274,7 @@ pub fn init_vadcop_inputs(
         .map(|a| a.len())
         .unwrap_or(0);
 
-    let air_values_stage1_len = stark_info["airValuesMap"]
-        .as_array()
-        .map(|a| a.iter().filter(|v| v["stage"].as_u64() == Some(1)).count())
-        .unwrap_or(0);
+    let curve = vadcop_info["curve"].as_str().unwrap_or("None");
 
     // Wire globalChallenge
     out.push_str(&format!("    {component_name}.globalChallenge <== globalChallenge;\n\n"));
@@ -309,17 +306,32 @@ pub fn init_vadcop_inputs(
         }
     }
 
-    // stage1Hash — computed via CalculateStage1Hash
-    let air_values_map_len = stark_info["airValuesMap"].as_array().map(|a| a.len()).unwrap_or(0);
-    if air_values_stage1_len > 0 && air_values_map_len > 0 {
-        out.push_str(&format!(
-            "    {prefix_}stage1Hash <== CalculateStage1Hash(circuitType)({component_name}.rootC, {prefix_stark_}root1, {prefix_stark_}airvalues);\n"
-        ));
+    // stage1Hash: vadcop_hashes.circom over the air's airvalue stages.
+    let av: Vec<String> = stark_info["airValuesMap"]
+        .as_array()
+        .map_or(vec![], |a| a.iter().map(|v| v["stage"].as_u64().unwrap_or(0).to_string()).collect());
+    let (n_av, av_list) = (av.len(), if av.is_empty() { "0".to_string() } else { av.join(", ") });
+    let airvalues = if av.is_empty() { "[[0, 0, 0]]".to_string() } else { format!("{prefix_stark_}airvalues") };
+    let hash = if curve == "None" {
+        format!(
+            "CalculateStage1Hash(circuitType, {n_av}, [{av_list}], {})",
+            vadcop_info["latticeSize"].as_u64().unwrap_or(0)
+        )
     } else {
-        out.push_str(&format!(
-            "    {prefix_}stage1Hash <== CalculateStage1Hash(circuitType)({component_name}.rootC, {prefix_stark_}root1);\n"
-        ));
-    }
+        let c = &vadcop_info["curveConstants"];
+        let k = |n: &str| format!("[{}]", c[n].as_str().unwrap_or("0"));
+        format!(
+            "CalculateStage1HashEC(circuitType, {n_av}, [{av_list}], {}, {}, {}, {}, {})",
+            k("A"),
+            k("B"),
+            k("Z"),
+            k("C1"),
+            k("C2")
+        )
+    };
+    out.push_str(&format!(
+        "    {prefix_}stage1Hash <== {hash}({component_name}.rootC, {prefix_stark_}root1, {airvalues});\n"
+    ));
 
     out
 }

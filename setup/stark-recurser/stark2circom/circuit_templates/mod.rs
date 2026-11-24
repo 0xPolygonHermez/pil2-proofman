@@ -1,17 +1,15 @@
 //! Circuit-level template generators (port of `gencircom.js`).
 //!
 //! Generates recursivef, recursive1/2, compressor, vadcop/final and solidity
-//! verifier circuits from `starkInfo` and vadcop metadata.
-//!
-//! Tera templates live in `circuit_templates/tera/`.
+//! verifier circuits from `starkInfo` and vadcop metadata. The circom mains are small
+//! generated files over static templates (`helper_circuits/`); only the Solidity
+//! contracts are Tera (`circuit_templates/tera/`).
 //!
 //! Entry point: [`gen_circom_circuit`]
 
 pub mod stark_inputs;
 pub(crate) mod vadcop_inputs;
-pub(crate) mod calculate_hashes;
 pub(crate) mod get_sha256_inputs;
-pub(crate) mod verify_global_challenge;
 pub(crate) mod verify_global_constraints;
 pub mod templates;
 

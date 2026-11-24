@@ -99,3 +99,11 @@ template Bits2Num_strict() {
     AliasCheck()(in);
     out <== Bits2Num(64)(in);
 }
+// A transcript word's bits (verifier/transcript.circom): a Goldilocks word, 64 bits.
+template TranscriptWordBits(n) {
+    signal input in;
+    signal output {binary} out[n];
+
+    assert(n == 64);
+    out <== Num2Bits_strict()(in);
+}
