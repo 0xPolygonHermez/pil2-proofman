@@ -1,8 +1,43 @@
 //! Core verifier code -> the qVerifier `ExpressionCodeEntry` (the only conversion).
 
-use crate::core::dag::lower_code::{CodeOp, Operand, Src, VerifierCode};
+use crate::core::dag::build::{build_dag, dag_boundary};
+use crate::core::dag::format::{DagBoundary, DagError};
+use crate::core::dag::lower_code::{lower_to_code, CodeOp, Fold, LowerCtx, LowerTables, Operand, Src, VerifierCode};
+use crate::core::im::ImChoice;
+use crate::core::ir::ConstraintSystem;
+use crate::core::layout::Layout;
+use crate::core::openings::Openings;
 use crate::pil::gen_code::ExpressionCodeEntry;
 use crate::types::output::{CodeEntry, CodeRef};
+
+/// pilfflonk's qVerifier: the constraint DAG lowered with `Fold::Shplonk`, dimensions checked.
+pub fn shplonk_q_verifier(
+    cs: &ConstraintSystem,
+    im: &ImChoice,
+    lay: &Layout,
+    ops: &Openings,
+) -> Result<ExpressionCodeEntry, DagError> {
+    let dag = build_dag(cs, im)?;
+    let boundaries: Vec<DagBoundary> = cs.boundaries().iter().map(dag_boundary).collect();
+    let code = lower_to_code(&dag, &lower_ctx(cs, lay, ops)?, Fold::Shplonk { boundaries: &boundaries })?;
+    code.check_dims(cs.field.ext_dim())?;
+    Ok(expression_code(&code))
+}
+
+/// The layout's challenges and values, the openings' evMap.
+pub fn lower_ctx(cs: &ConstraintSystem, lay: &Layout, ops: &Openings) -> Result<LowerCtx, DagError> {
+    let stages = |m: &[crate::core::ir::NamedValue]| m.iter().map(|v| v.stage).collect();
+    LowerCtx::new(LowerTables {
+        ev_map: ops.ev_map.iter().map(|e| e.pol).collect(),
+        challenges: lay.challenges_map.iter().map(|c| (c.stage, c.stage_id)).collect(),
+        vc: lay.vc_index(),
+        n_publics: lay.publics_map.len() as u32, // below the ingestion limit
+        air_values_stage: stages(&lay.air_values_map),
+        proof_values_stage: stages(&lay.proof_values_map),
+        airgroup_values_stage: stages(&lay.airgroup_values_map),
+        ext_dim: cs.field.ext_dim(),
+    })
+}
 
 pub fn expression_code(v: &VerifierCode) -> ExpressionCodeEntry {
     let code = v

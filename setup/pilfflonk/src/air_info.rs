@@ -46,7 +46,7 @@ use std::collections::btree_map::Entry;
 use std::collections::BTreeMap;
 
 use pil2_pilout::pilout as pb;
-use pil_info::pil::constraint_poly::Boundary as PassesBoundary;
+use pil_info::core::ir::Boundary as PassesBoundary;
 use pil_info::types::pilout_info::SymbolInfo;
 use pil_info::PilInfoResult;
 use proofman_pilfflonk::layout::{q_pieces, split_max_q_degree};
@@ -279,15 +279,14 @@ fn challenges_map(result: &PilInfoResult) -> Result<Vec<ChallengeMapEntry>, Setu
         .collect()
 }
 
-fn boundary(b: &PassesBoundary) -> Result<Boundary, SetupError> {
-    match (b.name.as_str(), b.offset_min, b.offset_max) {
-        ("everyRow", _, _) => Ok(Boundary::EveryRow),
-        ("firstRow", _, _) => Ok(Boundary::FirstRow),
-        ("lastRow", _, _) => Ok(Boundary::LastRow),
-        ("everyFrame", Some(min), Some(max)) => {
-            Ok(Boundary::EveryFrame { offset_min: u64::from(min), offset_max: u64::from(max) })
+fn boundary(b: &PassesBoundary) -> Boundary {
+    match *b {
+        PassesBoundary::EveryRow => Boundary::EveryRow,
+        PassesBoundary::FirstRow => Boundary::FirstRow,
+        PassesBoundary::LastRow => Boundary::LastRow,
+        PassesBoundary::EveryFrame { min, max } => {
+            Boundary::EveryFrame { offset_min: u64::from(min), offset_max: u64::from(max) }
         }
-        (name, min, max) => passes_output(format!("boundary {name} (offsets {min:?}, {max:?})")),
     }
 }
 
@@ -356,7 +355,7 @@ pub fn air_setup(
         airgroup_values_map: name_stage_entries(&setup.airgroup_values_map, "airgroupValuesMap")?,
         map_sections_n,
         opening_points: setup.opening_points.clone(),
-        boundaries: result.boundaries.iter().map(boundary).collect::<Result<_, _>>()?,
+        boundaries: result.boundaries.iter().map(boundary).collect(),
         ev_map,
         q_deg,
         q_dim: 1,

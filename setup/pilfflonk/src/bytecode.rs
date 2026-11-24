@@ -3,7 +3,7 @@
 //! (pilfflonk/docs/protocol.md#prover), the prover hints that compute the columns of stage 2 and
 //! above (pilfflonk/docs/protocol.md#hint-columns), and the code `pilfflonk check` runs to say
 //! which constraint fails on which row. [`write_air_bin`] writes it from what
-//! `pil_info::run(…, &PilInfoCfg::bn128(), …)` returns, and [`Bytecode::read`] reads it back.
+//! `pil_info::shplonk_info(…, &PilInfoCfg::bn128(), …)` returns, and [`Bytecode::read`] reads it back.
 //!
 //! # Format, revision 3
 //!
@@ -570,7 +570,7 @@ impl Types {
 // From pil-info's code
 // ---------------------------------------------------------------------------------------------
 
-/// Write `<air>.bin` at `path` for the result of `pil_info::run` with `PilInfoCfg::bn128()`.
+/// Write `<air>.bin` at `path` for the result of `pil_info::shplonk_info` with `PilInfoCfg::bn128()`.
 pub fn write_air_bin(result: &PilInfoResult, path: &Path) -> BytecodeResult<()> {
     Bytecode::from_pil_info(result)?.write(path)
 }
@@ -604,7 +604,7 @@ impl CodeContext {
 }
 
 impl Bytecode {
-    /// The bytecode of the result of `pil_info::run` with `PilInfoCfg::bn128()`.
+    /// The bytecode of the result of `pil_info::shplonk_info` with `PilInfoCfg::bn128()`.
     ///
     /// Of the hints the passes collected, section 3 has the prover hints the setup supports; the
     /// witness and debug hints are not the prover's, and the setup ignores them

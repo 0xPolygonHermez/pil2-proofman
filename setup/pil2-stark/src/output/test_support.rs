@@ -2,7 +2,7 @@
 
 use pil2_pilout::pilout::PilOut;
 
-use crate::pil::prepare::PrepareOptions;
+use pil_info::PrepareOptions;
 use crate::pil::stark_setup::stark_setup;
 use crate::types::stark_info::{StarkInfo, VerifierInfo};
 use crate::types::stark_struct::{generate_stark_struct, StarkSettings};

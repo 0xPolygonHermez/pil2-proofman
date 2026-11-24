@@ -8,11 +8,15 @@ use std::path::PathBuf;
 
 use num_bigint::BigUint;
 use pil2_pilout::pilout as pb;
-use pil_info::core::dag::format::DagBoundary;
+use pil_info::core::dag::build::{build_dag, dag_boundary};
+use pil_info::core::dag::format::{ConstraintDag, DagBoundary};
 use pil_info::core::dag::lower_code::{lower_to_code, Fold, LowerCtx};
-use pil_info::emit::verifier::expression_code;
-use pil_info::pil::gen_code::lower_ctx_from_pil;
-use pil_info::pil::info::{constraint_dag, dag_boundaries};
+use pil_info::core::from_pilout::from_pilout;
+use pil_info::core::im::{im_order, ImChoice};
+use pil_info::core::layout::{layout, LayoutParams};
+use pil_info::core::openings::openings;
+use pil_info::emit::verifier::{expression_code, lower_ctx};
+use pil_info::search::im::search_im;
 use pil_info::{PilInfoCfg, PilInfoResult};
 
 mod common;
@@ -40,20 +44,24 @@ fn cfg() -> PilInfoCfg {
 }
 
 fn run(p: &pb::PilOut) -> PilInfoResult {
-    pil_info::run(p, 0, 0, &cfg(), &Default::default()).unwrap()
+    pil_info::shplonk_info(p, 0, 0, &cfg(), &Default::default()).unwrap()
 }
 
 fn boundaries(r: &PilInfoResult) -> Vec<DagBoundary> {
-    dag_boundaries(&r.boundaries).unwrap()
+    r.boundaries.iter().map(dag_boundary).collect()
 }
 
-/// The DAG of the same air from the core, with the passes' im choice (`r`'s symbols).
-fn dag_of(p: &pb::PilOut, r: &PilInfoResult) -> pil_info::core::dag::format::ConstraintDag {
-    constraint_dag(p, 0, 0, &cfg(), &r.setup.symbols).unwrap()
-}
-
-fn ctx_of(r: &PilInfoResult) -> LowerCtx {
-    lower_ctx_from_pil(&r.setup.symbols, &r.pil_code.ev_map, &cfg().field).unwrap()
+/// The core's DAG and lowering context of the air, with the search's im choice.
+fn dag_and_ctx(p: &pb::PilOut, r: &PilInfoResult) -> (ConstraintDag, LowerCtx) {
+    let c = cfg();
+    let cs = from_pilout(p, 0, 0, &c.field, c.opening).unwrap();
+    let set = search_im(&cs, &c.degree_policy, 1).unwrap();
+    let im: ImChoice = im_order(&cs, &set).unwrap();
+    let params =
+        LayoutParams { im_pols_stages: false, deep_challenges: false, q_deg: r.q_deg as u32, air_name: String::new() };
+    let lay = layout(&cs, &im, &params).unwrap();
+    let ops = openings(&cs, &im, &lay).unwrap();
+    (build_dag(&cs, &im).unwrap(), lower_ctx(&cs, &lay, &ops).unwrap())
 }
 
 #[test]
@@ -62,7 +70,13 @@ fn shplonk_q_verifier_is_lowered_dag() {
     let r = run(&p);
     let b = boundaries(&r);
     assert_eq!(b.len(), 4);
-    let want = expression_code(&lower_to_code(&dag_of(&p, &r), &ctx_of(&r), Fold::Shplonk { boundaries: &b }).unwrap());
+    let want = expression_code(
+        &{
+            let (d, x) = dag_and_ctx(&p, &r);
+            lower_to_code(&d, &x, Fold::Shplonk { boundaries: &b })
+        }
+        .unwrap(),
+    );
     let got = &r.pil_code.verifier_info.q_verifier;
     assert_eq!(got.tmp_used, want.tmp_used);
     assert_eq!(serde_json::to_value(&got.code).unwrap(), serde_json::to_value(&want.code).unwrap());
@@ -153,10 +167,11 @@ fn shplonk_refuses_dimension_mismatch() {
     let p = mixed_boundaries_pilout();
     let r = run(&p);
     let b = boundaries(&r);
-    let mut t = ctx_of(&r).tables().clone();
+    let (dag, ctx) = dag_and_ctx(&p, &r);
+    let mut t = ctx.tables().clone();
     t.ext_dim = 3;
     let ctx = LowerCtx::new(t).unwrap();
-    assert!(lower_to_code(&dag_of(&p, &r), &ctx, Fold::Shplonk { boundaries: &b }).is_err());
+    assert!(lower_to_code(&dag, &ctx, Fold::Shplonk { boundaries: &b }).is_err());
 }
 
 // A root whose boundary is not in the list has no Zi.
@@ -165,5 +180,6 @@ fn shplonk_refuses_an_unlisted_boundary() {
     let p = mixed_boundaries_pilout();
     let r = run(&p);
     let only_every_row = [DagBoundary::EveryRow];
-    assert!(lower_to_code(&dag_of(&p, &r), &ctx_of(&r), Fold::Shplonk { boundaries: &only_every_row }).is_err());
+    let (dag, ctx) = dag_and_ctx(&p, &r);
+    assert!(lower_to_code(&dag, &ctx, Fold::Shplonk { boundaries: &only_every_row }).is_err());
 }

@@ -148,6 +148,16 @@ impl PilInfoCfg {
     }
 }
 
+/// Per-key setup options.
+#[derive(Debug, Clone, Default)]
+pub struct PrepareOptions {
+    /// When true, enable intermediate polynomial batching by stage.
+    pub im_pols_stages: bool,
+    /// A basic air: the GPU prover commits its stages in place, which the prover memory
+    /// estimate must know. False for recursion, final and SNARK-wrapper airs.
+    pub inplace_stage_commit: bool,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

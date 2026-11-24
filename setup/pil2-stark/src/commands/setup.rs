@@ -10,7 +10,7 @@ use rayon::prelude::*;
 use pil2_pilout::pilout::{self as pb};
 use prost::Message;
 use crate::output::global_info::{build_global_info_json, write_global_constraints, write_global_info_json};
-use crate::pil::prepare::PrepareOptions;
+use pil_info::PrepareOptions;
 use crate::commands::common::push_im_pols_stats;
 use crate::commands::recursive_setup::run_recursive_setup;
 use crate::types::stark_struct::{generate_basic_stark_struct, StarkStructsConfig};

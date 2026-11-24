@@ -57,6 +57,11 @@ const FIXTURES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/byte
 /// `COSET_SHIFT`.
 const COSET_SHIFT: u64 = 5;
 
+/// The pilout index of the setup's (canonical) expression `exp_id`, which the oracle reads.
+fn pilout_exp(pilout: &pb::PilOut, exp_id: u64) -> usize {
+    pil_info::core::from_pilout::pilout_expr_index(pilout, 0, 0, exp_id as u32).unwrap().unwrap()
+}
+
 /// `bytes` is the checked-in fixture `name`, which `PILFFLONK_UPDATE_FIXTURES=1` writes first.
 fn check_fixture(name: &str, bytes: &[u8]) {
     let path = Path::new(FIXTURES).join(name);
@@ -383,11 +388,11 @@ fn xi_and_std_vc() -> (Fr, Fr) {
 }
 
 /// The column an evMap entry evaluates, as the oracle names it.
-fn column_of(info: &PilfflonkInfo, e: &EvMapEntry) -> ColumnRef {
+fn column_of(pilout: &pb::PilOut, info: &PilfflonkInfo, e: &EvMapEntry) -> ColumnRef {
     let pol = info.pol(e.pol_type, e.id).unwrap();
     match (e.pol_type, pol.exp_id) {
         (PolType::Const, _) => ColumnRef::Fixed(e.id as usize),
-        (PolType::Cm, Some(exp_id)) if pol.im_pol => ColumnRef::Im(exp_id as usize),
+        (PolType::Cm, Some(exp_id)) if pol.im_pol => ColumnRef::Im(pilout_exp(pilout, exp_id)),
         (PolType::Cm, _) => ColumnRef::Witness { stage: pol.stage as usize, idx: pol.stage_id as usize },
     }
 }
@@ -419,7 +424,7 @@ fn the_fibonacci_fixtures_are_the_setups_and_the_oracles() {
 
     // The passes again, as the setup ran them, for the qVerifier.
     let cfg = passes::cfg(DEFAULT_MAX_CONSTRAINT_DEGREE).unwrap();
-    let result = pil_info::run(&pilout, 0, 0, &cfg, &Default::default()).unwrap();
+    let result = pil_info::shplonk_info(&pilout, 0, 0, &cfg, &Default::default()).unwrap();
     assert_eq!(Bytecode::from_bytes(&bin).unwrap(), Bytecode::from_pil_info(&result).unwrap());
     let context = CodeContext::from_pil_info(&result).unwrap();
     let q_verifier = Code::from_entries(&result.pil_code.verifier_info.q_verifier.code, &context, None).unwrap();
@@ -448,12 +453,12 @@ fn the_fibonacci_fixtures_are_the_setups_and_the_oracles() {
     let values = air_oracle.values(&source, 0).unwrap();
     let (xi, std_vc) = xi_and_std_vc();
     let im_pols: Vec<usize> =
-        info.cm_pols_map.iter().filter(|p| p.im_pol).map(|p| p.exp_id.unwrap() as usize).collect();
+        info.cm_pols_map.iter().filter(|p| p.im_pol).map(|p| pilout_exp(&pilout, p.exp_id.unwrap())).collect();
     let q = air_oracle.q_at(&values, &im_pols, &std_vc, &xi).unwrap();
     let evals: Vec<Fr> = info
         .ev_map
         .iter()
-        .map(|e| air_oracle.column_at(&values, column_of(&info, e), e.prime as i32, &xi).unwrap())
+        .map(|e| air_oracle.column_at(&values, column_of(&pilout, &info, e), e.prime as i32, &xi).unwrap())
         .collect();
     let zerofiers: Vec<Fr> = info.boundaries.iter().map(|b| zerofier_term(b, &xi, FIBONACCI_N_BITS)).collect();
     let publics: Vec<Fr> = witness.publics.iter().map(from_bytes).collect();
@@ -541,7 +546,7 @@ fn the_sum_bus_fixtures_are_the_setups_and_the_oracles() {
     let mut stage_2 = vec![Value::Null; info.map_sections_n["cm2"] as usize];
     for p in info.cm_pols_map.iter().filter(|p| p.stage == 2) {
         let column = if p.im_pol {
-            air_oracle.expression_rows(&values, p.exp_id.unwrap() as usize).unwrap()
+            air_oracle.expression_rows(&values, pilout_exp(&pilout, p.exp_id.unwrap())).unwrap()
         } else {
             values.witness[1][p.stage_id as usize].clone()
         };

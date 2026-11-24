@@ -1529,6 +1529,7 @@ dependencies = [
  "fibonacci-square",
  "libloading",
  "num-bigint",
+ "pil-info",
  "pil2-pilout",
  "pilfflonk-all",
  "pilfflonk-connection",

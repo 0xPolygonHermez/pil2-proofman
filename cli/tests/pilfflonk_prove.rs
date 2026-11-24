@@ -1294,7 +1294,7 @@ fn agrees_with_the_oracle(f: &Fixture) -> Fr {
             PolType::Cm => {
                 let p = &info.cm_pols_map[id as usize];
                 if p.im_pol {
-                    ColumnRef::Im(p.exp_id.unwrap() as usize)
+                    ColumnRef::Im(pilout_exp(&pilout, p.exp_id.unwrap()))
                 } else {
                     ColumnRef::Witness { stage: p.stage as usize, idx: p.stage_id as usize }
                 }
@@ -1332,7 +1332,7 @@ fn agrees_with_the_oracle(f: &Fixture) -> Fr {
     // … but Q(ξ), as the oracle folds the constraints over the proof's evaluations, is the prover's Q
     // at ξ: the value the verifier computes, and SHPLONK opens Q's f at.
     let im_pols: Vec<usize> =
-        info.cm_pols_map.iter().filter(|p| p.im_pol).map(|p| p.exp_id.unwrap() as usize).collect();
+        info.cm_pols_map.iter().filter(|p| p.im_pol).map(|p| pilout_exp(&pilout, p.exp_id.unwrap())).collect();
     let q = oracle.q_from_evaluations(&values, &at_xi, &im_pols, &std_vc, &xi).unwrap();
     assert_eq!(q, Fr::from(out.challenges.q_at_xi));
     // Split, the pieces' Q_i(ξ) follow, in the order of the layout, and add up to it: Q_0(ξ) + ξ^S·(
@@ -1637,7 +1637,7 @@ fn stage_columns_are_the_oracles(f: &Fixture) -> Vec<Vec<FrBytes>> {
     for p in info.cm_pols_map.iter().filter(|p| p.stage <= info.n_stages) {
         let prover = rows(&stages.columns[p.stage as usize - 1][p.stage_pos as usize]);
         let expected = if p.im_pol {
-            oracle.expression_rows(&values, p.exp_id.unwrap() as usize).unwrap()
+            oracle.expression_rows(&values, pilout_exp(&pilout, p.exp_id.unwrap())).unwrap()
         } else {
             values.witness[p.stage as usize - 1][p.stage_id as usize].clone()
         };
@@ -2607,4 +2607,9 @@ fn the_generated_q_kernels_prove_as_the_interpreter_does() {
             );
         }
     }
+}
+
+/// The pilout index the oracle reads of a key's (canonical) `expId`.
+fn pilout_exp(pilout: &pil2_pilout::pilout::PilOut, exp_id: u64) -> usize {
+    pil_info::core::from_pilout::pilout_expr_index(pilout, 0, 0, exp_id as u32).unwrap().unwrap()
 }

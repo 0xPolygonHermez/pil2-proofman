@@ -8,7 +8,7 @@ use pil2_pilout::pilout as pb;
 use prost::Message;
 
 use crate::commands::common::push_im_pols_stats;
-use crate::pil::prepare::PrepareOptions;
+use pil_info::PrepareOptions;
 use crate::types::stark_struct::{generate_basic_stark_struct, StarkStructsConfig};
 
 /// Options for the stats subcommand.

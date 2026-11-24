@@ -13,6 +13,6 @@ pub mod pil;
 pub mod search;
 pub mod types;
 
-pub use cfg::{DegreePolicy, FieldCfg, Opening, PilInfoCfg, DEFAULT_MAX_CONSTRAINT_DEGREE};
+pub use cfg::{DegreePolicy, FieldCfg, Opening, PilInfoCfg, PrepareOptions, DEFAULT_MAX_CONSTRAINT_DEGREE};
 pub use error::{BinFileError, PilInfoError};
-pub use pil::info::{run, PilInfoResult};
+pub use pil::shplonk::{shplonk_info, PilInfoResult};

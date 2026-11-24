@@ -185,6 +185,19 @@ pub struct ConstraintSystem {
     pub airgroup_agg_types: Vec<i32>,
 }
 
+impl ConstraintSystem {
+    /// everyRow, then each other boundary at its first constraint: pilfflonk's `boundaryId` order.
+    pub fn boundaries(&self) -> Vec<Boundary> {
+        let mut out = vec![Boundary::EveryRow];
+        for c in &self.constraints {
+            if !out.contains(&c.boundary) {
+                out.push(c.boundary.clone());
+            }
+        }
+        out
+    }
+}
+
 /// Values for `eval_expr`; a missing entry reads as 0.
 #[derive(Clone, Debug, Default)]
 pub struct Env {

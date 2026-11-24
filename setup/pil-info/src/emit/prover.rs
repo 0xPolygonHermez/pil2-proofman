@@ -4,7 +4,7 @@ use std::cell::RefCell;
 
 use pil2_pilout::pilout::{self as pb, expression as px, global_operand, hint_field, operand as po};
 
-use crate::cfg::FieldCfg;
+use crate::cfg::{FieldCfg, Opening};
 use crate::core::fold::fold_roots;
 use crate::core::from_pilout::stage_base;
 use crate::core::im::{im_column_id, Checked, ImChoice};
@@ -14,8 +14,9 @@ use crate::core::openings::{EvEntry, Openings};
 use crate::error::{PilInfoError, Result};
 use crate::expr::expression::{ExprChild, Expression};
 use crate::expr::helpers::{add_info_expression_inline, add_info_expressions, get_exp_dim};
+use crate::emit::verifier::shplonk_q_verifier;
 use crate::expr::print::{print_bounded, PrintCtx};
-use crate::pil::gen_code::{generate_pil_code, CodeGenParams, PilCodeResult};
+use crate::pil::gen_code::{generate_pil_code, CodeGenParams, ExpressionCodeEntry, PilCodeResult};
 use crate::types::pilout_info::{format_expressions, format_hints, ConstraintInfo, HintInfo, SymbolInfo};
 
 /// Arena ids with a fixed meaning.
@@ -47,14 +48,16 @@ pub fn to_arena(cs: &ConstraintSystem, im: &ImChoice, lay: &Layout) -> Result<Pr
     fold_quotient(cs, im, lay, arena, hints, constraints)
 }
 
-/// The generator's output plus what the AIR summary counts.
+/// The generator's output and what it read.
 pub struct ProverCode {
     pub code: PilCodeResult,
     /// The im expressions printed, (base field, extension), in column order.
     pub im_pols_info: (Vec<String>, Vec<String>),
-    /// Stage of each constraint, im roots included.
-    pub constraint_stages: Vec<usize>,
-    pub n_expressions: usize,
+    pub maps: Maps,
+    pub arena: Vec<Expression>,
+    /// The constraints, im roots included.
+    pub constraints: Vec<ConstraintInfo>,
+    pub hints: Vec<HintInfo>,
 }
 
 /// Expressionsinfo, hints and qVerifier through the existing generator, from `to_arena`'s output.
@@ -93,10 +96,13 @@ pub fn emit_prover(
         field: cs.field.clone(),
         opening: cs.opening,
     };
-    let code = generate_pil_code(&params, &maps.symbols(), &constraints, &mut arena, &hints, Some(&ctx), None)?;
+    let mut code = generate_pil_code(&params, &maps.symbols(), &constraints, &mut arena, &hints, Some(&ctx))?;
     same_ev_map(&code, ops)?;
-    let constraint_stages = constraints.iter().map(|c| c.stage.unwrap_or(0)).collect();
-    Ok(ProverCode { code, im_pols_info, constraint_stages, n_expressions: arena.len() })
+    if cs.opening == Opening::Shplonk {
+        let q = shplonk_q_verifier(cs, im, lay, ops).map_err(|e| PilInfoError::ConstraintDag(format!("{e:?}")))?;
+        code.verifier_info.q_verifier = ExpressionCodeEntry { exp_id: roles.c_exp, ..q };
+    }
+    Ok(ProverCode { code, im_pols_info, maps, arena, constraints, hints })
 }
 
 /// TEMPORARY (piece 3): the generator's evMap indexes the qVerifier, so it must be the core's.
@@ -118,7 +124,7 @@ fn same_ev_map(code: &PilCodeResult, ops: &Openings) -> Result<()> {
 
 type Formatted = (Vec<Expression>, Vec<HintInfo>, Vec<ConstraintInfo>);
 
-/// The pilout expressions and hints through the old formatters, then `prepare_pil`'s info passes.
+/// The pilout expressions and hints through the old formatters, then the info passes.
 fn formatted(cs: &ConstraintSystem) -> Result<Formatted> {
     let field = &cs.field;
     let t = Tables::of(cs)?;
@@ -148,7 +154,7 @@ fn formatted(cs: &ConstraintSystem) -> Result<Formatted> {
         field,
     )?;
 
-    // prepare_pil: stage 1, info on the constraints, then on every expression
+    // stage 1, info on the constraints, then on every expression
     arena.iter_mut().for_each(|e| e.stage = 1);
     let mut constraints = cs.constraints.iter().map(constraint_info).collect::<Result<Vec<_>>>()?;
     for c in constraints.iter_mut() {
@@ -180,7 +186,7 @@ fn fold_quotient(
     });
     let mut roots: Vec<Root> = (0..cs.constraints.len()).map(Root::Constraint).collect();
     roots.extend((0..im.exprs.len()).map(Root::Im));
-    let ctx = Ctx { cs, im, lay, constraints: &constraints };
+    let ctx = Ctx { cs, im, lay, constraints: &constraints, boundaries: cs.boundaries() };
     let roots: Vec<Result<Node>> = roots.into_iter().map(|r| Ok(Node::Root(r))).collect();
     let folded = fold_roots(
         roots,
@@ -258,6 +264,8 @@ struct Ctx<'a> {
     im: &'a ImChoice,
     lay: &'a Layout,
     constraints: &'a [ConstraintInfo],
+    /// In `boundaryId` order.
+    boundaries: Vec<Boundary>,
 }
 
 struct FoldState<'a> {
@@ -323,9 +331,24 @@ impl FoldState<'_> {
 
     fn root(&mut self, ctx: &Ctx, r: Root) -> Result<usize> {
         match r {
-            // the STARK takes only everyRow (from_pilout rejects the others)
             Root::Constraint(k) if ctx.cs.constraints[k].boundary == Boundary::EveryRow => Ok(ctx.constraints[k].e),
-            Root::Constraint(_) => Err(fold_bug()),
+            // pilfflonk's (from_pilout rejects it for the STARK): `e * Zi`, pushed without info as the old cExp did
+            Root::Constraint(k) => {
+                let b = &ctx.cs.constraints[k].boundary;
+                let id = ctx.boundaries.iter().position(|x| x == b).ok_or_else(fold_bug)?;
+                let zi = Expression {
+                    op: "Zi".into(),
+                    boundary_id: Some(id),
+                    boundary: Some(b.name().into()),
+                    ..Default::default()
+                };
+                let e = self.exp(ctx.constraints[k].e);
+                Ok(self.push(Expression {
+                    op: "mul".into(),
+                    values: vec![e, ExprChild::Inline(Box::new(zi))],
+                    ..Default::default()
+                }))
+            }
             Root::Im(k) => {
                 let exp_id = ctx.im.exprs[k] as usize;
                 let pol_id = im_column_id(ctx.cs, k) as usize;
@@ -480,15 +503,15 @@ fn not_pilout() -> PilInfoError {
 }
 
 /// The generator's symbol maps, projected from the layout.
-struct Maps {
-    cm: Vec<SymbolInfo>,
-    fixed: Vec<SymbolInfo>,
-    custom: Vec<Vec<SymbolInfo>>,
-    challenges: Vec<SymbolInfo>,
-    publics: Vec<SymbolInfo>,
-    proof_values: Vec<SymbolInfo>,
-    air_values: Vec<SymbolInfo>,
-    airgroup_values: Vec<SymbolInfo>,
+pub struct Maps {
+    pub cm: Vec<SymbolInfo>,
+    pub fixed: Vec<SymbolInfo>,
+    pub custom: Vec<Vec<SymbolInfo>>,
+    pub challenges: Vec<SymbolInfo>,
+    pub publics: Vec<SymbolInfo>,
+    pub proof_values: Vec<SymbolInfo>,
+    pub air_values: Vec<SymbolInfo>,
+    pub airgroup_values: Vec<SymbolInfo>,
 }
 
 impl Maps {
@@ -562,7 +585,7 @@ impl Maps {
     }
 
     /// Today's symbol list: the maps in the old order.
-    fn symbols(&self) -> Vec<SymbolInfo> {
+    pub fn symbols(&self) -> Vec<SymbolInfo> {
         let custom = self.custom.iter().flatten();
         let tail = [&self.challenges, &self.publics, &self.proof_values, &self.air_values, &self.airgroup_values];
         self.cm.iter().chain(&self.fixed).chain(custom).chain(tail.into_iter().flatten()).cloned().collect()

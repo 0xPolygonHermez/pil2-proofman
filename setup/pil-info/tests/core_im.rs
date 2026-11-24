@@ -2,17 +2,12 @@
 
 mod common;
 
-use std::collections::BTreeSet;
-
 use common::*;
 use num_bigint::BigUint;
-use pil2_pilout::pilout as pb;
 use pil_info::core::from_pilout::{from_pilout, PiloutError};
 use pil_info::core::im::{check_im, im_order, substitute, Checked, ImError};
 use pil_info::core::layout::quotient_dim;
 use pil_info::core::ir::{degree, eval_expr, visit, Boundary, ColRef, ColType, Env, Expr};
-use pil_info::pil::im_polynomials::calculate_intermediate_polynomials;
-use pil_info::pil::prepare::prepare_pil;
 use pil_info::search::im::search_im;
 use pil_info::{DegreePolicy, Opening};
 
@@ -141,47 +136,30 @@ fn stark_floor(p: &DegreePolicy) -> bool {
     matches!(p, DegreePolicy::FromBlowup { .. })
 }
 
-/// The old pipeline on air (`g`, `air`): the promoted set, its q_deg and the constraint dimension, or None if infeasible.
-fn old_search(p: &pb::PilOut, g: usize, air: usize, policy: &DegreePolicy) -> Option<(BTreeSet<u32>, i64, usize)> {
-    let prep = prepare_pil(p, g, air, &gl()).expect("prepare_pil");
-    let q_dim = prep.constraint_poly.q_dim;
-    let r = calculate_intermediate_polynomials(
-        &prep.expressions,
-        prep.constraint_poly.c_exp_id,
-        policy,
-        q_dim,
-        &prep.symbols,
-    )
-    .ok()?;
-    Some((r.im_exps.iter().map(|&e| e as u32).collect(), r.q_deg, q_dim))
-}
-
-/// pilfflonk protocol.md#degree-search: qDeg = max(deg c_i + δ_i) - 1, δ_i = 1 off everyRow. The old search
-/// never counts that δ (its boundary `mul(e, Zi)` is built after add_info, so Zi has expDeg 0): the new q_deg
-/// is never below the old one, and seed 4 (a degree-2 everyFrame root) is where the old under-sizes Q.
+/// pilfflonk protocol.md#degree-search: qDeg = max(deg c_i + δ_i) - 1, δ_i = 1 off everyRow; seed 4 is a
+/// degree-2 everyFrame root (qDeg 2, which the old search under-sized to 1).
 #[test]
 fn shplonk_boundaries_follow_the_spec() {
-    let (mut checked, mut above_old) = (0, 0);
+    let mut checked = 0;
     for seed in 0..200 {
-        let (p, cs) = random_pilout_in(seed, Opening::Shplonk);
+        let (_, cs) = random_pilout_in(seed, Opening::Shplonk);
         for policy in policies() {
-            let Some((_, old_q, q_dim)) = old_search(&p, 0, 0, &policy) else { continue };
+            let q_dim = quotient_dim(&cs, &choice(&[])).unwrap() as usize;
             let Ok(set) = search_im(&cs, &policy, q_dim) else { continue };
             let im = im_order(&cs, &set).unwrap();
             let got = check_im(&cs, &im, policy.max_constraint_degree() as u32, stark_floor(&policy)).unwrap();
-            assert!(got.q_deg as i64 >= old_q, "seed {seed} {policy:?}");
-            above_old += (got.q_deg as i64 > old_q) as u32;
+            let top = got.root_degrees.iter().chain(&got.im_degrees).copied().max().unwrap_or(0);
+            let want = if stark_floor(&policy) { top.saturating_sub(1).max(1) } else { top.saturating_sub(1) };
+            assert_eq!(got.q_deg, want, "seed {seed} {policy:?}");
             checked += 1;
         }
     }
-    assert!(checked > 500 && above_old > 0, "{checked} checked, {above_old} above the old q_deg");
-    let (p, cs) = random_pilout_in(4, Opening::Shplonk);
+    assert!(checked > 500, "{checked} checked");
+    let (_, cs) = random_pilout_in(4, Opening::Shplonk);
     assert_eq!(
         cs.constraints.iter().map(|c| c.boundary.clone()).collect::<Vec<_>>(),
         vec![Boundary::EveryFrame { min: 0, max: 1 }]
     );
-    let policy = DegreePolicy::Search { max: 3 };
-    assert_eq!(old_search(&p, 0, 0, &policy).map(|o| (o.0, o.1)), Some((BTreeSet::new(), 1)));
     assert_eq!(
         check_im(&cs, &choice(&[]), 3, false).unwrap(),
         Checked { q_deg: 2, root_degrees: vec![3], im_degrees: vec![] }

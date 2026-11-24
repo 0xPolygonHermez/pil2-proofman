@@ -54,7 +54,7 @@ fn im_columns_are_printed_and_rooted() {
         let e = emitted(run);
         let n_im = run.im.exprs.len();
         assert_eq!(e.im_pols_info.0.len() + e.im_pols_info.1.len(), n_im, "{what}");
-        assert_eq!(e.constraint_stages.len(), run.cs.constraints.len() + n_im, "{what}");
+        assert_eq!(e.constraints.len(), run.cs.constraints.len() + n_im, "{what}");
         assert!(
             e.code.expressions_info.constraints.iter().all(|c| c.line.as_ref().is_some_and(|l| l.ends_with(" == 0"))),
             "{what}"

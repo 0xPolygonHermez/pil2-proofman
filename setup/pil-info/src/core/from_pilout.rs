@@ -461,6 +461,16 @@ pub fn pilout_expr_ids(
     Ok(numbered_exprs(&a, &tables_of(&core, &agvs, &a))?.1)
 }
 
+/// The pilout index of canonical expression `id` of air (`airgroup`, `air`): `pilout_expr_ids` inverted.
+pub fn pilout_expr_index(
+    pilout: &pb::PilOut,
+    airgroup: usize,
+    air: usize,
+    id: crate::core::ir::ExprId,
+) -> Result<Option<usize>, PiloutError> {
+    Ok(pilout_expr_ids(pilout, airgroup, air)?.iter().position(|&c| c == id))
+}
+
 /// Lowers `a` of airgroup values `agvs`; of `core` only the pilout-wide tables, symbols and hints are read.
 fn lower(
     core: &PiloutCore,

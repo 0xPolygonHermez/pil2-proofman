@@ -73,7 +73,7 @@ goes through one entry, `pil::stark_setup::stark_setup`, over the thin core in `
 | `output/stark_info` | starkinfo JSON from the projection and the solved low-degree test |
 | `output/dag_eval` | setup-time parity of the DAG against `qVerifier` |
 
-pilfflonk keeps the old passes (`pil_info::run`, SHPLONK only).
+pilfflonk runs the same core (`pil_info::shplonk_info`, SHPLONK).
 
 ## `stats`
 

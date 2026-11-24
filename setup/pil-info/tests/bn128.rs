@@ -76,7 +76,7 @@ fn sum_of_quartics_pilout() -> pb::PilOut {
 // ---------------------------------------------------------------------------
 
 fn run(pilout: &pb::PilOut, cfg: &PilInfoCfg) -> PilInfoResult {
-    pil_info::run(pilout, 0, 0, cfg, &Default::default()).unwrap()
+    pil_info::shplonk_info(pilout, 0, 0, cfg, &Default::default()).unwrap()
 }
 
 /// Every code block the passes emit: expressions, constraints and the verifier's.

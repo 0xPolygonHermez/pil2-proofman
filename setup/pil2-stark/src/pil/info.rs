@@ -8,7 +8,7 @@ use pil_info::core::ir::ColType;
 use pil_info::core::project::VerifierView;
 
 use crate::pil::gen_code::PilCodeResult;
-use crate::pil::prepare::PrepareOptions;
+use pil_info::PrepareOptions;
 use crate::types::output::StarkInfoOutput;
 use crate::types::stark_struct::{LowDegreeTest, StarkStruct};
 use crate::types::FIELD_EXTENSION;

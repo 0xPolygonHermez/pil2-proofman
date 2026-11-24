@@ -37,12 +37,6 @@ pub enum PilInfoError {
     #[error("{pass}: unknown expression op `{op}`")]
     UnknownOp { pass: &'static str, op: String },
 
-    #[error("constraint boundary `{0}` is not supported")]
-    UnsupportedBoundary(String),
-
-    #[error("an evaluation of a `{0}`, which is neither a cm, a const nor a custom column")]
-    UnknownEvaluation(String),
-
     #[error("a hint field of op `{0}`, which no hint holds")]
     UnknownHintOp(String),
 

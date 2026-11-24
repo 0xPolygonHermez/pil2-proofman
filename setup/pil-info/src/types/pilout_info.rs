@@ -1,10 +1,9 @@
-// TODO(piece 3): the format_* pb readers go once pilfflonk, the emit round-trip and globals read the core.
+// TODO(piece 3): pb readers still used: format_expressions/format_hints (emit's IR->pb round trip), format_global_* (globals), format_symbols (pilfflonk fixed.rs).
 use indexmap::IndexMap;
 use num_bigint::BigUint;
 
 use pil2_pilout::pilout::{
-    self as pb, constraint, expression as expr_mod, global_expression as gexpr_mod, global_operand, hint_field,
-    operand, SymbolType,
+    self as pb, expression as expr_mod, global_expression as gexpr_mod, global_operand, hint_field, operand, SymbolType,
 };
 
 use crate::cfg::FieldCfg;
@@ -47,6 +46,28 @@ pub struct SymbolInfo {
     pub exp_id: Option<usize>,
 }
 
+impl Default for SymbolInfo {
+    fn default() -> Self {
+        Self {
+            name: String::new(),
+            sym_type: String::new(),
+            stage: None,
+            dim: 1,
+            id: None,
+            pol_id: None,
+            stage_id: None,
+            air_id: None,
+            airgroup_id: None,
+            commit_id: None,
+            lengths: None,
+            idx: None,
+            stage_pos: None,
+            im_pol: false,
+            exp_id: None,
+        }
+    }
+}
+
 /// A single hint field value (leaf or nested array).
 #[derive(Debug, Clone)]
 pub enum HintFieldValue {
@@ -79,7 +100,7 @@ pub struct CustomCommitInfo {
     pub public_values: Vec<u32>,
 }
 
-/// Aggregate result from `get_pilout_info`.
+/// An air's setup: its maps, arena, constraints, symbols and hints.
 #[derive(Debug)]
 pub struct SetupResult {
     pub name: String,
@@ -1158,45 +1179,6 @@ fn convert_global_operand_to_expression(
 }
 
 // ---------------------------------------------------------------------------
-// format_constraints
-// ---------------------------------------------------------------------------
-
-/// Format constraints from protobuf, mirroring JS `formatConstraints`.
-///
-/// Fails on an empty constraint and on one without an expression.
-pub fn format_constraints(constraints: &[pb::Constraint]) -> Result<Vec<ConstraintInfo>> {
-    constraints
-        .iter()
-        .enumerate()
-        .map(|(i, c)| {
-            let inner = c.constraint.as_ref().ok_or_else(|| invalid(format!("constraint {i} is empty")))?;
-            let (boundary, idx, line, offsets) = match inner {
-                constraint::Constraint::FirstRow(c) => ("firstRow", &c.expression_idx, &c.debug_line, None),
-                constraint::Constraint::LastRow(c) => ("lastRow", &c.expression_idx, &c.debug_line, None),
-                constraint::Constraint::EveryRow(c) => ("everyRow", &c.expression_idx, &c.debug_line, None),
-                constraint::Constraint::EveryFrame(c) => {
-                    ("everyFrame", &c.expression_idx, &c.debug_line, Some((c.offset_min, c.offset_max)))
-                }
-            };
-            let e = idx.as_ref().ok_or_else(|| invalid(format!("constraint {i} has no expression")))?.idx as usize;
-            Ok(ConstraintInfo {
-                boundary: boundary.to_string(),
-                e,
-                line: line.clone(),
-                offset_min: offsets.map(|o| o.0),
-                offset_max: offsets.map(|o| o.1),
-                stage: None,
-                im_pol: false,
-            })
-        })
-        .collect()
-}
-
-fn invalid(message: String) -> PilInfoError {
-    PilInfoError::InvalidPilout(message)
-}
-
-// ---------------------------------------------------------------------------
 // format_symbols
 // ---------------------------------------------------------------------------
 
@@ -1656,157 +1638,6 @@ fn process_hint_field(
 }
 
 // ---------------------------------------------------------------------------
-// get_pilout_info: main orchestrator
-// ---------------------------------------------------------------------------
-
-/// Extract pilout info for a single air, mirroring JS `getPiloutInfo`.
-///
-/// Fails on an air the pilout does not have, and on the parts of the air that refer to nothing
-/// or that the passes cannot process.
-pub fn get_pilout_info(
-    pilout: &pb::PilOut,
-    airgroup_id: usize,
-    air_id: usize,
-    field: &FieldCfg,
-) -> Result<SetupResult> {
-    let found = pilout.air_groups.get(airgroup_id).and_then(|ag| ag.airs.get(air_id).map(|air| (ag, air)));
-    let Some((airgroup, air)) = found else {
-        return Err(PilInfoError::NoSuchAir { airgroup_id, air_id });
-    };
-
-    let air_name = air.name.clone().unwrap_or_default();
-    let num_rows = air.num_rows.unwrap_or(0);
-    let pil_power = if num_rows > 0 { (num_rows as f64).log2() as u32 } else { 0 };
-
-    let constraints = format_constraints(&air.constraints)?;
-    check_constraint_expressions(&constraints, air.expressions.len(), &format!("air {air_name}"))?;
-
-    let mut expressions = format_expressions(
-        &air.expressions,
-        &air.stage_widths,
-        &pilout.num_challenges,
-        &air.air_values,
-        &airgroup.air_group_values,
-        &air.custom_commits,
-        field,
-    )?;
-
-    // Gather symbols for this air from the global pilout symbols list
-    let air_symbols: Vec<pb::Symbol> = pilout
-        .symbols
-        .iter()
-        .filter(|sym| {
-            sym.air_group_id.is_none()
-                || (sym.air_group_id == Some(airgroup_id as u32)
-                    && (sym.air_id.is_none() || sym.air_id == Some(air_id as u32)))
-        })
-        .cloned()
-        .collect();
-
-    let mut all_symbols =
-        format_symbols(&air_symbols, &pilout.num_challenges, &airgroup.air_group_values, &air.air_values, field)?;
-
-    // Filter: keep only witness/fixed that match this air
-    all_symbols.retain(|s| {
-        if s.sym_type == "witness" || s.sym_type == "fixed" {
-            s.air_id == Some(air_id) && s.airgroup_id == Some(airgroup_id)
-        } else {
-            true
-        }
-    });
-
-    let n_commitments = all_symbols
-        .iter()
-        .filter(|s| s.sym_type == "witness" && s.air_id == Some(air_id) && s.airgroup_id == Some(airgroup_id))
-        .count();
-
-    let n_constants = all_symbols
-        .iter()
-        .filter(|s| s.sym_type == "fixed" && s.air_id == Some(air_id) && s.airgroup_id == Some(airgroup_id))
-        .count();
-
-    let n_publics = all_symbols.iter().filter(|s| s.sym_type == "public").count();
-
-    let n_stages = if !pilout.num_challenges.is_empty() {
-        pilout.num_challenges.len()
-    } else {
-        all_symbols.iter().filter_map(|s| s.stage).max().unwrap_or(0)
-    };
-
-    // Filter hints for this air (strict match, same as JS)
-    let air_hints: Vec<pb::Hint> = pilout
-        .hints
-        .iter()
-        .filter(|h| h.air_id == Some(air_id as u32) && h.air_group_id == Some(airgroup_id as u32))
-        .cloned()
-        .collect();
-
-    let hints = format_hints(
-        &air_hints,
-        &air.expressions,
-        &air.stage_widths,
-        &pilout.num_challenges,
-        &air.air_values,
-        &airgroup.air_group_values,
-        &air.custom_commits,
-        &mut expressions,
-        field,
-    )?;
-
-    // Build custom commits info
-    let mut map_sections_n = IndexMap::new();
-    map_sections_n.insert("const".to_string(), 0);
-
-    let mut custom_commits_info = Vec::new();
-    let mut custom_commits_map: Vec<Vec<SymbolInfo>> = Vec::new();
-
-    for cc in &air.custom_commits {
-        let cc_name = cc.name.clone().unwrap_or_default();
-        custom_commits_info.push(CustomCommitInfo {
-            name: cc_name.clone(),
-            stage_widths: cc.stage_widths.clone(),
-            public_values: cc.public_values.iter().map(|pv| pv.idx).collect(),
-        });
-        custom_commits_map.push(Vec::new());
-
-        for (j, &width) in cc.stage_widths.iter().enumerate() {
-            if width > 0 {
-                map_sections_n.insert(format!("{}{}", cc_name, j), 0);
-            }
-        }
-    }
-
-    Ok(SetupResult {
-        name: air_name,
-        air_id,
-        airgroup_id,
-        pil_power,
-        n_stages,
-        n_constants,
-        n_publics,
-        n_commitments,
-        cm_pols_map: Vec::new(),
-        const_pols_map: Vec::new(),
-        challenges_map: Vec::new(),
-        publics_map: Vec::new(),
-        proof_values_map: Vec::new(),
-        airgroup_values_map: Vec::new(),
-        air_values_map: Vec::new(),
-        map_sections_n,
-        custom_commits: custom_commits_info,
-        custom_commits_map,
-        air_group_values: airgroup.air_group_values.clone(),
-        expressions,
-        constraints,
-        symbols: all_symbols,
-        hints,
-        n_commitments_stage1: 0,
-        im_pols_info: (Vec::new(), Vec::new()),
-        opening_points: Vec::new(),
-    })
-}
-
-// ---------------------------------------------------------------------------
 // Expression arena helpers
 // ---------------------------------------------------------------------------
 
@@ -1822,27 +1653,6 @@ pub fn build_arena(exprs: Vec<Expression>) -> ExpressionArena {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn every_row(expression_idx: Option<u32>) -> pb::Constraint {
-        let er = constraint::EveryRow {
-            expression_idx: expression_idx.map(|idx| operand::Expression { idx }),
-            debug_line: None,
-        };
-        pb::Constraint { constraint: Some(constraint::Constraint::EveryRow(er)) }
-    }
-
-    #[test]
-    fn format_constraints_rejects_missing_expression_idx() {
-        assert_eq!(format_constraints(&[every_row(Some(3))]).unwrap()[0].e, 3);
-        let err = format_constraints(&[every_row(Some(0)), every_row(None)]).unwrap_err().to_string();
-        assert!(err.contains("constraint 1 has no expression"), "{err}");
-    }
-
-    #[test]
-    fn format_constraints_rejects_empty_constraint() {
-        let err = format_constraints(&[pb::Constraint { constraint: None }]).unwrap_err().to_string();
-        assert!(err.contains("constraint 0 is empty"), "{err}");
-    }
 
     #[test]
     fn buf_to_bigint_string_reads_big_endian() {

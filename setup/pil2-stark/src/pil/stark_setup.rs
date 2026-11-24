@@ -14,7 +14,7 @@ use pil_info::PilInfoCfg;
 
 use crate::output::stark_info::{build_starkinfo_output_from_core, solve_low_degree_test};
 use crate::pil::info::{report, validate_stark_struct, PilInfoResult};
-use crate::pil::prepare::PrepareOptions;
+use pil_info::PrepareOptions;
 use crate::types::stark_info::{StarkInfo, VerifierInfo};
 use crate::types::stark_struct::StarkStruct;
 
@@ -90,9 +90,9 @@ pub fn stark_setup(
     crate::output::dag_eval::check_dag_parity(&dag, &si, &vi).with_context(at)?;
     pil_code.verifier_info.constraint_dag = Some(dag);
 
-    let stages = &emitted.constraint_stages;
+    let stages: Vec<usize> = emitted.constraints.iter().map(|c| c.stage.unwrap_or(0)).collect();
     let (summary, prover_memory) =
-        report(&core.verifier, &air_name, stages, emitted.n_expressions, stark_struct, options);
+        report(&core.verifier, &air_name, &stages, emitted.arena.len(), stark_struct, options);
     Ok(PilInfoResult { starkinfo, pil_code, summary, prover_memory, im_pols_info: emitted.im_pols_info })
 }
 

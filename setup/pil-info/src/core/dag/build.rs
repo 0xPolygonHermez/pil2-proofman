@@ -13,7 +13,7 @@ pub fn build_dag(cs: &ConstraintSystem, im: &ImChoice) -> Result<ConstraintDag, 
     let mut roots = Vec::with_capacity(cs.constraints.len() + im.exprs.len());
     for c in &cs.constraints {
         let node = b.expr(&c.e)?;
-        roots.push(DagRoot { node, boundary: boundary(&c.boundary), label: c.label.clone() });
+        roots.push(DagRoot { node, boundary: dag_boundary(&c.boundary), label: c.label.clone() });
     }
     for (k, &id) in im.exprs.iter().enumerate() {
         let col = b.node(DagNode::Col { col: ColType::Witness, commit_id: None, id: im_column_id(cs, k), offset: 0 });
@@ -34,7 +34,7 @@ pub fn build_dag(cs: &ConstraintSystem, im: &ImChoice) -> Result<ConstraintDag, 
     Ok(dag)
 }
 
-fn boundary(b: &Boundary) -> DagBoundary {
+pub fn dag_boundary(b: &Boundary) -> DagBoundary {
     match *b {
         Boundary::EveryRow => DagBoundary::EveryRow,
         Boundary::FirstRow => DagBoundary::FirstRow,

@@ -29,6 +29,7 @@ mod fibonacci;
 use std::fs;
 use std::path::PathBuf;
 
+use pil2_pilout::pilout as pb;
 use pil2_pilout::pilout_proxy::PilOutProxy;
 use proofman_pilfflonk::oracle::{self, AirOracle, ColumnRef, Fr, Values};
 use proofman_pilfflonk::{
@@ -71,19 +72,20 @@ fn fibonacci_proof() {
 
 /// The column of the oracle an evaluation is of: a fixed column by its index, which is the
 /// pilout's, and a committed one by its stage and `stageId`, the pilout's index within the stage
-/// (`pilfflonk/tests/fibonacci.rs`); an im pol by its `expId`, the index of its expression in the
-/// pilout (the setup's numbering, which `setup/pil2-stark/tests/setup_pilfflonk.rs` checks).
-fn column_of(info: &PilfflonkInfo, e: &EvMapEntry) -> ColumnRef {
+/// (`pilfflonk/tests/fibonacci.rs`); an im pol by its `expId` mapped back to the pilout's index
+/// (`pil_info::core::from_pilout::pilout_expr_index`).
+fn column_of(pilout: &pb::PilOut, info: &PilfflonkInfo, e: &EvMapEntry) -> ColumnRef {
     let pol = info.pol(e.pol_type, e.id).expect("an evMap entry of the pilfflonkinfo");
     match (e.pol_type, pol.exp_id) {
         (PolType::Const, _) => ColumnRef::Fixed(e.id as usize),
-        (PolType::Cm, Some(exp_id)) if pol.im_pol => ColumnRef::Im(exp_id as usize),
+        (PolType::Cm, Some(exp_id)) if pol.im_pol => ColumnRef::Im(pilout_exp(pilout, exp_id)),
         (PolType::Cm, _) => ColumnRef::Witness { stage: pol.stage as usize, idx: pol.stage_id as usize },
     }
 }
 
 /// The AIR the cases of `q_at_xi.json` are of.
 struct Air<'a> {
+    pilout: &'a pb::PilOut,
     oracle: AirOracle,
     info: &'a PilfflonkInfo,
     /// Every entry of the evMap, with its name in the proof.
@@ -98,11 +100,12 @@ impl Air<'_> {
             .cm_pols_map
             .iter()
             .filter(|p| p.im_pol)
-            .map(|p| p.exp_id.expect("an im pol has an expId") as usize)
+            .map(|p| pilout_exp(self.pilout, p.exp_id.expect("an im pol has an expId")))
             .collect();
         let mut evaluations = Map::new();
         for (name, e) in &self.names {
-            let value = self.oracle.column_at(values, column_of(self.info, e), e.prime as i32, &xi).unwrap();
+            let value =
+                self.oracle.column_at(values, column_of(self.pilout, self.info, e), e.prime as i32, &xi).unwrap();
             evaluations.insert(name.clone(), json!(decimal(&value)));
         }
         let q = self.oracle.q_at(values, &im_pols, &std_vc, &xi).unwrap();
@@ -136,7 +139,7 @@ fn q_at_xi() {
     assert_eq!(proof_names.evaluations().len(), info.ev_map.len());
     let names: Vec<(String, &EvMapEntry)> = proof_names.evaluations().iter().cloned().zip(ordered).collect();
 
-    let air = Air { oracle: AirOracle::new(&pilout, 0, 0).unwrap(), info: &info, names };
+    let air = Air { pilout: &pilout, oracle: AirOracle::new(&pilout, 0, 0).unwrap(), info: &info, names };
     assert_eq!(air.oracle.n_bits(), N_BITS);
     let witness_dir = dir.join("witness");
     fibonacci::witness(N_BITS, INPUTS).write(&witness_dir, &oracle::witness_shape(&pilout).unwrap()).unwrap();
@@ -164,4 +167,9 @@ fn q_at_xi() {
         "cases": cases,
     });
     fs::write(dir.join("q_at_xi.json"), serde_json::to_string_pretty(&fixture).unwrap()).unwrap();
+}
+
+/// The pilout index the oracle reads of a key's (canonical) `expId`.
+fn pilout_exp(pilout: &pb::PilOut, exp_id: u64) -> usize {
+    pil_info::core::from_pilout::pilout_expr_index(pilout, 0, 0, exp_id as u32).unwrap().unwrap()
 }
