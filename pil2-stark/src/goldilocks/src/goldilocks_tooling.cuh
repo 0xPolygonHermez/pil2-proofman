@@ -88,8 +88,9 @@ struct AirInstanceInfo {
     ExpressionsGPU *expressions_gpu;
     int64_t *opening_points;
 
-    EvalGroup *evalGroups = nullptr;
-    uint64_t nEvalGroups = 0;
+    EvalSlot *evalSlots = nullptr;
+    uint32_t *evalTileStart = nullptr;   // nEvalTiles + 1 bounds into evalSlots
+    uint64_t nEvalTiles = 0;
 
     // FRI terms opening-major (friTermStart has nOpenings + 1 bounds), for deep_expression.cuh.
     FriTerm *friTerms = nullptr;
@@ -219,11 +220,13 @@ struct AirInstanceInfo {
         CHECKCUDAERR(cudaMalloc(&d_num_packed_words, sizeof(uint64_t)));
 
 
-        const std::vector<EvalGroup> groups = buildEvalGroups(setupCtx->starkInfo);
-        nEvalGroups = groups.size();
-        if (nEvalGroups != 0) {
-            CHECKCUDAERR(cudaMalloc(&evalGroups, nEvalGroups * sizeof(EvalGroup)));
-            CHECKCUDAERR(cudaMemcpy(evalGroups, groups.data(), nEvalGroups * sizeof(EvalGroup), cudaMemcpyHostToDevice));
+        const EvalSlots evalTable = buildEvalSlots(setupCtx->starkInfo);
+        nEvalTiles = evalTable.tileStart.size() - 1;
+        if (nEvalTiles != 0) {
+            CHECKCUDAERR(cudaMalloc(&evalSlots, evalTable.slots.size() * sizeof(EvalSlot)));
+            CHECKCUDAERR(cudaMemcpy(evalSlots, evalTable.slots.data(), evalTable.slots.size() * sizeof(EvalSlot), cudaMemcpyHostToDevice));
+            CHECKCUDAERR(cudaMalloc(&evalTileStart, evalTable.tileStart.size() * sizeof(uint32_t)));
+            CHECKCUDAERR(cudaMemcpy(evalTileStart, evalTable.tileStart.data(), evalTable.tileStart.size() * sizeof(uint32_t), cudaMemcpyHostToDevice));
         }
 
         uint64_t nOpeningPoints = setupCtx->starkInfo.openingPoints.size();
@@ -329,7 +332,8 @@ struct AirInstanceInfo {
 
         delete expressions_gpu;
 
-        if (evalGroups != nullptr) CHECKCUDAERR(cudaFree(evalGroups));
+        if (evalSlots != nullptr) CHECKCUDAERR(cudaFree(evalSlots));
+        if (evalTileStart != nullptr) CHECKCUDAERR(cudaFree(evalTileStart));
         CHECKCUDAERR(cudaFree(d_num_packed_words));
 
         for (void *p : {(void *)friTerms, (void *)friTermStart, (void *)friCols, (void *)friColStart, (void *)friOpStart,

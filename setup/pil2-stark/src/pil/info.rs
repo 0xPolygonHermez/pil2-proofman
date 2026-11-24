@@ -301,7 +301,7 @@ fn get_prover_memory(
     }
     const HASH_SIZE: u64 = 4;
     const GRIND_NONCE_BLOCKS_MAX: u64 = 1024;
-    const EVALS_HELPER_CHUNKS: u64 = 16;
+    const EVALS_HELPER_CHUNKS: u64 = 32;
     let fe = FIELD_EXTENSION as u64;
     let align = |n: u64| (n + 31) & !31u64;
 

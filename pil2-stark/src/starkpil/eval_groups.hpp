@@ -1,7 +1,7 @@
 #ifndef EVAL_GROUPS_HPP
 #define EVAL_GROUPS_HPP
 
-// The per-air table of computeEvalsShifted (starks_gpu.cu), kept apart so AirInstanceInfo builds it
+// The per-air table of computeEvalsPairs (starks_gpu.cu), kept apart so AirInstanceInfo builds it
 // without seeing the kernels.
 #include <algorithm>
 #include <map>
@@ -11,24 +11,28 @@
 #include "stark_info.hpp"
 #include "goldilocks_trace_layout.cuh"
 
-// Openings of one polynomial per block: 3-4 measured fastest at the zisk shapes, more costs registers.
-#define EVALS_GROUP_OPENINGS 4
+// A slot is one evaluation (polynomial, opening). computeEvalsPairs runs EVALS_TILE_SLOTS slots of one dim
+// per block, sharing each Lagrange load; 2 measured fastest (4: +2% kernel time on ZisK).
+#define EVALS_TILE_SLOTS 2
 
-struct EvalGroup {
-    uint64_t col;    // first element of the column in its buffer (ColMajor, extended domain)
-    uint32_t src;    // 0: cm, 1: custom, 2: fixed
+struct EvalSlot {
+    uint64_t col;      // first element of the column in its buffer (ColMajor, extended domain)
+    uint32_t src;      // 0: cm, 1: custom, 2: fixed
     uint32_t dim;
-    uint32_t nOpen;
-    uint32_t shift[EVALS_GROUP_OPENINGS];   // opening point mod N
-    uint32_t evalPos[EVALS_GROUP_OPENINGS];
+    uint32_t shift;    // opening point mod N
+    uint32_t evalPos;
 };
 
-// A polynomial's openings in ascending order, so a group's shifted reads stay in neighbouring rows.
-inline std::vector<EvalGroup> buildEvalGroups(StarkInfo &starkInfo)
+struct EvalSlots {
+    std::vector<EvalSlot> slots;      // by (dim, src, col, opening): a tile's shifted reads share rows
+    std::vector<uint32_t> tileStart;  // nTiles + 1 bounds into slots; a tile never mixes dims
+};
+
+inline EvalSlots buildEvalSlots(StarkInfo &starkInfo)
 {
     const uint64_t N = 1ULL << starkInfo.starkStruct.nBits;
     const uint64_t NExt = 1ULL << starkInfo.starkStruct.nBitsExt;
-    std::map<std::tuple<uint32_t, uint64_t, uint32_t>, std::vector<std::pair<int64_t, uint32_t>>> byPol;
+    std::map<std::tuple<uint32_t, uint32_t, uint64_t>, std::vector<std::pair<int64_t, uint32_t>>> byPol;
     for (uint64_t k = 0; k < starkInfo.evMap.size(); k++) {
         const EvMap &ev = starkInfo.evMap[k];
         const uint32_t src = ev.type == EvMap::eType::cm ? 0 : ev.type == EvMap::eType::custom ? 1 : 2;
@@ -40,28 +44,26 @@ inline std::vector<EvalGroup> buildEvalGroups(StarkInfo &starkInfo)
                                            : "const";
         const Layout layout = src == 0 ? resolveLayout(starkInfo.starkStruct.nBits, starkInfo.mapSectionsN[stage])
                                        : fixedLayout();
-        if (layout != Layout::ColMajor) throw std::runtime_error("buildEvalGroups: sections must be ColMajor");
+        if (layout != Layout::ColMajor) throw std::runtime_error("buildEvalSlots: sections must be ColMajor");
         const uint64_t col = starkInfo.mapOffsets[std::make_pair(stage, true)] + pol.stagePos * NExt;
-        byPol[{src, col, (uint32_t)pol.dim}].push_back({starkInfo.openingPoints[ev.openingPos], (uint32_t)k});
+        byPol[{(uint32_t)pol.dim, src, col}].push_back({starkInfo.openingPoints[ev.openingPos], (uint32_t)k});
     }
 
-    std::vector<EvalGroup> groups;
+    EvalSlots out;
     for (auto &[key, opens] : byPol) {
         std::sort(opens.begin(), opens.end());
-        // Even splits: 17 openings as 3+3+3+4+4, not 4+4+4+4+1.
-        const size_t nGroups = (opens.size() + EVALS_GROUP_OPENINGS - 1) / EVALS_GROUP_OPENINGS;
-        for (size_t gi = 0, at = 0; gi < nGroups; gi++) {
-            EvalGroup g{};
-            std::tie(g.src, g.col, g.dim) = key;
-            g.nOpen = (uint32_t)((opens.size() - at) / (nGroups - gi));
-            for (uint32_t o = 0; o < g.nOpen; o++, at++) {
-                g.shift[o] = (uint32_t)((uint64_t)opens[at].first & (N - 1));
-                g.evalPos[o] = opens[at].second;
-            }
-            groups.push_back(g);
-        }
+        for (auto &[point, evalPos] : opens)
+            out.slots.push_back({std::get<2>(key), std::get<1>(key), std::get<0>(key), (uint32_t)((uint64_t)point & (N - 1)), evalPos});
     }
-    return groups;
+    for (uint32_t i = 0; i < out.slots.size();) {
+        out.tileStart.push_back(i);
+        const uint32_t dim = out.slots[i].dim;
+        uint32_t j = i + 1;
+        while (j < out.slots.size() && j - i < EVALS_TILE_SLOTS && out.slots[j].dim == dim) j++;
+        i = j;
+    }
+    out.tileStart.push_back((uint32_t)out.slots.size());
+    return out;
 }
 
 #endif

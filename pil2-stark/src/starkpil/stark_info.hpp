@@ -158,9 +158,9 @@ public:
     }
 };
 
-// Row-stripe count of the GPU evaluations (computeEvalsShifted grid.y). Shared with
+// Row-stripe count of the GPU evaluations (computeEvalsPairs grid.y). Shared with
 // setMapOffsets, which sizes the "evals_partials" region for the reduction partials.
-static constexpr uint64_t EVALS_HELPER_CHUNKS = 16;
+static constexpr uint64_t EVALS_HELPER_CHUNKS = 32;
 
 class StarkInfo
 {
