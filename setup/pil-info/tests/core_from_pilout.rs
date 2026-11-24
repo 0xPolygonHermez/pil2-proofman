@@ -103,13 +103,14 @@ fn lowers_column_kinds_and_offsets() {
     p.symbols.push(symbol("c", SymbolType::Challenge, 1, 0));
     p.air_groups[0].airs[0].air_values = vec![pb::AirValue { stage: 1 }];
     let cs = from_pilout(&p, 0, 0, &gl(), Opening::Deep).unwrap();
-    assert_eq!(
-        cs.exprs[0],
-        Expr::Add(Box::new(col(0, -1)), Box::new(Expr::Col { col: ColType::Fixed, commit_id: None, id: 0, offset: 0 }))
-    );
-    assert_eq!(cs.exprs[1], Expr::Mul(Box::new(Expr::Challenge { stage: 1, stage_id: 0 }), Box::new(Expr::Public(2))));
-    assert_eq!(cs.exprs[2], Expr::Sub(Box::new(Expr::AirValue(0)), Box::new(Expr::Const(BigUint::from(7u32)))));
-    assert_eq!(cs.constraints[0].e, Expr::Ref(0));
+    let e0 =
+        Expr::Add(Box::new(col(0, -1)), Box::new(Expr::Col { col: ColType::Fixed, commit_id: None, id: 0, offset: 0 }));
+    let e1 = Expr::Mul(Box::new(Expr::Challenge { stage: 1, stage_id: 0 }), Box::new(Expr::Public(2)));
+    let e2 = Expr::Sub(Box::new(Expr::AirValue(0)), Box::new(Expr::Const(BigUint::from(7u32))));
+    let mut got = cs.exprs.clone();
+    got.sort();
+    assert_eq!(got, [e0.clone(), e2, e1]);
+    assert_eq!(cs.constraints[0].e, Expr::Ref(find(&cs, &e0)));
     assert_eq!(cs.constraints[0].label, "constraint on expression 0");
     assert_eq!(cs.n_rows_bits, 4);
     assert_eq!(cs.n_stages, 1);
@@ -148,8 +149,17 @@ fn degree_follows_rules() {
     let mut p = p;
     p.num_challenges = vec![1];
     let cs = from_pilout(&p, 0, 0, &gl(), Opening::Deep).unwrap();
-    let d = |i: u32| degree(&cs, &Expr::Ref(i));
-    assert_eq!([d(0), d(1), d(2), d(3), d(4)], [2, 3, 1, 1, 2]);
+    let mul_e = |a: Expr, b: Expr| Expr::Mul(Box::new(a), Box::new(b));
+    let ab = mul_e(col(0, 0), col(1, 0));
+    let bodies = [
+        ab.clone(),
+        mul_e(ab.clone(), col(2, 0)),
+        mul_e(Expr::Const(BigUint::from(5u32)), col(0, 0)),
+        mul_e(Expr::Challenge { stage: 1, stage_id: 0 }, col(0, 0)),
+        Expr::Add(Box::new(ab), Box::new(col(0, 0))),
+    ];
+    let d = |e: &Expr| degree(&cs, &Expr::Ref(find(&cs, e)));
+    assert_eq!(bodies.each_ref().map(d), [2, 3, 1, 1, 2]);
     assert_eq!(degree(&cs, &Expr::Const(BigUint::from(3u32))), 0);
     assert_eq!(degree(&cs, &Expr::Neg(Box::new(col(0, 0)))), 1);
 }

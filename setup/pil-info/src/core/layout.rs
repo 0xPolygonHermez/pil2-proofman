@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 
 use crate::core::im::ImChoice;
-use crate::core::ir::{dim, visit, ColType, Column, ConstraintSystem, Expr, ExprId, Lengths, NamedValue, Unresolved};
+use crate::core::ir::{dim, dim_table, stage_table, Column, ConstraintSystem, Expr, Lengths, NamedValue, Unresolved};
 
 /// One committed, fixed or custom column.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -126,8 +126,7 @@ fn cm_pols(
 ) -> Result<Vec<PolMap>, LayoutError> {
     let n = cs.n_stages;
     let mut m = by_id(&cs.witness, "witness", |c| col(c, None))?;
-    let witness_stage: Vec<u32> = m.iter().map(|p| p.stage).collect();
-    let mut stages = BTreeMap::new();
+    let (stages, dims) = (stage_table(cs)?, dim_table(cs)?);
     let pol = |name: String, stage, dim, im_pol| PolMap {
         name,
         stage,
@@ -139,8 +138,9 @@ fn cm_pols(
         lengths: None,
     };
     for (k, &e) in im.exprs.iter().enumerate() {
-        let stage = if params.im_pols_stages { stage_of(cs, &witness_stage, e, &mut stages)? } else { n };
-        m.push(pol(format!("{}.ImPol", params.air_name), stage, dim(cs, &Expr::Ref(e))?, true));
+        let at = |t: &[u32]| t.get(e as usize).copied().ok_or_else(|| Unresolved(format!("expression {e}")));
+        let stage = if params.im_pols_stages { at(&stages)? } else { n };
+        m.push(pol(format!("{}.ImPol", params.air_name), stage, at(&dims)?, true));
         debug_assert_eq!(m.len(), crate::core::im::im_column_id(cs, k) as usize + 1);
     }
     m.extend((0..params.q_deg).map(|i| pol(format!("Q{i}"), n + 1, q_dim, false)));
@@ -230,47 +230,4 @@ pub fn quotient_dim(cs: &ConstraintSystem, im: &ImChoice) -> Result<u32, LayoutE
         [e] => dim(cs, e)?,
         _ => cs.field.ext_dim() as u32,
     })
-}
-
-/// Stage of expression `id`: the largest of its leaves' (witness by column, values by their stage, challenges theirs).
-fn stage_of(
-    cs: &ConstraintSystem,
-    witness: &[u32],
-    id: ExprId,
-    memo: &mut BTreeMap<ExprId, u32>,
-) -> Result<u32, Unresolved> {
-    if let Some(s) = memo.get(&id) {
-        return Ok(*s);
-    }
-    memo.insert(id, 0); // a cycle (rejected at ingestion) reads as 0
-    let e = cs.exprs.get(id as usize).ok_or_else(|| Unresolved(format!("expression {id}")))?;
-    let mut refs = Vec::new();
-    let mut s = Ok(0);
-    visit(e, &mut |n| {
-        let at = |v: &[NamedValue], i: &u32, what: &str| {
-            v.get(*i as usize).map(|x| x.stage).ok_or_else(|| Unresolved(format!("{what} {i}")))
-        };
-        let here = match n {
-            Expr::Col { col: ColType::Witness, id, .. } => {
-                witness.get(*id as usize).copied().ok_or_else(|| Unresolved(format!("witness column {id}")))
-            }
-            Expr::Challenge { stage, .. } => Ok(*stage),
-            Expr::Public(_) => Ok(1),
-            Expr::ProofValue(i) => at(&cs.proof_values, i, "proof value"),
-            Expr::AirValue(i) => at(&cs.air_values, i, "air value"),
-            Expr::AirgroupValue { airgroup: None, id } => at(&cs.airgroup_values, id, "airgroup value"),
-            Expr::Ref(r) => {
-                refs.push(*r);
-                Ok(0)
-            }
-            _ => Ok(0),
-        };
-        s = s.clone().and_then(|s| here.map(|h| s.max(h)));
-    });
-    let mut s = s?;
-    for r in refs {
-        s = s.max(stage_of(cs, witness, r, memo)?);
-    }
-    memo.insert(id, s);
-    Ok(s)
 }

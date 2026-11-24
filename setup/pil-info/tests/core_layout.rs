@@ -245,7 +245,11 @@ fn hint_expressions_add_points() {
     let plain = openings(&cs, &choice(&[]), &l).unwrap();
     // only the expressions a hint names add points, as the prover keeps only those
     let col = Expr::Col { col: ColType::Witness, commit_id: None, id: 0, offset: 5 };
-    let o = openings(&hinted(&cs, &[col, Expr::Ref(4)]), &choice(&[]), &l).unwrap();
+    let hint = Expr::Mul(
+        Box::new(Expr::Col { col: ColType::Witness, commit_id: None, id: 1, offset: -7 }),
+        Box::new(Expr::Col { col: ColType::Witness, commit_id: None, id: 2, offset: 0 }),
+    );
+    let o = openings(&hinted(&cs, &[col, Expr::Ref(find(&cs, &hint))]), &choice(&[]), &l).unwrap();
     assert_eq!(o.opening_points, [-7, 0]);
     // a point from a hint has no evaluation: the evMap only changes its opening positions
     assert!(o.ev_map.iter().all(|e| e.pol.offset == 0));

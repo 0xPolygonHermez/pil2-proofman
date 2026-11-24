@@ -18,10 +18,10 @@ use crate::expr::print::{print_bounded, PrintCtx};
 use crate::pil::gen_code::{generate_pil_code, CodeGenParams, PilCodeResult};
 use crate::types::pilout_info::{format_expressions, format_hints, ConstraintInfo, HintInfo, SymbolInfo};
 
-/// Arena ids of the roles; until Task 9 they equal today's ids.
+/// Arena ids with a fixed meaning.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Roles {
-    /// Q = fold_roots of the substituted roots.
+    /// Q = fold_roots of the substituted roots, always the last entry; the starkinfo's `cExpId`.
     pub c_exp: usize,
 }
 
@@ -40,7 +40,8 @@ pub struct EmitParams {
     pub airgroup_id: usize,
 }
 
-/// Today's push order: pilout expressions (old formatter), the cExp fold, the im roots, then Q.
+/// Arena order, a function of the typed input: expressions in index order (then the formatter's children),
+/// hint operands in hint order, the fold of the roots (im roots in im order), then Q.
 pub fn to_arena(cs: &ConstraintSystem, im: &ImChoice, lay: &Layout) -> Result<ProverExprs> {
     let (arena, hints, constraints) = formatted(cs)?;
     fold_quotient(cs, im, lay, arena, hints, constraints)

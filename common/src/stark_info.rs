@@ -339,8 +339,21 @@ pub struct StarkInfo {
     pub security: SecurityInfo,
 }
 
+/// The starkinfo `keyVersion` this prover reads (the setup's `KEY_VERSION`).
+pub const KEY_VERSION: u64 = 2;
+
 impl StarkInfo {
+    /// Panics on a key of another `keyVersion` (checked before the full parse) or malformed JSON.
     pub fn from_json(stark_info_json: &str) -> Self {
+        #[derive(Deserialize)]
+        struct Version {
+            #[serde(rename = "keyVersion")]
+            key_version: Option<u64>,
+        }
+        let v: Version = serde_json::from_str(stark_info_json).expect("Failed to parse JSON file");
+        if v.key_version != Some(KEY_VERSION) {
+            panic!("starkinfo keyVersion {:?}, this prover reads {KEY_VERSION}: regenerate the setup", v.key_version);
+        }
         serde_json::from_str(stark_info_json).expect("Failed to parse JSON file")
     }
 
@@ -415,5 +428,18 @@ mod tests {
         assert_eq!(stir.log_domain_sizes, vec![19, 18, 17, 16, 15, 14]);
         assert_eq!(stir.num_queries, vec![106, 53, 36, 27, 22]);
         assert!(ss.low_degree_test.fri().is_none());
+    }
+
+    /// A starkinfo without the current `keyVersion` is a stale setup.
+    #[test]
+    #[should_panic(expected = "regenerate the setup")]
+    fn old_starkinfo_without_key_version_is_rejected() {
+        StarkInfo::from_json(r#"{"nPublics": 0}"#);
+    }
+
+    #[test]
+    #[should_panic(expected = "regenerate the setup")]
+    fn starkinfo_with_wrong_key_version_is_rejected() {
+        StarkInfo::from_json(r#"{"keyVersion": 1}"#);
     }
 }

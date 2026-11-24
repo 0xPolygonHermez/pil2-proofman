@@ -41,7 +41,7 @@ pub fn stark_setup(
     let none = ImChoice { exprs: Vec::new() };
     let q_dim = quotient_dim(&cs, &none).map_err(|e| failed("quotient dim", &e))?;
     let set = search_im(&cs, &cfg.degree_policy, q_dim as usize).with_context(at)?;
-    let im = im_order(&set).map_err(|e| failed("im order", &e))?;
+    let im = im_order(&cs, &set).map_err(|e| failed("im order", &e))?;
     let max_deg = cfg.degree_policy.max_constraint_degree() as u32;
     let chk = check_im(&cs, &im, max_deg, true).map_err(|e| failed("im check", &e))?;
     let dag = build_dag(&cs, &im).map_err(|e| failed("constraint DAG", &e))?;

@@ -126,6 +126,9 @@ pub fn stark_info(
 #[derive(Clone, Debug, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StarkInfoOutput<S, X> {
+    /// Always `KEY_VERSION`; the provers refuse any other.
+    #[serde(serialize_with = "key_version")]
+    pub key_version: (),
     pub name: String,
     pub cm_pols_map: Vec<PolEntry>,
     pub const_pols_map: Vec<PolEntry>,
@@ -213,6 +216,13 @@ pub struct EvMapEntry {
     pub commit_id: Option<u32>,
 }
 
+/// The key format: bumped when the same pilout gives a different key (2: canonical expression and im order).
+pub const KEY_VERSION: u32 = 2;
+
+fn key_version<S: Serializer>(_: &(), s: S) -> Result<S::Ok, S::Error> {
+    s.serialize_u32(KEY_VERSION)
+}
+
 /// `mapSectionsN` keeps its insertion order.
 fn as_map<S: Serializer>(v: &[(String, u32)], s: S) -> Result<S::Ok, S::Error> {
     s.collect_map(v.iter().map(|(k, n)| (k, n)))
@@ -263,6 +273,7 @@ pub fn starkinfo_output<S, X>(
         ..entry(i, p)
     };
     Ok(StarkInfoOutput {
+        key_version: (),
         name: air_name.into(),
         cm_pols_map: cm_pols(core, entry)?,
         const_pols_map: const_pols.collect(),

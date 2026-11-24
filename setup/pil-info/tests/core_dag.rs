@@ -136,7 +136,7 @@ fn nodes_in_post_order_first_appearance() {
 /// The searched promoted set, or none when the search is infeasible.
 fn im_for(cs: &ConstraintSystem) -> ImChoice {
     match search_im(cs, &DegreePolicy::FromBlowup { blowup_bits: 3 }, 1) {
-        Ok(set) => im_order(&set).unwrap(),
+        Ok(set) => im_order(cs, &set).unwrap(),
         Err(_) => choice(&[]),
     }
 }

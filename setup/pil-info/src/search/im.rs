@@ -1,10 +1,10 @@
-//! Greedy intermediate-polynomial search over `ir::degree`; returns the set only.
+//! Greedy intermediate-polynomial search over `ir::degree_of`; returns the set only.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::cfg::DegreePolicy;
 use crate::core::im::{boundary_degree, check_im, im_order};
-use crate::core::ir::{degree, dim, ColType, ConstraintSystem, Expr, ExprId};
+use crate::core::ir::{degree_of, degree_table, dim_table, ColType, ConstraintSystem, Expr, ExprId};
 use crate::error::PilInfoError;
 
 type Set = BTreeSet<ExprId>;
@@ -16,12 +16,13 @@ pub fn search_im(cs: &ConstraintSystem, policy: &DegreePolicy, q_dim: usize) -> 
     let max = policy.max_constraint_degree().max(2);
     let stark_min_q = matches!(policy, DegreePolicy::FromBlowup { .. });
     let mut best: Option<(i64, Set)> = None;
+    let deg = degree_table(cs);
+    let dims = dim_table(cs).map_err(|u| PilInfoError::InvalidPilout(u.0))?;
     for d in 2..=max {
-        let Some(set) = (Search { cs, abs_max: d, memo: BTreeMap::new() }).roots() else { continue };
-        let Ok(im) = im_order(&set) else { continue };
+        let Some(set) = (Search { cs, deg: &deg, abs_max: d, memo: BTreeMap::new() }).roots() else { continue };
+        let Ok(im) = im_order(cs, &set) else { continue };
         let Ok(checked) = check_im(cs, &im, d as u32, stark_min_q) else { continue };
-        let dims = im.exprs.iter().map(|&i| dim(cs, &Expr::Ref(i)).map(|d| d as usize));
-        let im_cols: usize = dims.sum::<Result<_, _>>().map_err(|u| PilInfoError::InvalidPilout(u.0))?;
+        let im_cols: usize = im.exprs.iter().map(|&i| dims[i as usize] as usize).sum();
         let cost = policy.cost(im.exprs.len(), im_cols, i64::from(checked.q_deg), q_dim);
         let empty = set.is_empty();
         if best.as_ref().is_none_or(|(c, _)| cost < *c) {
@@ -38,6 +39,7 @@ pub fn search_im(cs: &ConstraintSystem, policy: &DegreePolicy, q_dim: usize) -> 
 /// One degree's search; the memo is keyed on everything the result depends on but `abs_max`, which is fixed.
 struct Search<'a> {
     cs: &'a ConstraintSystem,
+    deg: &'a [u32],
     abs_max: usize,
     memo: BTreeMap<(ExprId, usize, Set), Found>,
 }
@@ -95,20 +97,20 @@ impl Search<'_> {
                     r => r,
                 }
             }
-            leaf if degree(self.cs, leaf) == 0 => (Some(set.clone()), 0),
+            leaf if degree_of(leaf, self.deg) == 0 => (Some(set.clone()), 0),
             _ if max_deg < 1 => (None, -1),
             _ => (Some(set.clone()), 1),
         }
     }
 
     fn mul(&mut self, e: &Expr, a: &Expr, b: &Expr, set: &Set, max_deg: usize) -> Found {
-        if is_const_leaf(self.cs, a) {
+        if is_const_leaf(a) {
             return self.expr(b, set, max_deg);
         }
-        if is_const_leaf(self.cs, b) {
+        if is_const_leaf(b) {
             return self.expr(a, set, max_deg);
         }
-        let here = degree(self.cs, e) as usize;
+        let here = degree_of(e, self.deg) as usize;
         if here <= max_deg {
             return (Some(set.clone()), here as i64);
         }
@@ -130,8 +132,8 @@ impl Search<'_> {
 }
 
 /// A degree-0 leaf (not a composite, `Neg` being the old `mul(-1, x)`, nor a `Ref`): a product by it is skipped.
-fn is_const_leaf(cs: &ConstraintSystem, e: &Expr) -> bool {
-    !matches!(e, Expr::Add(..) | Expr::Sub(..) | Expr::Mul(..) | Expr::Neg(_) | Expr::Ref(_)) && degree(cs, e) == 0
+fn is_const_leaf(e: &Expr) -> bool {
+    !matches!(e, Expr::Add(..) | Expr::Sub(..) | Expr::Mul(..) | Expr::Neg(_) | Expr::Ref(_)) && degree_of(e, &[]) == 0
 }
 
 fn selector() -> Expr {

@@ -47,10 +47,10 @@ fn rejects_im_too_high() {
 
 #[test]
 fn im_degree_is_taken_after_substituting_the_others() {
-    // e2 = e1*d, e1 = e0*c: with e1 promoted, e2 is degree 2, not 4
+    // e2 = e1*d, e1 = e0*c: with e1 promoted, e2 is degree 2, not 4 (e2 appears first)
     let cs = system(chain(), &[3]);
-    let got = check_im(&cs, &choice(&[1, 2]), 3, true).unwrap();
-    assert_eq!(got.im_degrees, vec![3, 2]);
+    let got = check_im(&cs, &choice(&[2, 1]), 3, true).unwrap();
+    assert_eq!(got.im_degrees, vec![2, 3]);
     assert_eq!(got.root_degrees, vec![2]);
 }
 
@@ -60,13 +60,15 @@ fn rejects_non_promotable() {
     e.push(sub(constant("7"), constant("2"))); // 4: a degree-0 expression
     let cs = system(e, &[1]);
     assert_eq!(check_im(&cs, &choice(&[99]), 3, true).unwrap_err(), ImError::NotPromotable { expr: 99 });
-    assert_eq!(check_im(&cs, &choice(&[4]), 3, true).unwrap_err(), ImError::NotPromotable { expr: 4 });
+    let k = find(&cs, &Expr::Sub(Box::new(Expr::Const(7u32.into())), Box::new(Expr::Const(2u32.into()))));
+    assert_eq!(check_im(&cs, &choice(&[k]), 3, true).unwrap_err(), ImError::NotPromotable { expr: k });
 }
 
 #[test]
 fn rejects_unsorted_and_duplicate() {
     let cs = system(chain(), &[1]);
-    assert_eq!(check_im(&cs, &choice(&[1, 0]), 4, true).unwrap_err(), ImError::Unsorted);
+    // the root e1 appears before e0
+    assert_eq!(check_im(&cs, &choice(&[0, 1]), 4, true).unwrap_err(), ImError::Unsorted);
     assert_eq!(check_im(&cs, &choice(&[0, 0]), 4, true).unwrap_err(), ImError::Duplicate { expr: 0 });
 }
 
@@ -83,12 +85,6 @@ fn q_deg_is_derived() {
     let cs = system(vec![sub(witness(0, 0), constant("1"))], &[0]);
     assert_eq!(check_im(&cs, &choice(&[]), 3, false).unwrap().q_deg, 0);
     assert_eq!(check_im(&cs, &choice(&[]), 3, true).unwrap().q_deg, 1);
-}
-
-#[test]
-fn im_order_is_ascending_expression_id() {
-    assert_eq!(im_order(&BTreeSet::from([7, 3])).unwrap(), choice(&[3, 7]));
-    assert_eq!(im_order(&BTreeSet::new()).unwrap(), choice(&[]));
 }
 
 #[test]
@@ -170,7 +166,7 @@ fn shplonk_boundaries_follow_the_spec() {
         for policy in policies() {
             let Some((_, old_q, q_dim)) = old_search(&p, 0, 0, &policy) else { continue };
             let Ok(set) = search_im(&cs, &policy, q_dim) else { continue };
-            let im = im_order(&set).unwrap();
+            let im = im_order(&cs, &set).unwrap();
             let got = check_im(&cs, &im, policy.max_constraint_degree() as u32, stark_floor(&policy)).unwrap();
             assert!(got.q_deg as i64 >= old_q, "seed {seed} {policy:?}");
             above_old += (got.q_deg as i64 > old_q) as u32;
@@ -199,7 +195,7 @@ fn search_output_is_checked() {
         for policy in policies() {
             let Ok(set) = search_im(&cs, &policy, quotient_dim(&cs, &choice(&[])).unwrap() as usize) else { continue };
             let max = policy.max_constraint_degree() as u32;
-            let im = im_order(&set).unwrap();
+            let im = im_order(&cs, &set).unwrap();
             check_im(&cs, &im, max, stark_floor(&policy)).unwrap_or_else(|e| panic!("seed {seed} {policy:?}: {e:?}"));
             checked += 1;
         }
@@ -215,7 +211,7 @@ fn memo_hazard_regression() {
     let (_, cs) = random_pilout(HAZARD_SEED);
     for policy in policies() {
         let set = search_im(&cs, &policy, quotient_dim(&cs, &choice(&[])).unwrap() as usize).expect("feasible");
-        let im = im_order(&set).unwrap();
+        let im = im_order(&cs, &set).unwrap();
         let got = check_im(&cs, &im, policy.max_constraint_degree() as u32, stark_floor(&policy))
             .unwrap_or_else(|e| panic!("{policy:?}: set rejected: {e:?}"));
         let roots = cs.constraints.iter().map(|c| degree(&cs, &substitute(&cs, &im, &c.e).unwrap())).max().unwrap();
@@ -244,7 +240,7 @@ fn doubling_chain_is_not_inlined() {
     assert_eq!(check_im(&cs, &choice(&[]), 4, true).unwrap().root_degrees, vec![4]);
     assert_eq!(check_im(&cs, &choice(&[64]), 3, true).unwrap().im_degrees, vec![2]);
     let set = search_im(&cs, &DegreePolicy::FromBlowup { blowup_bits: 1 }, 1).unwrap();
-    check_im(&cs, &im_order(&set).unwrap(), 3, true).unwrap();
+    check_im(&cs, &im_order(&cs, &set).unwrap(), 3, true).unwrap();
 }
 
 #[test]

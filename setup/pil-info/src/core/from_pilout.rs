@@ -4,8 +4,8 @@ use num_bigint::BigUint;
 use pil2_pilout::pilout::{self as pb, SymbolType};
 
 use super::ir::{
-    visit, Boundary, ColType, Column, Constraint, ConstraintSystem, CustomCommit, Expr, Hint, HintField, HintValue,
-    Lengths, NamedValue,
+    map_expr, visit, Boundary, ColType, Column, Constraint, ConstraintSystem, CustomCommit, Expr, Hint, HintField,
+    HintValue, Lengths, NamedValue,
 };
 use super::pilout_core::{self as pc, AggType, AirGroupValue, PiloutCore, SymbolKind};
 pub(crate) use super::pilout_core::bad;
@@ -23,20 +23,19 @@ pub(crate) fn const_of(be: &[u8]) -> Expr {
     Expr::Const(BigUint::from_bytes_be(be))
 }
 
-/// Every `Ref` of `exprs` resolves, and no expression reaches itself (iterative DFS, no recursion).
-pub(crate) fn check_refs(exprs: &[Expr]) -> Result<(), PiloutError> {
-    let refs: Vec<Vec<u32>> = exprs
-        .iter()
-        .map(|e| {
-            let mut r = Vec::new();
-            visit(e, &mut |n| {
-                if let Expr::Ref(t) = n {
-                    r.push(*t);
-                }
-            });
-            r
-        })
-        .collect();
+fn refs_of(e: &Expr) -> Vec<u32> {
+    let mut r = Vec::new();
+    visit(e, &mut |n| {
+        if let Expr::Ref(t) = n {
+            r.push(*t);
+        }
+    });
+    r
+}
+
+/// Every `Ref` of `exprs` resolves and no expression reaches itself; returns a post-order (iterative DFS).
+fn post_order(exprs: &[Expr]) -> Result<Vec<usize>, PiloutError> {
+    let refs: Vec<Vec<u32>> = exprs.iter().map(refs_of).collect();
     for (i, rs) in refs.iter().enumerate() {
         if let Some(&to) = rs.iter().find(|&&t| t as usize >= exprs.len()) {
             return Err(PiloutError::DanglingRef { expr: i, to });
@@ -44,6 +43,7 @@ pub(crate) fn check_refs(exprs: &[Expr]) -> Result<(), PiloutError> {
     }
     // 0 = unvisited, 1 = on the stack, 2 = done
     let mut state = vec![0u8; exprs.len()];
+    let mut order = Vec::with_capacity(exprs.len());
     for root in 0..exprs.len() {
         if state[root] != 0 {
             continue;
@@ -66,11 +66,52 @@ pub(crate) fn check_refs(exprs: &[Expr]) -> Result<(), PiloutError> {
                 }
             } else {
                 state[n] = 2;
+                order.push(n);
                 stack.pop();
             }
         }
     }
-    Ok(())
+    Ok(order)
+}
+
+/// Every `Ref` of `exprs` resolves, and no expression reaches itself.
+pub(crate) fn check_refs(exprs: &[Expr]) -> Result<(), PiloutError> {
+    post_order(exprs).map(|_| ())
+}
+
+/// `new[old]`: by depth, then by body with each `Ref` read as its target's structural class; only identical
+/// expressions keep their input order, so the numbering is a function of structure and topological.
+fn canonical_numbering(exprs: &[Expr]) -> Result<Vec<u32>, PiloutError> {
+    let mut depth = vec![0usize; exprs.len()];
+    for i in post_order(exprs)? {
+        depth[i] = refs_of(&exprs[i]).iter().map(|&t| depth[t as usize] + 1).max().unwrap_or(0);
+    }
+    let mut by_depth = vec![Vec::new(); depth.iter().max().map_or(0, |d| d + 1)];
+    (0..exprs.len()).for_each(|i| by_depth[depth[i]].push(i));
+    let (mut class, mut new) = (vec![0u32; exprs.len()], vec![0u32; exprs.len()]);
+    let (mut n_class, mut next) = (0u32, 0u32);
+    for level in by_depth {
+        // the targets are shallower, so their classes are final
+        let key = |i: usize| {
+            map_expr(&exprs[i], &mut |n| if let Expr::Ref(t) = n { Some(Expr::Ref(class[*t as usize])) } else { None })
+        };
+        let mut keyed: Vec<(Expr, usize)> = level.into_iter().map(|i| (key(i), i)).collect();
+        keyed.sort();
+        for (k, (body, i)) in keyed.iter().enumerate() {
+            if k > 0 && keyed[k - 1].0 != *body {
+                n_class += 1;
+            }
+            // below the ingestion limit
+            (class[*i], new[*i], next) = (n_class, next, next + 1);
+        }
+        n_class += 1;
+    }
+    Ok(new)
+}
+
+/// `e` with each `Ref(old)` read as `Ref(new[old])`.
+fn renumber(e: &Expr, new: &[u32]) -> Expr {
+    map_expr(e, &mut |n| if let Expr::Ref(t) = n { Some(Expr::Ref(new[*t as usize])) } else { None })
 }
 
 /// Number of cells of a symbol: 1, or the product of its array lengths.
@@ -273,6 +314,15 @@ fn lower_hint_field(f: &pc::HintField, hint: &str, t: &Tables) -> Result<HintFie
     Ok(HintField { name: f.name.clone(), value })
 }
 
+fn renumber_hint(f: HintField, new: &[u32]) -> HintField {
+    let value = match f.value {
+        HintValue::Expr(e) => HintValue::Expr(renumber(&e, new)),
+        HintValue::Array(a) => HintValue::Array(a.into_iter().map(|f| renumber_hint(f, new)).collect()),
+        s @ HintValue::Str(_) => s,
+    };
+    HintField { value, ..f }
+}
+
 /// This air's symbols (`air` None: of its airgroup only) of kind `kind`.
 fn of_air(core: &PiloutCore, kind: SymbolKind, airgroup: u32, air: Option<u32>) -> impl Iterator<Item = &pc::Symbol> {
     core.symbols
@@ -431,12 +481,15 @@ fn lower(
         .enumerate()
         .map(|(i, e)| lower_expression(e, i, &tables))
         .collect::<Result<Vec<_>, _>>()?;
-    check_refs(&exprs)?;
+    let new = canonical_numbering(&exprs)?;
+    let mut numbered = vec![Expr::Const(BigUint::default()); exprs.len()];
+    exprs.iter().zip(&new).for_each(|(e, &k)| numbered[k as usize] = renumber(e, &new));
+    let exprs = numbered;
     let constraints = a
         .constraints
         .iter()
         .enumerate()
-        .map(|(k, c)| lower_constraint(k, c, exprs.len(), opening))
+        .map(|(k, c)| lower_constraint(k, c, exprs.len(), opening).map(|c| Constraint { e: renumber(&c.e, &new), ..c }))
         .collect::<Result<Vec<_>, _>>()?;
 
     let air_syms = |kind| of_air(core, kind, g32, Some(a32));
@@ -475,7 +528,8 @@ fn lower(
                 Some(f @ pc::HintField { value: pc::HintValue::Array(_), .. }) => std::slice::from_ref(f),
                 _ => &h.fields[..],
             };
-            let fields = read.iter().map(|f| lower_hint_field(f, &h.name, &tables)).collect::<Result<_, _>>()?;
+            let lower = |f| lower_hint_field(f, &h.name, &tables).map(|f| renumber_hint(f, &new));
+            let fields = read.iter().map(lower).collect::<Result<_, _>>()?;
             Ok(Hint { name: h.name.clone(), fields })
         })
         .collect::<Result<Vec<_>, PiloutError>>()?;

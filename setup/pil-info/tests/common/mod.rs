@@ -3,8 +3,8 @@
 
 use num_bigint::BigUint;
 use pil_info::core::from_pilout::from_pilout;
-use pil_info::core::im::{check_im, im_order, Checked, ImChoice};
-use pil_info::core::ir::{degree, ConstraintSystem};
+use pil_info::core::im::{check_im, im_order, substitute, Checked, ImChoice};
+use pil_info::core::ir::{degree, ConstraintSystem, Expr};
 use pil_info::core::layout::{layout, quotient_dim, Layout, LayoutParams};
 use pil_info::core::openings::{openings, Openings};
 use pil_info::emit::prover::{to_arena, ProverExprs};
@@ -216,6 +216,18 @@ pub fn chain() -> Vec<pb::Expression> {
     ]
 }
 
+/// The expression with every Ref inlined (small systems only).
+pub fn inlined(cs: &ConstraintSystem, e: &Expr) -> Expr {
+    substitute(cs, &ImChoice { exprs: Vec::new() }, e).unwrap()
+}
+
+/// The table index whose inlined body is `want` (lowering renumbers the input).
+pub fn find(cs: &ConstraintSystem, want: &Expr) -> u32 {
+    let hits: Vec<usize> = (0..cs.exprs.len()).filter(|&i| inlined(cs, &Expr::Ref(i as u32)) == *want).collect();
+    assert_eq!(hits.len(), 1, "body {want:?} found {hits:?}");
+    hits[0] as u32
+}
+
 pub fn choice(v: &[u32]) -> ImChoice {
     ImChoice { exprs: v.to_vec() }
 }
@@ -330,7 +342,7 @@ pub fn run_with(p: &pb::PilOut, airgroup: usize, air: usize, blowup_bits: usize,
     let cs = from_pilout(p, airgroup, air, &gl(), Opening::Deep).ok()?;
     let none = ImChoice { exprs: Vec::new() };
     let set = search_im(&cs, &cfg.degree_policy, quotient_dim(&cs, &none).ok()? as usize).ok()?;
-    let im = im_order(&set).ok()?;
+    let im = im_order(&cs, &set).ok()?;
     let chk = check_im(&cs, &im, cfg.degree_policy.max_constraint_degree() as u32, true).ok()?;
     let air_name = p.air_groups[airgroup].airs[air].name.clone().unwrap_or_default();
     Some(Run { cs, im, chk, air_name, blowup_bits, im_pols_stages })

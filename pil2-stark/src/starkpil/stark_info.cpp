@@ -26,7 +26,12 @@ StarkInfo::StarkInfo(string file, bool final_, bool recursive_, bool verify_cons
 }
 
 void StarkInfo::load(json j)
-{   
+{
+    if (!j.contains("keyVersion") || j["keyVersion"] != STARK_INFO_KEY_VERSION) {
+        string got = j.contains("keyVersion") ? j["keyVersion"].dump() : "absent";
+        zklog.error("StarkInfo::load() keyVersion " + got + ", this prover reads " + to_string(STARK_INFO_KEY_VERSION) + ": regenerate the setup");
+        exitProcess();
+    }
     starkStruct.nBits = j["starkStruct"]["nBits"];
     starkStruct.nBitsExt = j["starkStruct"]["nBitsExt"];
     starkStruct.verificationHashType = j["starkStruct"]["verificationHashType"];

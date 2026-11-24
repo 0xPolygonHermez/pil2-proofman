@@ -120,6 +120,7 @@ TARGET_PILFFLONK_TEST := pilfflonkTest
 TARGET_PILFFLONK_GPU_TEST := pilfflonkGpuTest
 TARGET_STIR_TEST := stirTests
 TARGET_DEEP_TEST := deepTests
+TARGET_STARK_INFO_TEST := starkInfoTests
 TARGET_POLYNOMIAL_TEST := polynomialTests
 
 BUILD_DIR := ./build
@@ -223,7 +224,7 @@ else
 endif
 
 # gtest sources are not library sources
-GTEST_SRC_DIRS := ./src/starkpil/stir/tests/% ./src/starkpil/deep/tests/% ./src/rapidsnark/polynomial/tests/% ./src/starkpil/expressions/tests/%
+GTEST_SRC_DIRS := ./src/starkpil/tests/% ./src/starkpil/stir/tests/% ./src/starkpil/deep/tests/% ./src/rapidsnark/polynomial/tests/% ./src/starkpil/expressions/tests/%
 
 # Define source files based on platform
 ifeq ($(UNAME_S),Darwin)
@@ -277,6 +278,11 @@ DEPS_POLYNOMIAL_TEST := $(OBJS_POLYNOMIAL_TEST:.o=.d)
 SRCS_BINFILE := $(shell find ./src/binfile/main.cpp ./src/goldilocks/src ./src/starkpil/expressions/expressions_bin.cpp ./src/starkpil/expressions/expressions_info.cpp ./src/starkpil/merkleTree/merkleTreeGL.cpp ./src/starkpil/stark_info.cpp ./src/rapidsnark/logger.* ./src/rapidsnark/binfile_utils.* ./src/rapidsnark/binfile_writer.* ./src/utils/* -name "*.cpp" -or -name "*.c" -or -name "*.cc")
 OBJS_BINFILE := $(SRCS_BINFILE:%=$(BUILD_DIR)/%.o)
 DEPS_BINFILE := $(OBJS_BINFILE:.o=.d)
+
+# starkinfo loader tests (gtest): the binfile tool's sources around stark_info.cpp.
+SRCS_STARK_INFO_TEST := ./src/starkpil/tests/stark_info_test.cpp $(filter-out ./src/binfile/main.cpp,$(SRCS_BINFILE))
+OBJS_STARK_INFO_TEST := $(SRCS_STARK_INFO_TEST:%=$(BUILD_DIR)/%.o)
+DEPS_STARK_INFO_TEST := $(OBJS_STARK_INFO_TEST:.o=.d)
 
 SRCS_SETUP := $(shell find $(SETUP_DIRS) ! -path "./src/sm/*" ! -path "./src/main_sm/*" ! -path "./src/rapidsnark/polynomial/tests/*" -name "*.cpp")
 SRCS_SETUP += $(shell find src/XKCP -name "*.cpp")
@@ -349,6 +355,8 @@ stir_test: $(BUILD_DIR)/$(TARGET_STIR_TEST)
 
 deep_test: $(BUILD_DIR)/$(TARGET_DEEP_TEST)
 
+stark_info_test: $(BUILD_DIR)/$(TARGET_STARK_INFO_TEST)
+
 ifeq ($(UNAME_S),Darwin)
 polynomial_test:
 	$(error polynomial_test needs ffiasm's assembly field arithmetic, which macOS builds without)
@@ -407,6 +415,9 @@ $(BUILD_DIR)/$(TARGET_STIR_TEST): $(OBJS_STIR_TEST)
 
 $(BUILD_DIR)/$(TARGET_DEEP_TEST): $(OBJS_DEEP_TEST)
 	$(CXX) $(OBJS_DEEP_TEST) $(CXXFLAGS) -o $@ $(LDFLAGS) $(CFLAGS) $(CPPFLAGS) -lgtest -lgtest_main
+
+$(BUILD_DIR)/$(TARGET_STARK_INFO_TEST): $(OBJS_STARK_INFO_TEST)
+	$(CXX) $(OBJS_STARK_INFO_TEST) $(CXXFLAGS) -o $@ $(LDFLAGS) $(LDFLAGS_EXT) $(CFLAGS) $(CPPFLAGS) -lgtest -lgtest_main
 
 $(BUILD_DIR)/$(TARGET_POLYNOMIAL_TEST): $(OBJS_POLYNOMIAL_TEST)
 	$(CXX) $(OBJS_POLYNOMIAL_TEST) $(CXXFLAGS) -o $@ $(LDFLAGS) $(CFLAGS) $(CPPFLAGS) -lgtest -lgtest_main
@@ -471,7 +482,7 @@ $(SPPARK_GPU_OBJ): ./external/sppark/util/all_gpus.cpp
 	$(MKDIR_P) $(dir $@)
 	$(NVCC) -D__USE_CUDA__ $(NVCCFLAGS) $(CPPFLAGS) -x cu -c $< -o $@
 
-.PHONY: clean clean_cpu clean_gpu pilfflonk_test pilfflonk_gpu_test stir_test deep_test stir_test_gpu stir_bench_gpu polynomial_test interp_test_gpu
+.PHONY: clean clean_cpu clean_gpu pilfflonk_test pilfflonk_gpu_test stir_test deep_test stark_info_test stir_test_gpu stir_bench_gpu polynomial_test interp_test_gpu
 
 clean:
 	$(RM) -r $(BUILD_DIR) $(BUILD_DIR_GPU)
@@ -494,6 +505,7 @@ clean_gpu:
 -include $(DEPS_STIR_GPU)
 -include $(DEPS_STIR_TEST)
 -include $(DEPS_DEEP_TEST)
+-include $(DEPS_STARK_INFO_TEST)
 -include $(DEPS_POLYNOMIAL_TEST)
 
 MKDIR_P ?= mkdir -p

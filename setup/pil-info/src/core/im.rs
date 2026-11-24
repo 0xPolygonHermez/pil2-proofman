@@ -3,9 +3,12 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::core::from_pilout::{self, PiloutError};
-use crate::core::ir::{degree, degree_with, map_expr, visit, Boundary, ColType, ConstraintSystem, Expr, ExprId, Unresolved};
+use crate::core::ir::{
+    degree_of, degree_table, degree_table_with, map_expr, stage_table, visit, Boundary, ColType, ConstraintSystem,
+    Expr, ExprId, Unresolved,
+};
 
-/// The promoted expressions, in today's order (ascending expression id) until Task 9.
+/// The promoted expressions in canonical order: by stage, then by first appearance in the constraints.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ImChoice {
     pub exprs: Vec<ExprId>,
@@ -26,23 +29,50 @@ pub enum ImError {
     ImTooHigh { expr: u32, degree: u32, max: u32 },
     Unsorted,
     Duplicate { expr: u32 },
+    Unreached { expr: u32 },
     BadRef(PiloutError),
+    Unresolved(Unresolved),
 }
 
-pub fn im_order(set: &BTreeSet<ExprId>) -> Result<ImChoice, ImError> {
-    let im = ImChoice { exprs: set.iter().copied().collect() };
-    check_order(&im)?;
-    Ok(im)
+/// `set` by (stage, first appearance in the constraints' pre-order walk, each `Ref` entered once); one no
+/// constraint reaches is `Unreached`.
+pub fn im_order(cs: &ConstraintSystem, set: &BTreeSet<ExprId>) -> Result<ImChoice, ImError> {
+    let stage = stage_table(cs).map_err(ImError::Unresolved)?;
+    let mut seen = vec![false; cs.exprs.len()];
+    let mut first = BTreeMap::new();
+    let mut stack: Vec<&Expr> = cs.constraints.iter().rev().map(|c| &c.e).collect();
+    while let Some(e) = stack.pop() {
+        match e {
+            Expr::Add(a, b) | Expr::Sub(a, b) | Expr::Mul(a, b) => stack.extend([&**b, &**a]),
+            Expr::Neg(a) => stack.push(a),
+            Expr::Ref(id) if !seen.get(*id as usize).copied().unwrap_or(true) => {
+                seen[*id as usize] = true;
+                first.insert(*id, first.len());
+                stack.push(&cs.exprs[*id as usize]);
+            }
+            _ => {}
+        }
+    }
+    let key = |&id: &ExprId| match (stage.get(id as usize), first.get(&id)) {
+        (Some(s), Some(f)) => Ok((*s, *f, id)),
+        _ => Err(ImError::Unreached { expr: id }),
+    };
+    let mut keyed = set.iter().map(key).collect::<Result<Vec<_>, _>>()?;
+    keyed.sort();
+    Ok(ImChoice { exprs: keyed.into_iter().map(|k| k.2).collect() })
 }
 
-fn check_order(im: &ImChoice) -> Result<(), ImError> {
-    for w in im.exprs.windows(2) {
-        if w[0] == w[1] {
-            return Err(ImError::Duplicate { expr: w[0] });
-        }
-        if w[0] > w[1] {
-            return Err(ImError::Unsorted);
-        }
+/// `im` is duplicate-free and in `im_order`.
+fn check_order(cs: &ConstraintSystem, im: &ImChoice) -> Result<(), ImError> {
+    let set: BTreeSet<ExprId> = im.exprs.iter().copied().collect();
+    if set.len() != im.exprs.len() {
+        let mut dup = im.exprs.clone();
+        dup.sort();
+        let expr = dup.windows(2).find(|w| w[0] == w[1]).map_or(0, |w| w[0]);
+        return Err(ImError::Duplicate { expr });
+    }
+    if im_order(cs, &set)? != *im {
+        return Err(ImError::Unsorted);
     }
     Ok(())
 }
@@ -59,70 +89,62 @@ pub fn boundary_degree(b: &Boundary) -> u32 {
 
 /// `Ref` resolved; a promoted `Ref` becomes the im column. Inlines the DAG: for tests and references only.
 pub fn substitute(cs: &ConstraintSystem, im: &ImChoice, e: &Expr) -> Result<Expr, Unresolved> {
-    substitute_in(cs, im, e, &mut BTreeMap::new())
-}
-
-fn substitute_in(
-    cs: &ConstraintSystem,
-    im: &ImChoice,
-    e: &Expr,
-    memo: &mut BTreeMap<ExprId, Expr>,
-) -> Result<Expr, Unresolved> {
-    let mut err = None;
-    let out = map_expr(e, &mut |n| {
-        let Expr::Ref(id) = n else { return None };
-        let r = (|| {
-            if let Some(k) = im.exprs.iter().position(|x| x == id) {
-                return Ok(Expr::Col { col: ColType::Witness, commit_id: None, id: im_column_id(cs, k), offset: 0 });
-            }
-            if let Some(r) = memo.get(id) {
-                return Ok(r.clone());
-            }
-            memo.insert(*id, Expr::Const(0u32.into())); // a cycle (rejected at ingestion) reads as 0, as in `degree`
-            let t = cs.exprs.get(*id as usize).ok_or_else(|| Unresolved(format!("expression {id}")))?;
-            let r = substitute_in(cs, im, t, memo)?;
-            memo.insert(*id, r.clone());
-            Ok(r)
-        })();
-        Some(r.unwrap_or_else(|e| {
-            err.get_or_insert(e);
-            Expr::Const(0u32.into())
-        }))
-    });
-    err.map_or(Ok(out), Err)
-}
-
-/// Every `Ref` in range and the expressions acyclic, so `degree_with` reads no Ref as 0.
-fn check_refs(cs: &ConstraintSystem) -> Result<(), ImError> {
-    from_pilout::check_refs(&cs.exprs).map_err(ImError::BadRef)?;
-    for c in &cs.constraints {
-        let mut bad = None;
-        visit(&c.e, &mut |n| {
-            if let Expr::Ref(to) = n {
-                if *to as usize >= cs.exprs.len() {
-                    bad = Some(*to);
-                }
-            }
+    let col = |id: &ExprId| {
+        let k = im.exprs.iter().position(|x| x == id)?;
+        Some(Expr::Col { col: ColType::Witness, commit_id: None, id: im_column_id(cs, k), offset: 0 })
+    };
+    let sub = |e: &Expr, t: &[Expr]| {
+        let mut err = None;
+        let out = map_expr(e, &mut |n| {
+            let Expr::Ref(id) = n else { return None };
+            Some(col(id).or_else(|| t.get(*id as usize).cloned()).unwrap_or_else(|| {
+                err.get_or_insert(Unresolved(format!("expression {id}")));
+                Expr::Const(0u32.into())
+            }))
         });
-        if let Some(to) = bad {
-            return Err(ImError::BadRef(from_pilout::bad(to as usize, "constraint expression out of range")));
+        err.map_or(Ok(out), Err)
+    };
+    let mut t = Vec::with_capacity(cs.exprs.len());
+    for e in &cs.exprs {
+        let v = sub(e, &t)?;
+        t.push(v);
+    }
+    sub(e, &t)
+}
+
+/// Every `Ref` in range and pointing below its expression (the numbering `from_pilout` gives).
+fn check_refs(cs: &ConstraintSystem) -> Result<(), ImError> {
+    let bad = |what| ImError::BadRef(from_pilout::bad(cs.exprs.len(), what));
+    for (i, e) in cs.exprs.iter().enumerate() {
+        let mut ok = true;
+        visit(e, &mut |n| ok &= !matches!(n, Expr::Ref(t) if *t as usize >= i));
+        if !ok {
+            return Err(bad("an expression reference not below its expression"));
+        }
+    }
+    for c in &cs.constraints {
+        let mut ok = true;
+        visit(&c.e, &mut |n| ok &= !matches!(n, Expr::Ref(t) if *t as usize >= cs.exprs.len()));
+        if !ok {
+            return Err(bad("constraint expression out of range"));
         }
     }
     Ok(())
 }
 
 pub fn check_im(cs: &ConstraintSystem, im: &ImChoice, max_deg: u32, stark_min_q: bool) -> Result<Checked, ImError> {
-    check_order(im)?;
     check_refs(cs)?;
+    let plain = degree_table(cs);
     for &id in &im.exprs {
-        let promotable = cs.exprs.get(id as usize).is_some_and(|e| degree(cs, e) > 0);
-        if !promotable {
+        if plain.get(id as usize).is_none_or(|d| *d == 0) {
             return Err(ImError::NotPromotable { expr: id });
         }
     }
+    check_order(cs, im)?;
+    let read = degree_table_with(cs, &im.exprs);
     let mut root_degrees = Vec::with_capacity(cs.constraints.len());
     for (k, c) in cs.constraints.iter().enumerate() {
-        let d = degree_with(cs, &c.e, &im.exprs).saturating_add(boundary_degree(&c.boundary));
+        let d = degree_of(&c.e, &read).saturating_add(boundary_degree(&c.boundary));
         if d > max_deg {
             return Err(ImError::RootTooHigh { constraint: k, degree: d, max: max_deg });
         }
@@ -130,10 +152,8 @@ pub fn check_im(cs: &ConstraintSystem, im: &ImChoice, max_deg: u32, stark_min_q:
     }
     let mut im_degrees = Vec::with_capacity(im.exprs.len());
     for &id in &im.exprs {
-        // the body is not a Ref to itself, so only the OTHER promoted ones read as columns
-        let e = cs.exprs.get(id as usize);
-        debug_assert!(e.is_some(), "im expression {id} checked promotable above");
-        let d = e.map_or(0, |e| degree_with(cs, e, &im.exprs));
+        // the body, not `Ref(id)`: only the OTHER promoted ones read as columns
+        let d = degree_of(&cs.exprs[id as usize], &read);
         if d > max_deg {
             return Err(ImError::ImTooHigh { expr: id, degree: d, max: max_deg });
         }

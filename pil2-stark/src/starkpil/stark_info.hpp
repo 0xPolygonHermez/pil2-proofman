@@ -163,6 +163,9 @@ static constexpr uint64_t EVALS_HELPER_CHUNKS = 32;
 
 struct DeepTables;
 
+// The starkinfo keyVersion this prover reads (the setup's KEY_VERSION).
+static constexpr uint64_t STARK_INFO_KEY_VERSION = 2;
+
 class StarkInfo
 {
 public:
