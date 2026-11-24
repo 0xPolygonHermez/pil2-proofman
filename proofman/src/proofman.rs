@@ -704,6 +704,8 @@ pub struct ProofMan<F: PrimeField64> {
     wcm: Arc<WitnessManager<F>>,
     n_streams: usize,
     n_streams_non_recursive: usize,
+    /// Basic streams on each GPU.
+    n_basic_streams_per_gpu: usize,
     memory_handler: Arc<MemoryHandler<F>>,
     memory_handler_recursive_witness: Arc<MemoryHandlerRecursive<F>>,
     proofs: Arc<Vec<RwLock<Option<Proof<F>>>>>,
@@ -2926,6 +2928,7 @@ where
             recurser_fold_lock: Mutex::new(()),
             n_streams,
             n_streams_non_recursive,
+            n_basic_streams_per_gpu: n_streams_per_gpu as usize,
             max_num_threads,
             num_threads_per_witness,
             memory_handler,
@@ -3855,8 +3858,9 @@ where
         // Dequeue-ahead prefetch (witness-zone mode): the worker dequeues the next
         // ready basics from the scheduler ahead of dispatch. Only READY
         // (stored/computed) witnesses ever enter the scheduler queue, so a held
-        // instance is always launchable. Single basic stream only; on with the zone the planner armed.
-        let prefetch_dequeue_ahead = self.pctx.gpu && self.n_streams_non_recursive == 1 && self.pctx.prefetch_units > 0;
+        // instance is always launchable. One basic stream per GPU (each worker keeps its own held
+        // queue); on with the zone the planner armed.
+        let prefetch_dequeue_ahead = self.pctx.gpu && self.n_basic_streams_per_gpu == 1 && self.pctx.prefetch_units > 0;
         self.pctx.set_proof_tx(Some(self.proofs_tx.clone()));
 
         // Key-affinity recursive scheduler (GPU only; CPU has no streams and uses the witness
