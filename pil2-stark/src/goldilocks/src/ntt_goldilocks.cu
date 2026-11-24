@@ -825,6 +825,16 @@ void nttDitColMajorKernel(const uint32_t radix, const uint32_t lg_domain_size,
 
     gl64_t r[2][z_count];
 
+    // A fused load reads a zero-padded input, nonzero only where the low zero_lg bits of the position
+    // are clear, so the first zero_lg stages just copy each aligned group's base value over the group
+    // (x + w*0 and x - w*0 are x, bit for bit): load the base into both halves and start at that stage.
+    uint32_t zero_lg = 0;
+    if constexpr (qrev_load)
+        zero_lg = lg_domain_size - qrev_lgn;
+    else if constexpr (coset_load)
+        zero_lg = lg_blowup;
+    const uint32_t first_stage = zero_lg < iterations ? zero_lg : iterations;
+
     if (coalesced) {
         nttCoalescedLoad<z_count>(r[0], d_inout, idx0, stage + 1);
         nttCoalescedLoad<z_count>(r[1], d_inout, idx1, stage + 1);
@@ -833,8 +843,23 @@ void nttDitColMajorKernel(const uint32_t radix, const uint32_t lg_domain_size,
         nttTranspose<z_count>(r[1]);
     } else {
         uint32_t z_shift = inp_mask == 0 ? iterations : 0;
+        const uint32_t base0 = idx0 & ~((1u << first_stage) - 1u);
         #pragma unroll
         for (int z = 0; z < z_count; z++) {
+            if constexpr (qrev_load || coset_load) {
+                if (first_stage != 0) {
+                    gl64_t v;
+                    if constexpr (qrev_load)
+                        v = nttQRevLoadVal_(d_csrc, lg_domain_size, qrev_lgn, qrev_pN, qrev_spow,
+                                            base0 + ((uint32_t)z << z_shift), qrev_lgq);
+                    else
+                        v = nttCosetLoadVal_(d_csrc, d_cosetPows, lg_domain_size, lg_blowup,
+                                             base0 + ((uint32_t)z << z_shift));
+                    r[0][z] = v;
+                    r[1][z] = v;
+                    continue;
+                }
+            }
             if constexpr (qrev_load) {
                 r[0][z] = nttQRevLoadVal_(d_csrc, lg_domain_size, qrev_lgn, qrev_pN, qrev_spow,
                                           idx0 + ((uint32_t)z << z_shift), qrev_lgq);
@@ -882,15 +907,17 @@ void nttDitColMajorKernel(const uint32_t radix, const uint32_t lg_domain_size,
         }
     }
 
-    #pragma unroll
-    for (int z = 0; z < z_count; z++) {
-        gl64_t t = r[1][z];
-        r[1][z] = r[0][z] - t;
-        r[0][z] = r[0][z] + t;
+    if (first_stage == 0) {
+        #pragma unroll
+        for (int z = 0; z < z_count; z++) {
+            gl64_t t = r[1][z];
+            r[1][z] = r[0][z] - t;
+            r[0][z] = r[0][z] + t;
+        }
     }
 
     #pragma unroll 1
-    for (uint32_t s = 1; s < min(iterations, 6u); s++) {
+    for (uint32_t s = first_stage > 1 ? first_stage : 1; s < min(iterations, 6u); s++) {
         uint32_t laneMask = 1 << (s - 1);
         uint32_t thrdMask = (1 << s) - 1;
         uint32_t rank = threadIdx.x & thrdMask;
@@ -912,7 +939,7 @@ void nttDitColMajorKernel(const uint32_t radix, const uint32_t lg_domain_size,
     }
 
     #pragma unroll 1
-    for (uint32_t s = 6; s < iterations; s++) {
+    for (uint32_t s = first_stage > 6 ? first_stage : 6; s < iterations; s++) {
         uint32_t laneMask = 1 << (s - 1);
         uint32_t thrdMask = (1 << s) - 1;
         uint32_t rank = threadIdx.x & thrdMask;

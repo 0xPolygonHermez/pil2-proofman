@@ -51,6 +51,109 @@ TEST(GOLDILOCKS_TEST, ntt_gpu_intt_roundtrip)
     NTTGoldilocksGPU::freeConstants();
 }
 
+// ColMajor engine against the CPU reference, column by column. NTT/INTT at the pass-split boundary
+// (lg 17-19); LDE over blowups 2^1..2^14, which sets how many leading stages of the fused first launch
+// see a zero-padded input (fewer than, equal to and more than its radix), for one-, two- and three-pass
+// extended sizes.
+TEST(GOLDILOCKS_TEST, ntt_gpu_colmajor_shapes)
+{
+    uint32_t gpu_id = 0;
+    cudaGetDevice((int*)&gpu_id);
+    NTTGoldilocksGPU gpu_ntt(24, 1, &gpu_id);
+    cudaStream_t stream;
+    CHECKCUDAERR(cudaStreamCreate(&stream));
+    TimerGPU timer(stream);
+
+    auto fill = [](std::vector<Goldilocks::Element> &v, uint64_t seed) {
+        uint64_t x = 0x9E3779B97F4A7C15ULL + seed;
+        for (auto &e : v) {
+            x = x * 6364136223846793005ULL + 1442695040888963407ULL;
+            e = Goldilocks::fromU64(x);
+        }
+    };
+    std::vector<Goldilocks::Element> h_out;
+    auto check = [&](const gl64_t *d, const std::vector<Goldilocks::Element> &ref, const char *what) {
+        CHECKCUDAERR(cudaStreamSynchronize(stream));
+        h_out.resize(ref.size());
+        CHECKCUDAERR(cudaMemcpy(h_out.data(), d, ref.size() * sizeof(Goldilocks::Element), cudaMemcpyDeviceToHost));
+        for (uint64_t i = 0; i < ref.size(); i++)
+            ASSERT_EQ(Goldilocks::toU64(h_out[i]), Goldilocks::toU64(ref[i])) << what << " mismatch at i=" << i;
+    };
+
+    // Column-major data, col c at [c * N, (c + 1) * N).
+    for (uint64_t n_bits : {17, 18, 19}) {
+        for (uint64_t nCols : {3, 37}) {
+            SCOPED_TRACE("n_bits=" + std::to_string(n_bits) + " nCols=" + std::to_string(nCols));
+            const uint64_t N = 1ULL << n_bits;
+            std::vector<Goldilocks::Element> h_in(N * nCols), h_ntt(N * nCols), h_intt(N * nCols);
+            fill(h_in, n_bits * 131 + nCols);
+            NTT_Goldilocks cpu_ntt(N);
+            for (uint64_t c = 0; c < nCols; c++) {
+                cpu_ntt.NTT(&h_ntt[c * N], &h_in[c * N], N);
+                cpu_ntt.INTT(&h_intt[c * N], &h_in[c * N], N);
+            }
+            gl64_t *d_a;
+            CHECKCUDAERR(cudaMalloc((void**)&d_a, N * nCols * sizeof(gl64_t)));
+            CHECKCUDAERR(cudaMemcpy(d_a, h_in.data(), N * nCols * sizeof(gl64_t), cudaMemcpyHostToDevice));
+            gpu_ntt.nttColMajor(d_a, n_bits, nCols, stream);
+            check(d_a, h_ntt, "NTT");
+            CHECKCUDAERR(cudaMemcpy(d_a, h_in.data(), N * nCols * sizeof(gl64_t), cudaMemcpyHostToDevice));
+            gpu_ntt.inttColMajor(d_a, n_bits, nCols, stream);
+            check(d_a, h_intt, "INTT");
+            CHECKCUDAERR(cudaFree(d_a));
+        }
+    }
+
+    // LDE checked through the inverse transforms (the DIF kernels, validated above): with c = INTT_N(x),
+    // INTT_NExt(LDE(x)) must be c_j * shift^j for j < N and zero above.
+    struct Shape { uint64_t n_bits, n_bits_ext, nCols; };
+    const Shape shapes[] = {
+        {3, 10, 3},   {4, 10, 3},   {9, 10, 3},                 // one pass
+        {12, 13, 5},  {6, 12, 5},   {10, 18, 3},  {17, 19, 37}, // two passes
+        {19, 20, 3},  {19, 21, 3},  {18, 22, 5},  {6, 20, 3},   // three passes
+        {21, 22, 3},  {22, 23, 2},
+    };
+    for (const Shape &sh : shapes) {
+        SCOPED_TRACE("LDE " + std::to_string(sh.n_bits) + "->" + std::to_string(sh.n_bits_ext) +
+                     " nCols=" + std::to_string(sh.nCols));
+        const uint64_t N = 1ULL << sh.n_bits, NExt = 1ULL << sh.n_bits_ext, nCols = sh.nCols;
+        std::vector<Goldilocks::Element> h_in(N * nCols), h_coef(N * nCols), h_q(NExt * nCols);
+        fill(h_in, sh.n_bits * 1009 + sh.n_bits_ext * 31 + nCols);
+        gl64_t *d_a, *d_ext;
+        CHECKCUDAERR(cudaMalloc((void**)&d_a,   N    * nCols * sizeof(gl64_t)));
+        CHECKCUDAERR(cudaMalloc((void**)&d_ext, NExt * nCols * sizeof(gl64_t)));
+        CHECKCUDAERR(cudaMemcpy(d_a, h_in.data(), N * nCols * sizeof(gl64_t), cudaMemcpyHostToDevice));
+        gpu_ntt.LDE(d_ext, 0, d_a, 0, sh.n_bits, sh.n_bits_ext, nCols, timer, stream);
+        CHECKCUDAERR(cudaStreamSynchronize(stream));
+        if (getenv("NTT_TEST_RAW_HASH") != nullptr) {
+            // Raw device words (not canonicalized), to compare two builds bit for bit.
+            CHECKCUDAERR(cudaMemcpy(h_q.data(), d_ext, NExt * nCols * sizeof(gl64_t), cudaMemcpyDeviceToHost));
+            uint64_t h = 1469598103934665603ULL;
+            const uint64_t *w = (const uint64_t *)h_q.data();
+            for (uint64_t i = 0; i < NExt * nCols; i++) h = (h ^ w[i]) * 1099511628211ULL;
+            printf("RAWHASH %lu %lu %lu %016lx\n", sh.n_bits, sh.n_bits_ext, nCols, h);
+        }
+        gpu_ntt.inttColMajor(d_ext, sh.n_bits_ext, nCols, stream);
+        CHECKCUDAERR(cudaMemcpy(d_a, h_in.data(), N * nCols * sizeof(gl64_t), cudaMemcpyHostToDevice));
+        gpu_ntt.inttColMajor(d_a, sh.n_bits, nCols, stream);
+        CHECKCUDAERR(cudaStreamSynchronize(stream));
+        CHECKCUDAERR(cudaMemcpy(h_q.data(), d_ext, NExt * nCols * sizeof(gl64_t), cudaMemcpyDeviceToHost));
+        CHECKCUDAERR(cudaMemcpy(h_coef.data(), d_a, N * nCols * sizeof(gl64_t), cudaMemcpyDeviceToHost));
+        for (uint64_t c = 0; c < nCols; c++) {
+            Goldilocks::Element pw = Goldilocks::one();
+            for (uint64_t j = 0; j < NExt; j++) {
+                const uint64_t want = j < N ? Goldilocks::toU64(h_coef[c * N + j] * pw) : 0;
+                ASSERT_EQ(Goldilocks::toU64(h_q[c * NExt + j]), want) << "LDE coefficient mismatch at col=" << c << " j=" << j;
+                if (j < N) pw = pw * Goldilocks::shift();
+            }
+        }
+        CHECKCUDAERR(cudaFree(d_a));
+        CHECKCUDAERR(cudaFree(d_ext));
+    }
+    CHECKCUDAERR(cudaStreamDestroy(stream));
+    NTTGoldilocksGPU::freeConstants();
+}
+
 // Round-trip test: GPU NTT → GPU INTT must recover the original input.
 TEST(GOLDILOCKS_TEST, ntt_gpu_ntt_intt_roundtrip)
 {
