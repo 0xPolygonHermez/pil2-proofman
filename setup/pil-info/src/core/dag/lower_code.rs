@@ -30,7 +30,8 @@ pub struct LowerCtx {
     challenges: BTreeMap<(u32, u32), usize>,
 }
 
-/// A resolved leaf: what lowering and evaluation read.
+/// A resolved leaf: what lowering and evaluation read; `Zi` is the inverse zerofier of a boundary
+/// (pilfflonk's `boundaryId`; 0, everyRow, for the STARK).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Operand {
     Tmp(u32),
@@ -41,7 +42,7 @@ pub enum Operand {
     ProofValue { id: u32, stage: u32 },
     AirValue { id: u32, stage: u32 },
     AirgroupValue { id: u32, stage: u32 },
-    Zi,
+    Zi { boundary: u32 },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -159,10 +160,14 @@ impl LowerCtx {
     }
 }
 
-/// How the roots combine into the quotient; piece 3 adds Shplonk.
+/// How the roots combine into the quotient.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Fold {
+pub enum Fold<'a> {
     Stark,
+    /// pilfflonk's: each non-everyRow root times its boundary's `Zi` (`boundaries` in `boundaryId` order).
+    Shplonk {
+        boundaries: &'a [DagBoundary],
+    },
 }
 
 /// The root nodes in order; a STARK root must be everyRow.
@@ -180,9 +185,17 @@ pub fn stark_roots(dag: &ConstraintDag) -> Result<Vec<u32>, DagError> {
 }
 
 /// One instruction per operation node in node order, then the fold (`core::fold::fold_roots`) times `Zi`.
-pub fn lower_to_code(dag: &ConstraintDag, ctx: &LowerCtx, fold: Fold) -> Result<VerifierCode, DagError> {
-    let Fold::Stark = fold;
+/// Shplonk first multiplies each non-everyRow root by its boundary's `Zi`.
+pub fn lower_to_code(dag: &ConstraintDag, ctx: &LowerCtx, fold: Fold<'_>) -> Result<VerifierCode, DagError> {
     let ext = ctx.tables().ext_dim;
+    if dag.ext_dim as usize != ext {
+        return Err(DagError::NonCanonical { node: 0, why: "the DAG's extDim is not the lowering context's" });
+    }
+    let (roots, every_row) = match fold {
+        Fold::Stark => (stark_roots(dag)?.into_iter().map(|n| (n, None)).collect(), 0),
+        Fold::Shplonk { boundaries } => shplonk_roots(dag, boundaries)?,
+    };
+    let zi = |boundary: u32| Src { operand: Operand::Zi { boundary }, dim: ext };
     let mut code: Vec<Instr> = Vec::new();
     let mut val: Vec<Src> = Vec::with_capacity(dag.nodes.len());
     for (i, n) in dag.nodes.iter().enumerate() {
@@ -202,22 +215,47 @@ pub fn lower_to_code(dag: &ConstraintDag, ctx: &LowerCtx, fold: Fold) -> Result<
         val.push(emit(&mut code, op, src));
     }
     let vc = Src { operand: ctx.vc_operand()?, dim: ext };
-    let mut roots = Vec::new();
-    for node in stark_roots(dag)? {
+    let mut folded = Vec::with_capacity(roots.len());
+    for (node, boundary) in roots {
         let v = val.get(node as usize).cloned().ok_or(DagError::ForwardRef { node })?;
-        // a leaf root is copied into a temporary first, as the old code did
-        roots.push(if matches!(v.operand, Operand::Tmp(_)) { v } else { emit(&mut code, CodeOp::Copy, vec![v]) });
+        folded.push(match boundary {
+            Some(b) => emit(&mut code, CodeOp::Mul, vec![v, zi(b)]),
+            None if matches!(v.operand, Operand::Tmp(_)) => v,
+            // a leaf root is copied into a temporary first, as the old code did
+            None => emit(&mut code, CodeOp::Copy, vec![v]),
+        });
     }
     let code = RefCell::new(code);
     let acc = fold_roots(
-        roots,
+        folded,
         |acc| emit(&mut code.borrow_mut(), CodeOp::Mul, vec![vc.clone(), acc]),
         |acc, c| emit(&mut code.borrow_mut(), CodeOp::Add, vec![acc, c]),
     )
     .ok_or(DagError::Empty)?;
     let mut code = code.into_inner();
-    emit(&mut code, CodeOp::Mul, vec![acc, Src { operand: Operand::Zi, dim: ext }]);
+    emit(&mut code, CodeOp::Mul, vec![acc, zi(every_row)]);
     Ok(VerifierCode { tmp_used: code.len(), code })
+}
+
+/// Each root with its `boundaries` index unless everyRow, and everyRow's index (the final `Zi`).
+type FoldRoots = (Vec<(u32, Option<u32>)>, u32);
+
+fn shplonk_roots(dag: &ConstraintDag, boundaries: &[DagBoundary]) -> Result<FoldRoots, DagError> {
+    let first = dag.roots.first().ok_or(DagError::Empty)?;
+    let id = |node: u32, b: &DagBoundary| match boundaries.iter().position(|x| x == b) {
+        Some(k) => Ok(k as u32),
+        None => Err(DagError::Unresolved { node, what: format!("boundary {b:?}") }),
+    };
+    let every_row = id(first.node, &DagBoundary::EveryRow)?;
+    let roots = dag
+        .roots
+        .iter()
+        .map(|r| match r.boundary {
+            DagBoundary::EveryRow => Ok((r.node, None)),
+            ref b => Ok((r.node, Some(id(r.node, b)?))),
+        })
+        .collect::<Result<_, DagError>>()?;
+    Ok((roots, every_row))
 }
 
 /// Appends `tmp[k] = op(src)` with `k` the next temporary; returns it as an operand.

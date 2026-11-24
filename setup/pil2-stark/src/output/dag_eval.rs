@@ -132,7 +132,7 @@ fn operand(o: &Operand, ctx: &LowerCtx, inp: &GlInputs) -> Result<E3> {
         Operand::AirgroupValue { id, .. } => {
             value(&t.airgroup_values_stage, &inp.airgroup_values, id, "airgroup value")?
         }
-        Operand::Zi => inp.zi,
+        Operand::Zi { .. } => inp.zi,
     })
 }
 
@@ -180,7 +180,7 @@ pub fn eval_code(code: &[CodeOperation], ctx: &LowerCtx, inp: &GlInputs) -> Resu
                     OpType::Proofvalue => Operand::ProofValue { id: s.id as u32, stage: 0 },
                     OpType::Airvalue => Operand::AirValue { id: s.id as u32, stage: 0 },
                     OpType::Airgroupvalue => Operand::AirgroupValue { id: s.id as u32, stage: 0 },
-                    OpType::Zi => Operand::Zi,
+                    OpType::Zi => Operand::Zi { boundary: 0 },
                     t => bail!("instruction {k} reads a {}", t.to_str()),
                 };
                 operand(&o, ctx, inp)

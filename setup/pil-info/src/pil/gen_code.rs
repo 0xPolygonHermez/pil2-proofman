@@ -6,7 +6,10 @@
 //! - Verifier evaluations
 //! - Hint computations
 
-use crate::core::dag::format::ConstraintDag;
+use crate::core::dag::format::{ConstraintDag, DagBoundary};
+use crate::core::dag::lower_code::{lower_to_code, Fold, LowerCtx, LowerTables};
+use crate::core::ir::{ColRef, ColType};
+use crate::emit::verifier::expression_code;
 use crate::cfg::{FieldCfg, Opening};
 use crate::error::{PilInfoError, Result};
 use crate::pil::cse;
@@ -298,6 +301,53 @@ pub struct CodeGenParams {
     pub opening: Opening,
 }
 
+/// The lowering context of the old passes' `symbols` and `ev_map`, over `field`; a challenge's index is its symbol id.
+pub fn lower_ctx_from_pil(symbols: &[SymbolInfo], ev_map: &[EvMapRef], field: &FieldCfg) -> Result<LowerCtx> {
+    let err = |what: String| PilInfoError::ConstraintDag(what);
+    let ev_map = ev_map
+        .iter()
+        .map(|e| {
+            let (col, commit_id) = match e.entry_type.as_str() {
+                "cm" => (ColType::Witness, None),
+                "const" => (ColType::Fixed, None),
+                "custom" => (
+                    ColType::Custom,
+                    Some(e.commit_id.ok_or_else(|| err("a custom evaluation without commit".into()))? as u32),
+                ),
+                t => return Err(PilInfoError::UnknownEvaluation(t.to_string())),
+            };
+            Ok(ColRef { col, commit_id, id: e.id as u32, offset: e.prime })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    // the symbols of type `ty`, placed at their id; each id exactly once
+    let by_id = |ty: &str| -> Result<Vec<&SymbolInfo>> {
+        let of: Vec<&SymbolInfo> = symbols.iter().filter(|s| s.sym_type == ty).collect();
+        let mut table: Vec<Option<&SymbolInfo>> = vec![None; of.len()];
+        for s in of {
+            match s.id.and_then(|id| table.get_mut(id)) {
+                Some(slot @ None) => *slot = Some(s),
+                _ => return Err(err(format!("{ty} `{}` has a missing, repeated or out-of-range id", s.name))),
+            }
+        }
+        Ok(table.into_iter().flatten().collect())
+    };
+    let stage = |s: &&SymbolInfo| s.stage.unwrap_or(0) as u32;
+    let stages = |ty: &str| by_id(ty).map(|v| v.iter().map(stage).collect());
+    let challenges = by_id("challenge")?;
+    let vc = challenges.iter().position(|c| c.name == "std_vc").ok_or_else(|| err("no std_vc challenge".into()))?;
+    let t = LowerTables {
+        ev_map,
+        challenges: challenges.iter().map(|c| (stage(c), c.stage_id.unwrap_or(0) as u32)).collect(),
+        vc,
+        n_publics: by_id("public")?.len() as u32,
+        air_values_stage: stages("airvalue")?,
+        proof_values_stage: stages("proofvalue")?,
+        airgroup_values_stage: stages("airgroupvalue")?,
+        ext_dim: field.ext_dim(),
+    };
+    LowerCtx::new(t).map_err(|e| err(format!("{e:?}")))
+}
+
 // ---------------------------------------------------------------------------
 // generate_pil_code
 // ---------------------------------------------------------------------------
@@ -306,6 +356,7 @@ pub struct CodeGenParams {
 ///
 /// Mirrors JS `generatePilCode(res, symbols, constraints, expressions, hints)`. The DEEP challenges and
 /// the batching size are not the generator's: the STARK takes them from the core's layout and openings.
+/// `shplonk` (pilfflonk's DAG and its boundaries in `boundaryId` order) is required exactly for `Opening::Shplonk`.
 pub fn generate_pil_code(
     params: &CodeGenParams,
     symbols: &[SymbolInfo],
@@ -313,13 +364,14 @@ pub fn generate_pil_code(
     expressions: &mut Vec<Expression>,
     hints: &[HintInfo],
     print_ctx: Option<&PrintCtx>,
+    shplonk: Option<(&ConstraintDag, &[DagBoundary])>,
 ) -> Result<PilCodeResult> {
     let mut ev_map_items: Vec<EvMapRef> = Vec::new();
 
     // Pre-compute witness symbol index for O(1) lookups in fix_commit_pol
     let witness_index = build_witness_index(symbols, params.air_id, params.airgroup_id);
 
-    // TODO(piece 3): qVerifier from `lower_to_code`, delete this generator
+    // TODO(piece 3 G): keep only its evMap (`build_ev_map`); the STARK qVerifier leaves with it
     let mut q_verifier =
         generate_constraint_polynomial_verifier_code(params, symbols, expressions, &mut ev_map_items, &witness_index)?;
 
@@ -329,11 +381,22 @@ pub fn generate_pil_code(
 
     let constraints_code = generate_constraints_debug_code(params, symbols, constraints, expressions, &witness_index)?;
 
-    // The verifier entry only: it feeds the Rust/C++ verifiers and the circom recursion circuit,
-    // none of which is the prover's cExp.
-    let result = cse::cse_code(&q_verifier.code);
-    tracing::debug!("CSE qVerifier: {} -> {} ops", q_verifier.code.len(), result.code.len());
-    q_verifier.code = result.code;
+    match (params.opening, shplonk) {
+        (Opening::Shplonk, Some((dag, boundaries))) => {
+            let ctx = lower_ctx_from_pil(symbols, &ev_map_items, &params.field)?;
+            let code = lower_to_code(dag, &ctx, Fold::Shplonk { boundaries })
+                .map_err(|e| PilInfoError::ConstraintDag(format!("{e:?}")))?;
+            q_verifier = ExpressionCodeEntry { exp_id: params.c_exp_id, ..expression_code(&code) };
+        }
+        (Opening::Deep, None) => {
+            // The verifier entry only: it feeds the Rust/C++ verifiers and the circom recursion circuit,
+            // none of which is the prover's cExp.
+            let result = cse::cse_code(&q_verifier.code);
+            tracing::debug!("CSE qVerifier: {} -> {} ops", q_verifier.code.len(), result.code.len());
+            q_verifier.code = result.code;
+        }
+        _ => return Err(PilInfoError::ConstraintDag("a constraint DAG is given exactly for SHPLONK".into())),
+    }
 
     Ok(PilCodeResult {
         expressions_info: ExpressionsInfo { hints_info, expressions_code, constraints: constraints_code },

@@ -425,6 +425,42 @@ fn check_limits(core: &PiloutCore, a: &pc::Air) -> Result<(), PiloutError> {
     Ok(())
 }
 
+fn tables_of<'a>(core: &'a PiloutCore, agvs: &[AirGroupValue], a: &'a pc::Air) -> Tables<'a> {
+    Tables {
+        stage_widths: &a.stage_widths,
+        custom_commits: &a.custom_commits,
+        n_fixed: a.n_fixed_cols,
+        n_air_values: a.air_values.len(),
+        n_airgroup_values: agvs.len(),
+        num_challenges: &core.num_challenges,
+        n_publics: core.num_public_values,
+        num_proof_values: &core.num_proof_values,
+    }
+}
+
+/// `a`'s expressions lowered in pilout order, and `new[i]`: the canonical `ExprId` of pilout expression `i`.
+fn numbered_exprs(a: &pc::Air, tables: &Tables) -> Result<(Vec<Expr>, Vec<u32>), PiloutError> {
+    let exprs =
+        a.expressions.iter().enumerate().map(|(i, e)| lower_expression(e, i, tables)).collect::<Result<Vec<_>, _>>()?;
+    let new = canonical_numbering(&exprs)?;
+    Ok((exprs, new))
+}
+
+/// The `ExprId` `from_pilout` gives each pilout expression of air (`airgroup`, `air`), by pilout index.
+pub fn pilout_expr_ids(
+    pilout: &pb::PilOut,
+    airgroup: usize,
+    air: usize,
+) -> Result<Vec<crate::core::ir::ExprId>, PiloutError> {
+    let unknown = PiloutError::UnknownAir { airgroup, air };
+    let core = PiloutCore::globals_of(pilout)?;
+    let ag = pilout.air_groups.get(airgroup).ok_or(unknown.clone())?;
+    let a = pc::air_of(ag.airs.get(air).ok_or(unknown)?, airgroup, air)?;
+    let agvs = pc::air_group_values(ag)?;
+    check_limits(&core, &a)?;
+    Ok(numbered_exprs(&a, &tables_of(&core, &agvs, &a))?.1)
+}
+
 /// Lowers `a` of airgroup values `agvs`; of `core` only the pilout-wide tables, symbols and hints are read.
 fn lower(
     core: &PiloutCore,
@@ -441,27 +477,12 @@ fn lower(
     if a.constraints.is_empty() {
         return Err(PiloutError::NoConstraints { airgroup, air });
     }
-    let tables = Tables {
-        stage_widths: &a.stage_widths,
-        custom_commits: &a.custom_commits,
-        n_fixed: a.n_fixed_cols,
-        n_air_values: a.air_values.len(),
-        n_airgroup_values: agvs.len(),
-        num_challenges: &core.num_challenges,
-        n_publics: core.num_public_values,
-        num_proof_values: &core.num_proof_values,
-    };
+    let tables = tables_of(core, agvs, a);
     let rows = a.num_rows;
     if !rows.is_power_of_two() {
         return Err(PiloutError::NumRowsNotPowerOfTwo { airgroup, air, rows });
     }
-    let exprs = a
-        .expressions
-        .iter()
-        .enumerate()
-        .map(|(i, e)| lower_expression(e, i, &tables))
-        .collect::<Result<Vec<_>, _>>()?;
-    let new = canonical_numbering(&exprs)?;
+    let (exprs, new) = numbered_exprs(a, &tables)?;
     let mut numbered = vec![Expr::Const(BigUint::default()); exprs.len()];
     exprs.iter().zip(&new).for_each(|(e, &k)| numbered[k as usize] = renumber(e, &new));
     let exprs = numbered;

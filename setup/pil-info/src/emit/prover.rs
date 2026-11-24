@@ -93,7 +93,7 @@ pub fn emit_prover(
         field: cs.field.clone(),
         opening: cs.opening,
     };
-    let code = generate_pil_code(&params, &maps.symbols(), &constraints, &mut arena, &hints, Some(&ctx))?;
+    let code = generate_pil_code(&params, &maps.symbols(), &constraints, &mut arena, &hints, Some(&ctx), None)?;
     same_ev_map(&code, ops)?;
     let constraint_stages = constraints.iter().map(|c| c.stage.unwrap_or(0)).collect();
     Ok(ProverCode { code, im_pols_info, constraint_stages, n_expressions: arena.len() })

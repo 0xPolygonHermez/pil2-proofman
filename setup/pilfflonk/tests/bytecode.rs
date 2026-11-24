@@ -1494,3 +1494,42 @@ fn the_cpp_fixture_is_what_the_encoder_writes() {
     assert!(fixture == written, "{BYTECODE_FIXTURE} is not what the encoder writes: regenerate it (see above)");
     assert_eq!(Bytecode::read(path).unwrap(), sample());
 }
+
+/// The qVerifier of pilfflonk's fixtures is the lowered constraint DAG (`Fold::Shplonk`), as in
+/// `pil-info`'s `tests/constraint_dag.rs`, on the real Fibonacci and sum bus.
+#[test]
+#[ignore = "needs PIL2C_EXEC"]
+fn the_q_verifiers_of_the_fixtures_are_the_lowered_dag() {
+    use pil_info::core::dag::build::build_dag;
+    use pil_info::core::dag::format::DagBoundary;
+    use pil_info::core::dag::lower_code::{lower_to_code, Fold};
+    use pil_info::core::from_pilout::from_pilout;
+    use pil_info::core::im::im_order;
+    use pil_info::emit::verifier::expression_code;
+    use pil_info::pil::gen_code::lower_ctx_from_pil;
+    use pil_info::search::im::search_im;
+
+    for pil in ["fibonacci/fibonacci.pil", "sum_bus/sum_bus.pil"] {
+        let pilout = compile_bn128(&format!("pilfflonk/tests/fixtures/{pil}"));
+        let result = run_bn128(&pilout);
+        let cfg = pilfflonk_setup::passes::cfg(pilfflonk_setup::command::DEFAULT_MAX_CONSTRAINT_DEGREE).unwrap();
+        let cs = from_pilout(&pilout, 0, 0, &cfg.field, cfg.opening).unwrap();
+        let im = im_order(&cs, &search_im(&cs, &cfg.degree_policy, 1).unwrap()).unwrap();
+        let dag = build_dag(&cs, &im).unwrap();
+        let boundaries: Vec<DagBoundary> = result
+            .boundaries
+            .iter()
+            .map(|b| match b.name.as_str() {
+                "everyRow" => DagBoundary::EveryRow,
+                "firstRow" => DagBoundary::FirstRow,
+                "lastRow" => DagBoundary::LastRow,
+                _ => DagBoundary::EveryFrame { min: b.offset_min.unwrap() as i64, max: b.offset_max.unwrap() as i64 },
+            })
+            .collect();
+        let ctx = lower_ctx_from_pil(&result.setup.symbols, &result.pil_code.ev_map, &cfg.field).unwrap();
+        let want = expression_code(&lower_to_code(&dag, &ctx, Fold::Shplonk { boundaries: &boundaries }).unwrap());
+        let got = &result.pil_code.verifier_info.q_verifier;
+        assert_eq!(got.tmp_used, want.tmp_used, "{pil}");
+        assert_eq!(serde_json::to_value(&got.code).unwrap(), serde_json::to_value(&want.code).unwrap(), "{pil}");
+    }
+}

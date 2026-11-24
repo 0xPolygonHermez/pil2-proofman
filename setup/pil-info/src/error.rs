@@ -59,6 +59,10 @@ pub enum PilInfoError {
     #[error("op {op} uses temporary {id} of dimension {dim}, neither 1 nor the extension's {ext_dim}")]
     TmpDimension { op: usize, id: usize, dim: u64, ext_dim: u64 },
 
+    /// Building or lowering pilfflonk's constraint DAG (the qVerifier's source) failed.
+    #[error("the constraint DAG: {0}")]
+    ConstraintDag(String),
+
     // --- The code types ------------------------------------------------------------------------
     #[error("unknown opType `{0}`")]
     UnknownOpType(String),

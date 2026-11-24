@@ -61,8 +61,8 @@ fn code_ref(s: &Src) -> CodeRef {
             r.stage = Some(stage as usize);
             ("airgroupvalue", id)
         }
-        Operand::Zi => {
-            r.boundary_id = Some(0);
+        Operand::Zi { boundary } => {
+            r.boundary_id = Some(boundary as usize);
             ("Zi", 0)
         }
     };
