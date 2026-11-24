@@ -8,7 +8,7 @@ use common::*;
 use pil2_pilout::pilout::{self as pb, operand, SymbolType};
 use pil_info::core::from_pilout::from_pilout;
 use pil_info::core::im::{check_im, ImChoice};
-use pil_info::core::ir::{Boundary, ColRef, ColType, ConstraintSystem, Expr};
+use pil_info::core::ir::{Boundary, ColRef, ColType, ConstraintSystem, Expr, Hint, HintField, HintValue};
 use pil_info::core::layout::{layout, Layout, LayoutParams};
 use pil_info::core::openings::{fri_batch_size, openings, EvEntry, Openings, OpeningsError};
 use pil_info::core::project::{stark_info, StarkInfoCore, StarkParams, VerifierView};
@@ -31,7 +31,15 @@ fn ev(col: ColType, commit_id: Option<u32>, id: u32, offset: i64, opening_pos: u
 }
 
 fn ops_of(cs: &ConstraintSystem, im: &[u32], q_deg: u32) -> Openings {
-    openings(cs, &choice(im), &lay_of(cs, im, q_deg), &[]).unwrap()
+    openings(cs, &choice(im), &lay_of(cs, im, q_deg)).unwrap()
+}
+
+/// `cs` with one hint whose fields are `exprs`.
+fn hinted(cs: &ConstraintSystem, exprs: &[Expr]) -> ConstraintSystem {
+    let fields = exprs.iter().map(|e| HintField { name: None, value: HintValue::Expr(e.clone()) }).collect();
+    let mut cs = cs.clone();
+    cs.hints.push(Hint { name: "h".into(), fields });
+    cs
 }
 
 fn sections(l: &Layout) -> BTreeMap<String, u32> {
@@ -182,7 +190,8 @@ fn ev_map_sort_is_type_then_id_then_offset() {
         ),
     ];
     let mut p = pilout(&["a", "b"], &["F0", "F1"], e, vec![every_row(4)]);
-    p.air_groups[0].airs[0].custom_commits = vec![pb::CustomCommit { stage_widths: vec![1], ..Default::default() }];
+    p.air_groups[0].airs[0].custom_commits =
+        vec![pb::CustomCommit { name: Some("rom".into()), stage_widths: vec![1], ..Default::default() }];
     p.symbols.push(pb::Symbol { commit_id: Some(0), ..symbol("rom", SymbolType::CustomCol, 0, 0) });
     let cs = cs_of(&p);
     let o = ops_of(&cs, &[], 0);
@@ -233,10 +242,11 @@ fn hint_expressions_add_points() {
     e.push(mul(witness(1, -7), witness(2, 0))); // 4: only a hint reads it
     let cs = system(e, &[1]);
     let l = lay_of(&cs, &[], 0);
-    let plain = openings(&cs, &choice(&[]), &l, &[]).unwrap();
+    let plain = openings(&cs, &choice(&[]), &l).unwrap();
+    // only the expressions a hint names add points, as the prover keeps only those
     let col = Expr::Col { col: ColType::Witness, commit_id: None, id: 0, offset: 5 };
-    let o = openings(&cs, &choice(&[]), &l, &[col, Expr::Ref(4)]).unwrap();
-    assert_eq!(o.opening_points, [-7, 0, 5]);
+    let o = openings(&hinted(&cs, &[col, Expr::Ref(4)]), &choice(&[]), &l).unwrap();
+    assert_eq!(o.opening_points, [-7, 0]);
     // a point from a hint has no evaluation: the evMap only changes its opening positions
     assert!(o.ev_map.iter().all(|e| e.pol.offset == 0));
     let offsets = |x: &Openings| x.ev_map.iter().map(|e| e.pol).collect::<Vec<_>>();
@@ -251,7 +261,7 @@ fn witness_read_past_the_witness_columns_is_error() {
     let q = Expr::Col { col: ColType::Witness, commit_id: None, id: 4, offset: 0 };
     cs.exprs[2] = Expr::Mul(Box::new(Expr::Ref(1)), Box::new(q));
     let l = lay_of(&system(chain(), &[2]), &[], 1);
-    let err = openings(&cs, &choice(&[]), &l, &[]).unwrap_err();
+    let err = openings(&cs, &choice(&[]), &l).unwrap_err();
     assert!(matches!(err, OpeningsError::Unresolved { .. }), "{err:?}");
 }
 
@@ -259,7 +269,7 @@ fn witness_read_past_the_witness_columns_is_error() {
 fn unknown_reference_is_error() {
     let cs = system(chain(), &[1]);
     let l = lay_of(&cs, &[], 0);
-    let err = openings(&cs, &choice(&[]), &l, &[Expr::Ref(99)]).unwrap_err();
+    let err = openings(&hinted(&cs, &[Expr::Ref(99)]), &choice(&[]), &l).unwrap_err();
     assert!(matches!(err, OpeningsError::Unresolved { .. }), "{err:?}");
 }
 
@@ -305,7 +315,7 @@ fn doubling_chain_is_not_inlined() {
     }
     let hint = Expr::Ref(64);
     let l = lay_of(&cs, &[], 0);
-    assert_eq!(openings(&cs, &choice(&[]), &l, &[hint]).unwrap().opening_points, [0, 1]);
+    assert_eq!(openings(&hinted(&cs, &[hint]), &choice(&[]), &l).unwrap().opening_points, [0, 1]);
 }
 
 // ---- projection ------------------------------------------------------------------------------
@@ -320,7 +330,7 @@ fn projected(p: &StarkParams) -> (ConstraintSystem, ImChoice, Layout, Openings, 
     let im = choice(&[0]);
     let chk = check_im(&cs, &im, 3, true).unwrap();
     let l = layout(&cs, &im, &lp(chk.q_deg)).unwrap();
-    let o = openings(&cs, &im, &l, &[]).unwrap();
+    let o = openings(&cs, &im, &l).unwrap();
     let core = stark_info(&cs, &im, &chk, &l, &o, p).unwrap();
     (cs, im, l, o, core, chk.q_deg)
 }
@@ -366,7 +376,7 @@ fn boundaries_are_every_row_only_for_deep() {
         let chk = check_im(cs, &im, 9, false).unwrap();
         let q_deg = if deep { chk.q_deg } else { 0 };
         let l = layout(cs, &im, &LayoutParams { deep_challenges: deep, ..lp(q_deg) }).unwrap();
-        let o = openings(cs, &im, &l, &[]).unwrap();
+        let o = openings(cs, &im, &l).unwrap();
         stark_info(cs, &im, &chk, &l, &o, &params()).unwrap().verifier.boundaries
     };
     // Deep: always everyRow, even with no constraint

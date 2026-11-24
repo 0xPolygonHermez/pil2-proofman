@@ -103,16 +103,20 @@ impl LowerCtx {
         self.challenges.get(&(stage, stage_id)).copied()
     }
 
-    /// Dimension of a leaf node (1 for const/public, by stage for values, ext for the rest).
-    pub fn dim(&self, n: &DagNode) -> usize {
+    /// Dimension of leaf `n` (at index `i`): 1 for const/public, by stage for values, ext for the rest.
+    pub fn dim(&self, i: u32, n: &DagNode) -> Result<usize, DagError> {
         let t = &self.t;
-        let by_stage = |s: &[u32], id: &u32| if s.get(*id as usize) == Some(&1) { 1 } else { t.ext_dim };
+        let by_stage = |s: &[u32], id: &u32, what: &str| match s.get(*id as usize) {
+            Some(1) => Ok(1),
+            Some(_) => Ok(t.ext_dim),
+            None => Err(DagError::Unresolved { node: i, what: format!("{what} {id}") }),
+        };
         match n {
-            DagNode::Const { .. } | DagNode::Public { .. } => 1,
-            DagNode::ProofValue { id } => by_stage(&t.proof_values_stage, id),
-            DagNode::AirValue { id } => by_stage(&t.air_values_stage, id),
-            DagNode::AirgroupValue { id } => by_stage(&t.airgroup_values_stage, id),
-            _ => t.ext_dim,
+            DagNode::Const { .. } | DagNode::Public { .. } => Ok(1),
+            DagNode::ProofValue { id } => by_stage(&t.proof_values_stage, id, "proof value"),
+            DagNode::AirValue { id } => by_stage(&t.air_values_stage, id, "air value"),
+            DagNode::AirgroupValue { id } => by_stage(&t.airgroup_values_stage, id, "airgroup value"),
+            _ => Ok(t.ext_dim),
         }
     }
 
@@ -184,7 +188,7 @@ pub fn lower_to_code(dag: &ConstraintDag, ctx: &LowerCtx, fold: Fold) -> Result<
     for (i, n) in dag.nodes.iter().enumerate() {
         let i = i as u32;
         if let Some(operand) = ctx.resolve(i, n)? {
-            val.push(Src { operand, dim: ctx.dim(n) });
+            val.push(Src { operand, dim: ctx.dim(i, n)? });
             continue;
         }
         let get = |c: u32| val.get(c as usize).cloned().ok_or(DagError::ForwardRef { node: i });

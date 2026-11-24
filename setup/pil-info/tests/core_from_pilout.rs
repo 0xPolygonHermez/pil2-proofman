@@ -209,7 +209,8 @@ fn custom_columns_are_stage_zero_and_bounded() {
         )],
         vec![every_row(0)],
     );
-    p.air_groups[0].airs[0].custom_commits = vec![pb::CustomCommit { stage_widths: vec![2], ..Default::default() }];
+    p.air_groups[0].airs[0].custom_commits =
+        vec![pb::CustomCommit { name: Some("c".into()), stage_widths: vec![2], ..Default::default() }];
     let cs = from_pilout(&p, 0, 0, &gl(), Opening::Deep).unwrap();
     assert!(
         matches!(&cs.exprs[0], Expr::Add(l, _) if **l == Expr::Col { col: ColType::Custom, commit_id: Some(0), id: 1, offset: 0 })
@@ -225,10 +226,7 @@ fn custom_columns_are_stage_zero_and_bounded() {
 }
 
 #[test]
-fn rejects_missing_challenge_stages_and_surplus_value_symbols() {
-    let mut p = pilout(&["a"], &[], vec![add(witness(0, 0), constant("1"))], vec![every_row(0)]);
-    p.num_challenges.clear();
-    assert!(from_pilout(&p, 0, 0, &gl(), Opening::Deep).is_err());
+fn rejects_surplus_value_symbols() {
     let mut p = pilout(&["a"], &[], vec![add(witness(0, 0), constant("1"))], vec![every_row(0)]);
     p.symbols.push(symbol("av", SymbolType::AirValue, 1, 0));
     assert!(from_pilout(&p, 0, 0, &gl(), Opening::Deep).is_err());

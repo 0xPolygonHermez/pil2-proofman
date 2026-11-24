@@ -96,13 +96,13 @@ fn substitute_resolves_refs_and_promoted_become_columns() {
     let cs = system(chain(), &[3]);
     let im = choice(&[1, 2]);
     let root = Expr::Ref(3);
-    let sub_root = substitute(&cs, &im, &root);
+    let sub_root = substitute(&cs, &im, &root).unwrap();
     let mut refs = 0;
     visit(&sub_root, &mut |n| refs += matches!(n, Expr::Ref(_)) as u32);
     assert_eq!(refs, 0, "no Ref survives");
     assert_eq!(degree(&cs, &sub_root), 2);
     // each promoted Ref is its own distinct, offset-0 column past the witness columns
-    let cols: Vec<Expr> = im.exprs.iter().map(|i| substitute(&cs, &im, &Expr::Ref(*i))).collect();
+    let cols: Vec<Expr> = im.exprs.iter().map(|i| substitute(&cs, &im, &Expr::Ref(*i)).unwrap()).collect();
     let mut ids = Vec::new();
     for c in &cols {
         match c {
@@ -124,7 +124,7 @@ fn substitute_resolves_refs_and_promoted_become_columns() {
     }
     assert_eq!(eval_expr(&cs, &sub_root, &full), eval_expr(&cs, &root, &env));
     // an empty choice only inlines
-    let inlined = substitute(&cs, &choice(&[]), &root);
+    let inlined = substitute(&cs, &choice(&[]), &root).unwrap();
     assert_eq!(eval_expr(&cs, &inlined, &env), eval_expr(&cs, &root, &env));
 }
 
@@ -197,7 +197,7 @@ fn search_output_is_checked() {
     for seed in 0..200 {
         let (_, cs) = random_pilout(seed);
         for policy in policies() {
-            let Ok(set) = search_im(&cs, &policy, quotient_dim(&cs, &choice(&[])) as usize) else { continue };
+            let Ok(set) = search_im(&cs, &policy, quotient_dim(&cs, &choice(&[])).unwrap() as usize) else { continue };
             let max = policy.max_constraint_degree() as u32;
             let im = im_order(&set).unwrap();
             check_im(&cs, &im, max, stark_floor(&policy)).unwrap_or_else(|e| panic!("seed {seed} {policy:?}: {e:?}"));
@@ -214,11 +214,11 @@ const HAZARD_SEED: u64 = 2781;
 fn memo_hazard_regression() {
     let (_, cs) = random_pilout(HAZARD_SEED);
     for policy in policies() {
-        let set = search_im(&cs, &policy, quotient_dim(&cs, &choice(&[])) as usize).expect("feasible");
+        let set = search_im(&cs, &policy, quotient_dim(&cs, &choice(&[])).unwrap() as usize).expect("feasible");
         let im = im_order(&set).unwrap();
         let got = check_im(&cs, &im, policy.max_constraint_degree() as u32, stark_floor(&policy))
             .unwrap_or_else(|e| panic!("{policy:?}: set rejected: {e:?}"));
-        let roots = cs.constraints.iter().map(|c| degree(&cs, &substitute(&cs, &im, &c.e))).max().unwrap();
+        let roots = cs.constraints.iter().map(|c| degree(&cs, &substitute(&cs, &im, &c.e).unwrap())).max().unwrap();
         assert_eq!((roots, got.q_deg), (2, 2), "{policy:?}: the im root drives q_deg");
     }
 }

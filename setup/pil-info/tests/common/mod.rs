@@ -329,7 +329,7 @@ pub fn run_with(p: &pb::PilOut, airgroup: usize, air: usize, blowup_bits: usize,
     let cfg = PilInfoCfg::goldilocks(blowup_bits);
     let cs = from_pilout(p, airgroup, air, &gl(), Opening::Deep).ok()?;
     let none = ImChoice { exprs: Vec::new() };
-    let set = search_im(&cs, &cfg.degree_policy, quotient_dim(&cs, &none) as usize).ok()?;
+    let set = search_im(&cs, &cfg.degree_policy, quotient_dim(&cs, &none).ok()? as usize).ok()?;
     let im = im_order(&set).ok()?;
     let chk = check_im(&cs, &im, cfg.degree_policy.max_constraint_degree() as u32, true).ok()?;
     let air_name = p.air_groups[airgroup].airs[air].name.clone().unwrap_or_default();
@@ -357,6 +357,6 @@ pub fn core_out(run: &Run) -> CoreOut {
     };
     let lay = layout(&run.cs, &run.im, &params).unwrap();
     let exprs = to_arena(&run.cs, &run.im, &lay).unwrap();
-    let ops = openings(&run.cs, &run.im, &lay, &exprs.roles.hint_roots()).unwrap();
+    let ops = openings(&run.cs, &run.im, &lay).unwrap();
     CoreOut { lay, exprs, ops }
 }

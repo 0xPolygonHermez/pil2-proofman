@@ -2,13 +2,13 @@
 
 use std::cell::RefCell;
 
-use pil2_pilout::pilout::{self as pb, expression as px, global_operand, operand as po};
+use pil2_pilout::pilout::{self as pb, expression as px, global_operand, hint_field, operand as po};
 
 use crate::cfg::FieldCfg;
 use crate::core::fold::fold_roots;
 use crate::core::from_pilout::stage_base;
 use crate::core::im::{im_column_id, Checked, ImChoice};
-use crate::core::ir::{Boundary, ColType, ConstraintSystem, Expr, NamedValue};
+use crate::core::ir::{Boundary, ColType, ConstraintSystem, Expr, HintField, HintValue, NamedValue};
 use crate::core::layout::{Layout, PolMap};
 use crate::core::openings::{EvEntry, Openings};
 use crate::error::{PilInfoError, Result};
@@ -23,15 +23,6 @@ use crate::types::pilout_info::{format_expressions, format_hints, ConstraintInfo
 pub struct Roles {
     /// Q = fold_roots of the substituted roots.
     pub c_exp: usize,
-    /// Arena ids of the expressions the hints keep, ascending (the generator's order).
-    pub hints: Vec<usize>,
-}
-
-impl Roles {
-    /// The hint expressions as `openings` extra roots: the only source of the hints' opening points.
-    pub fn hint_roots(&self) -> Vec<Expr> {
-        self.hints.iter().map(|&h| Expr::Ref(h as u32)).collect()
-    }
 }
 
 /// Today's arena and roles, with the formatted hints and constraints the generator reads; built once.
@@ -51,8 +42,8 @@ pub struct EmitParams {
 
 /// Today's push order: pilout expressions (old formatter), the cExp fold, the im roots, then Q.
 pub fn to_arena(cs: &ConstraintSystem, im: &ImChoice, lay: &Layout) -> Result<ProverExprs> {
-    let (arena, hints, kept, constraints) = formatted(cs)?;
-    fold_quotient(cs, im, lay, arena, hints, kept, constraints)
+    let (arena, hints, constraints) = formatted(cs)?;
+    fold_quotient(cs, im, lay, arena, hints, constraints)
 }
 
 /// The generator's output plus what the AIR summary counts.
@@ -124,7 +115,7 @@ fn same_ev_map(code: &PilCodeResult, ops: &Openings) -> Result<()> {
     Ok(())
 }
 
-type Formatted = (Vec<Expression>, Vec<HintInfo>, Vec<usize>, Vec<ConstraintInfo>);
+type Formatted = (Vec<Expression>, Vec<HintInfo>, Vec<ConstraintInfo>);
 
 /// The pilout expressions and hints through the old formatters, then `prepare_pil`'s info passes.
 fn formatted(cs: &ConstraintSystem) -> Result<Formatted> {
@@ -139,11 +130,11 @@ fn formatted(cs: &ConstraintSystem) -> Result<Formatted> {
         &t.custom_commits,
         field,
     )?;
-    let raw: Vec<pb::Hint> = cs
-        .hints
-        .iter()
-        .map(|h| pb::Hint { name: h.name.clone(), hint_fields: h.fields.clone(), ..Default::default() })
-        .collect();
+    let raw = (cs.hints.iter())
+        .map(|h| {
+            Ok(pb::Hint { name: h.name.clone(), hint_fields: t.hint_fields(cs, &h.fields)?, ..Default::default() })
+        })
+        .collect::<Result<Vec<_>>>()?;
     let hints = format_hints(
         &raw,
         &t.exprs,
@@ -155,7 +146,6 @@ fn formatted(cs: &ConstraintSystem) -> Result<Formatted> {
         &mut arena,
         field,
     )?;
-    let kept: Vec<usize> = (0..arena.len()).filter(|i| arena[*i].keep.unwrap_or(false)).collect();
 
     // prepare_pil: stage 1, info on the constraints, then on every expression
     arena.iter_mut().for_each(|e| e.stage = 1);
@@ -167,7 +157,7 @@ fn formatted(cs: &ConstraintSystem) -> Result<Formatted> {
     for i in 0..arena.len() {
         add_info_expressions(&mut arena, i, field)?;
     }
-    Ok((arena, hints, kept, constraints))
+    Ok((arena, hints, constraints))
 }
 
 /// The cExp fold of the constraint and im roots, Q = cExp * Zi, and the im-root constraints.
@@ -177,7 +167,6 @@ fn fold_quotient(
     lay: &Layout,
     arena: Vec<Expression>,
     hints: Vec<HintInfo>,
-    kept: Vec<usize>,
     mut constraints: Vec<ConstraintInfo>,
 ) -> Result<ProverExprs> {
     let field = &cs.field;
@@ -228,18 +217,16 @@ fn fold_quotient(
             im_pol: true,
         });
     }
-    Ok(ProverExprs { arena: st.arena, roles: Roles { c_exp, hints: kept }, hints, constraints })
+    Ok(ProverExprs { arena: st.arena, roles: Roles { c_exp }, hints, constraints })
 }
 
 fn constraint_info(c: &crate::core::ir::Constraint) -> Result<ConstraintInfo> {
-    let (boundary, offset_min, offset_max) = match c.boundary {
-        Boundary::EveryRow => ("everyRow", None, None),
-        Boundary::FirstRow => ("firstRow", None, None),
-        Boundary::LastRow => ("lastRow", None, None),
-        Boundary::EveryFrame { min, max } => ("everyFrame", Some(min), Some(max)),
+    let (offset_min, offset_max) = match c.boundary {
+        Boundary::EveryFrame { min, max } => (Some(min), Some(max)),
+        _ => (None, None),
     };
     Ok(ConstraintInfo {
-        boundary: boundary.into(),
+        boundary: c.boundary.name().into(),
         e: ref_id(&c.e)?,
         line: Some(c.label.clone()),
         offset_min,
@@ -461,6 +448,21 @@ impl Tables {
         Ok(t)
     }
 
+    /// The typed hint fields back in the pilout form the old formatter reads. TODO(piece 3): type format_hints.
+    fn hint_fields(&self, cs: &ConstraintSystem, fields: &[HintField]) -> Result<Vec<pb::HintField>> {
+        let field = |f: &HintField| {
+            let value = match &f.value {
+                HintValue::Str(s) => hint_field::Value::StringValue(s.clone()),
+                HintValue::Expr(e) => hint_field::Value::Operand(pb::Operand { operand: Some(self.operand(cs, e)?) }),
+                HintValue::Array(a) => {
+                    hint_field::Value::HintFieldArray(pb::HintFieldArray { hint_fields: self.hint_fields(cs, a)? })
+                }
+            };
+            Ok(pb::HintField { name: f.name.clone(), value: Some(value) })
+        };
+        fields.iter().map(field).collect()
+    }
+
     fn expression(&self, cs: &ConstraintSystem, e: &Expr) -> Result<pb::Expression> {
         let o = |x: &Expr| self.operand(cs, x).map(|o| Some(pb::Operand { operand: Some(o) }));
         let op = match e {
@@ -479,7 +481,9 @@ impl Tables {
             Expr::Const(c) => po::Operand::Constant(po::Constant { value: c.to_bytes_be() }),
             Expr::Col { col: ColType::Witness, id, offset, .. } => {
                 let stage = self.witness_stage.get(*id as usize).copied().flatten().ok_or_else(not_pilout)?;
-                let col_idx = id.checked_sub(stage_base(&self.stage_widths, stage)).ok_or_else(not_pilout)?;
+                let base =
+                    stage_base(&self.stage_widths, stage).map_err(|e| PilInfoError::InvalidPilout(e.to_string()))?;
+                let col_idx = id.checked_sub(base).ok_or_else(not_pilout)?;
                 po::Operand::WitnessCol(po::WitnessCol { stage, col_idx, row_offset: *offset as i32 })
             }
             Expr::Col { col: ColType::Fixed, id, offset, .. } => {

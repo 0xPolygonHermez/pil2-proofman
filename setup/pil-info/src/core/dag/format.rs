@@ -80,9 +80,12 @@ impl ConstraintDag {
         if self.field != field_name(f)? || self.ext_dim as usize != f.ext_dim() {
             return Err(DagError::NonCanonical { node: 0, why: "field or extDim is not the setup's" });
         }
+        if u32::try_from(self.nodes.len()).is_err() {
+            return Err(DagError::NonCanonical { node: u32::MAX, why: "more than 2^32 nodes" });
+        }
         let mut seen: BTreeMap<&DagNode, u32> = BTreeMap::new();
         for (i, n) in self.nodes.iter().enumerate() {
-            let i = i as u32;
+            let i = i as u32; // < nodes.len(), checked above
             if n.children().iter().any(|&c| c >= i) {
                 return Err(DagError::ForwardRef { node: i });
             }
@@ -105,7 +108,7 @@ impl ConstraintDag {
             }
         }
         match reached.iter().position(|r| !r) {
-            Some(i) => Err(DagError::Unreachable { node: i as u32 }),
+            Some(i) => Err(DagError::Unreachable { node: i as u32 }), // < nodes.len()
             None => Ok(()),
         }
     }

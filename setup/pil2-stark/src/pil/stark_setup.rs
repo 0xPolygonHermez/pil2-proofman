@@ -39,7 +39,8 @@ pub fn stark_setup(
     let air_name = pilout.air_groups[airgroup_id].airs[air_id].name.clone().unwrap_or_default();
 
     let none = ImChoice { exprs: Vec::new() };
-    let set = search_im(&cs, &cfg.degree_policy, quotient_dim(&cs, &none) as usize).with_context(at)?;
+    let q_dim = quotient_dim(&cs, &none).map_err(|e| failed("quotient dim", &e))?;
+    let set = search_im(&cs, &cfg.degree_policy, q_dim as usize).with_context(at)?;
     let im = im_order(&set).map_err(|e| failed("im order", &e))?;
     let max_deg = cfg.degree_policy.max_constraint_degree() as u32;
     let chk = check_im(&cs, &im, max_deg, true).map_err(|e| failed("im check", &e))?;
@@ -52,7 +53,7 @@ pub fn stark_setup(
     };
     let lay = layout(&cs, &im, &lay_params).map_err(|e| failed("layout", &e))?;
     let exprs = to_arena(&cs, &im, &lay).with_context(at)?;
-    let ops = openings(&cs, &im, &lay, &exprs.roles.hint_roots()).map_err(|e| failed("openings", &e))?;
+    let ops = openings(&cs, &im, &lay).map_err(|e| failed("openings", &e))?;
     let p = StarkParams {
         n_bits: stark_struct.n_bits as u32,
         n_bits_ext: stark_struct.n_bits_ext as u32,

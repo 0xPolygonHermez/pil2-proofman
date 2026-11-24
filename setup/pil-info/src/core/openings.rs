@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::cfg::Opening;
 use crate::core::im::{im_column_id, ImChoice};
-use crate::core::ir::{visit, ColRef, ColType, ConstraintSystem, Expr, ExprId};
+use crate::core::ir::{visit, ColRef, ColType, ConstraintSystem, Expr, ExprId, HintField, HintValue};
 use crate::core::layout::Layout;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -26,15 +26,10 @@ pub enum OpeningsError {
     Unresolved { what: String },
 }
 
-/// Points: 0 plus every row offset read by a root, an im expression or an extra root, sorted numerically.
+/// Points: 0 plus every row offset read by a root, an im expression or a hint expression, sorted numerically.
 /// `ev_map`: the columns the roots read (im columns at offset 0, Q pieces at 0 under Deep), in today's order.
-/// An `extra_roots` expression adds points only, never evaluations.
-pub fn openings(
-    cs: &ConstraintSystem,
-    im: &ImChoice,
-    lay: &Layout,
-    extra_roots: &[Expr],
-) -> Result<Openings, OpeningsError> {
+/// A hint adds points only, never evaluations.
+pub fn openings(cs: &ConstraintSystem, im: &ImChoice, lay: &Layout) -> Result<Openings, OpeningsError> {
     // today's evMap walks every root through every Ref, promoted or not
     let ims: Vec<Expr> = im.exprs.iter().map(|&e| Expr::Ref(e)).collect();
     let mut evs: BTreeSet<ColRef> = BTreeSet::new();
@@ -50,27 +45,52 @@ pub fn openings(
     }
     let mut points: BTreeSet<i64> = evs.iter().map(|k| k.offset).collect();
     points.insert(0);
-    reach(cs, extra_roots.iter(), |k| {
+    reach(cs, hint_exprs(cs).iter(), |k| {
         points.insert(k.offset);
     })?;
     if cs.opening == Opening::Deep {
         let q_stage = cs.n_stages + 1;
         for (id, _) in lay.cm_pols_map.iter().enumerate().filter(|(_, p)| p.stage == q_stage) {
-            if !evs.insert(cm(id as u32)) {
-                return Err(OpeningsError::Duplicate { pol: cm(id as u32) });
+            let pol = cm(id as u32); // below the ingestion limit
+            if !evs.insert(pol) {
+                return Err(OpeningsError::Duplicate { pol });
             }
         }
     }
     let pos: BTreeMap<i64, u32> = points.iter().enumerate().map(|(i, o)| (*o, i as u32)).collect();
-    let mut ev_map: Vec<EvEntry> = evs.into_iter().map(|pol| EvEntry { pol, opening_pos: pos[&pol.offset] }).collect();
     // today's order: opening, then custom > const > cm, then id
-    let type_key = |e: &EvEntry| match e.pol.col {
-        ColType::Witness => 0,
-        ColType::Fixed => 1,
-        ColType::Custom => e.pol.commit_id.unwrap_or(0) as u64 + 2,
-    };
-    ev_map.sort_by_key(|e| (e.opening_pos, Reverse(type_key(e)), e.pol.id, e.pol.offset));
-    Ok(Openings { opening_points: points.into_iter().collect(), ev_map })
+    let mut keyed = Vec::with_capacity(evs.len());
+    for pol in evs {
+        let type_key = match (pol.col, pol.commit_id) {
+            (ColType::Witness, _) => 0,
+            (ColType::Fixed, _) => 1,
+            (ColType::Custom, Some(c)) => u64::from(c) + 2,
+            (ColType::Custom, None) => {
+                return Err(OpeningsError::Unresolved { what: "a custom column without a commit".into() })
+            }
+        };
+        let missing = || OpeningsError::Unresolved { what: format!("opening point {}", pol.offset) };
+        let opening_pos = *pos.get(&pol.offset).ok_or_else(missing)?;
+        keyed.push(((opening_pos, Reverse(type_key), pol.id, pol.offset), EvEntry { pol, opening_pos }));
+    }
+    keyed.sort_by_key(|(k, _)| *k);
+    Ok(Openings { opening_points: points.into_iter().collect(), ev_map: keyed.into_iter().map(|(_, e)| e).collect() })
+}
+
+/// The expressions the hints name (their `Ref` operands): the ones the prover keeps.
+fn hint_exprs(cs: &ConstraintSystem) -> Vec<Expr> {
+    fn walk(fields: &[HintField], out: &mut Vec<Expr>) {
+        for f in fields {
+            match &f.value {
+                HintValue::Expr(e @ Expr::Ref(_)) => out.push(e.clone()),
+                HintValue::Array(a) => walk(a, out),
+                HintValue::Expr(_) | HintValue::Str(_) => {}
+            }
+        }
+    }
+    let mut out = Vec::new();
+    cs.hints.iter().for_each(|h| walk(h.entries(), &mut out));
+    out
 }
 
 /// `max(ev_map.len(), n_openings + n_distinct_pols - 1)`, counting only openings that have evaluations.

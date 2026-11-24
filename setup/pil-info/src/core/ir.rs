@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 
 use num_bigint::BigUint;
-use pil2_pilout::pilout as pb;
+use serde::{Deserialize, Serialize};
 
 use crate::cfg::{FieldCfg, Opening};
 
@@ -58,12 +58,29 @@ pub enum Expr {
     Ref(ExprId),
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub enum Boundary {
     EveryRow,
     FirstRow,
     LastRow,
-    EveryFrame { min: u32, max: u32 },
+    EveryFrame {
+        #[serde(rename = "offsetMin")]
+        min: u32,
+        #[serde(rename = "offsetMax")]
+        max: u32,
+    },
+}
+
+impl Boundary {
+    pub fn name(&self) -> &'static str {
+        match self {
+            Boundary::EveryRow => "everyRow",
+            Boundary::FirstRow => "firstRow",
+            Boundary::LastRow => "lastRow",
+            Boundary::EveryFrame { .. } => "everyFrame",
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -87,29 +104,65 @@ pub struct Column {
 }
 
 /// A custom commit as the air declares it.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CustomCommit {
     pub name: String,
+    #[serde(serialize_with = "idx_objects")]
     pub public_values: Vec<u32>,
     pub stage_widths: Vec<u32>,
 }
 
+/// Public value ids as the starkinfo writes them, `[{"idx": i}]`.
+fn idx_objects<S: serde::Serializer>(v: &[u32], s: S) -> Result<S::Ok, S::Error> {
+    s.collect_seq(v.iter().map(|idx| serde_json::json!({ "idx": idx })))
+}
+
 /// A public, proof value, air value or airgroup value.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
 pub struct NamedValue {
     pub name: String,
     pub stage: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub lengths: Lengths,
 }
 
-/// A pilout hint, passed through untyped until a task needs its fields.
-#[derive(Clone, Debug, PartialEq)]
-pub struct Hint {
-    pub name: String,
-    pub fields: Vec<pb::HintField>,
+/// A hint field: a string, one operand of an expression, or an array of fields.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum HintValue {
+    Str(String),
+    Expr(Expr),
+    Array(Vec<HintField>),
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HintField {
+    pub name: Option<String>,
+    pub value: HintValue,
+}
+
+/// A pilout hint of the air, its operands lowered like the air's expressions.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Hint {
+    pub name: String,
+    pub fields: Vec<HintField>,
+}
+
+impl Hint {
+    /// The fields the prover generator reads: a leading array's elements, else all of them.
+    pub fn entries(&self) -> &[HintField] {
+        match self.fields.first() {
+            Some(HintField { value: HintValue::Array(a), .. }) => a,
+            _ => &self.fields,
+        }
+    }
+}
+
+/// A lookup the system cannot resolve (an id past its table).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Unresolved(pub String);
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ConstraintSystem {
     pub field: FieldCfg,
     pub opening: Opening,
@@ -170,7 +223,9 @@ fn degree_in(cs: &ConstraintSystem, e: &Expr, memo: &mut BTreeMap<ExprId, u32>) 
                 return *d;
             }
             memo.insert(*id, 0); // a cycle (rejected at ingestion) reads as 0 rather than looping
-            let d = cs.exprs.get(*id as usize).map_or(0, |t| degree_in(cs, t, memo));
+            let t = cs.exprs.get(*id as usize);
+            debug_assert!(t.is_some(), "Ref {id} dangles: check_refs runs at ingestion");
+            let d = t.map_or(0, |t| degree_in(cs, t, memo));
             memo.insert(*id, d);
             d
         }
@@ -178,43 +233,54 @@ fn degree_in(cs: &ConstraintSystem, e: &Expr, memo: &mut BTreeMap<ExprId, u32>) 
 }
 
 /// Dimension of `e`: the largest of its leaves (witness/values by stage, challenges extension); memoised like `degree`.
-pub fn dim(cs: &ConstraintSystem, e: &Expr) -> u32 {
-    let mut witness = Vec::new();
+pub fn dim(cs: &ConstraintSystem, e: &Expr) -> Result<u32, Unresolved> {
+    let mut witness: Vec<Option<u32>> = Vec::new();
     for c in &cs.witness {
         let i = c.id as usize;
         if witness.len() <= i {
-            witness.resize(i + 1, 1);
+            witness.resize(i + 1, None);
         }
-        witness[i] = c.dim;
+        witness[i] = Some(c.dim);
     }
     dim_in(cs, e, &witness, &mut BTreeMap::new())
 }
 
-fn dim_in(cs: &ConstraintSystem, e: &Expr, witness: &[u32], memo: &mut BTreeMap<ExprId, u32>) -> u32 {
+fn dim_in(
+    cs: &ConstraintSystem,
+    e: &Expr,
+    witness: &[Option<u32>],
+    memo: &mut BTreeMap<ExprId, u32>,
+) -> Result<u32, Unresolved> {
     let ext = cs.field.ext_dim() as u32;
-    let by_stage = |s: Option<&NamedValue>| if s.is_some_and(|v| v.stage == 1) { 1 } else { ext };
-    match e {
+    let by_stage = |v: &[NamedValue], i: u32, what: &str| match v.get(i as usize) {
+        Some(v) => Ok(if v.stage == 1 { 1 } else { ext }),
+        None => Err(Unresolved(format!("{what} {i}"))),
+    };
+    Ok(match e {
         Expr::Add(a, b) | Expr::Sub(a, b) | Expr::Mul(a, b) => {
-            dim_in(cs, a, witness, memo).max(dim_in(cs, b, witness, memo))
+            dim_in(cs, a, witness, memo)?.max(dim_in(cs, b, witness, memo)?)
         }
-        Expr::Neg(a) => dim_in(cs, a, witness, memo),
-        Expr::Col { col: ColType::Witness, id, .. } => witness.get(*id as usize).copied().unwrap_or(1),
+        Expr::Neg(a) => dim_in(cs, a, witness, memo)?,
+        Expr::Col { col: ColType::Witness, id, .. } => {
+            witness.get(*id as usize).copied().flatten().ok_or_else(|| Unresolved(format!("witness column {id}")))?
+        }
         // fixed and custom columns are stage 0 (custom of another stage is rejected at ingestion)
         Expr::Col { .. } | Expr::Const(_) | Expr::Public(_) => 1,
         Expr::Challenge { .. } | Expr::AirgroupValue { airgroup: Some(_), .. } => ext,
-        Expr::AirValue(i) => by_stage(cs.air_values.get(*i as usize)),
-        Expr::ProofValue(i) => by_stage(cs.proof_values.get(*i as usize)),
-        Expr::AirgroupValue { airgroup: None, id } => by_stage(cs.airgroup_values.get(*id as usize)),
+        Expr::AirValue(i) => by_stage(&cs.air_values, *i, "air value")?,
+        Expr::ProofValue(i) => by_stage(&cs.proof_values, *i, "proof value")?,
+        Expr::AirgroupValue { airgroup: None, id } => by_stage(&cs.airgroup_values, *id, "airgroup value")?,
         Expr::Ref(id) => {
             if let Some(d) = memo.get(id) {
-                return *d;
+                return Ok(*d);
             }
             memo.insert(*id, 1);
-            let d = cs.exprs.get(*id as usize).map_or(1, |t| dim_in(cs, t, witness, memo));
+            let t = cs.exprs.get(*id as usize).ok_or_else(|| Unresolved(format!("expression {id}")))?;
+            let d = dim_in(cs, t, witness, memo)?;
             memo.insert(*id, d);
             d
         }
-    }
+    })
 }
 
 /// THE traversal: pre-order; `f` returning `Some` replaces the node (its result is not revisited).

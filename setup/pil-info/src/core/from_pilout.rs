@@ -1,36 +1,22 @@
 //! Strict pilout -> ConstraintSystem; rejects, never repairs.
 
 use num_bigint::BigUint;
-use pil2_pilout::pilout::{self as pb, constraint, expression as ex, operand, SymbolType};
+use pil2_pilout::pilout::{self as pb, SymbolType};
 
 use super::ir::{
-    visit, Boundary, ColType, Column, Constraint, ConstraintSystem, CustomCommit, Expr, Hint, Lengths, NamedValue,
+    visit, Boundary, ColType, Column, Constraint, ConstraintSystem, CustomCommit, Expr, Hint, HintField, HintValue,
+    Lengths, NamedValue,
 };
+use super::pilout_core::{self as pc, AggType, AirGroupValue, PiloutCore, SymbolKind};
+pub(crate) use super::pilout_core::bad;
+pub use super::pilout_core::PiloutError;
 use crate::cfg::{FieldCfg, Opening};
 
-/// Largest id a symbol table may reach; keeps a hostile id from allocating the world.
+/// The ingestion limit on every table of an air (and on any symbol id); below it ids and counts fit u32.
 const MAX_SLOTS: usize = 1 << 24;
 
-#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
-pub enum PiloutError {
-    #[error("constraint {constraint} has no expression_idx")]
-    MissingExpressionIdx { constraint: usize },
-    #[error("constraint {constraint} has no body")]
-    EmptyConstraint { constraint: usize },
-    #[error("constraint {constraint} (`{line}`) is {boundary}, and the STARK takes only everyRow")]
-    BoundaryNotEveryRow { constraint: usize, line: String, boundary: String },
-    #[error("expression {expr} refers to expression {to}, which does not exist")]
-    DanglingRef { expr: u32, to: u32 },
-    #[error("expression {expr} refers to itself through its references")]
-    CyclicRef { expr: u32 },
-    #[error("the pilout has no air {air} in airgroup {airgroup}")]
-    UnknownAir { airgroup: usize, air: usize },
-    #[error("expression {expr}: {why}")]
-    BadOperand { expr: u32, why: &'static str },
-}
-
-pub(crate) fn bad(expr: usize, why: &'static str) -> PiloutError {
-    PiloutError::BadOperand { expr: expr as u32, why }
+fn overflow(what: impl Into<String>) -> PiloutError {
+    PiloutError::Overflow { what: what.into() }
 }
 
 pub(crate) fn const_of(be: &[u8]) -> Expr {
@@ -53,7 +39,7 @@ pub(crate) fn check_refs(exprs: &[Expr]) -> Result<(), PiloutError> {
         .collect();
     for (i, rs) in refs.iter().enumerate() {
         if let Some(&to) = rs.iter().find(|&&t| t as usize >= exprs.len()) {
-            return Err(PiloutError::DanglingRef { expr: i as u32, to });
+            return Err(PiloutError::DanglingRef { expr: i, to });
         }
     }
     // 0 = unvisited, 1 = on the stack, 2 = done
@@ -71,7 +57,7 @@ pub(crate) fn check_refs(exprs: &[Expr]) -> Result<(), PiloutError> {
                     top.1 += 1;
                 }
                 match state[t] {
-                    1 => return Err(PiloutError::CyclicRef { expr: t as u32 }),
+                    1 => return Err(PiloutError::CyclicRef { expr: t }),
                     0 => {
                         state[t] = 1;
                         stack.push((t, 0));
@@ -88,7 +74,7 @@ pub(crate) fn check_refs(exprs: &[Expr]) -> Result<(), PiloutError> {
 }
 
 /// Number of cells of a symbol: 1, or the product of its array lengths.
-pub(crate) fn symbol_len(s: &pb::Symbol) -> usize {
+fn symbol_len(s: &pc::Symbol) -> usize {
     if s.dim == 0 {
         1
     } else {
@@ -97,21 +83,22 @@ pub(crate) fn symbol_len(s: &pb::Symbol) -> usize {
 }
 
 /// Indices of the `k`-th cell of `s`, last index fastest; `None` for a scalar.
-fn cell_lengths(s: &pb::Symbol, k: usize) -> Lengths {
+fn cell_lengths(s: &pc::Symbol, k: usize) -> Lengths {
     if s.dim == 0 {
         return None;
     }
     let mut rest = k;
     let mut idx = vec![0u32; s.lengths.len()];
     for (i, l) in s.lengths.iter().enumerate().rev() {
-        let l = (*l as usize).max(1);
-        idx[i] = (rest % l) as u32;
-        rest /= l;
+        let l = (*l).max(1);
+        // `rest % l < l`, a u32
+        idx[i] = (rest % l as usize) as u32;
+        rest /= l as usize;
     }
     Some(idx)
 }
 
-fn cell(s: &pb::Symbol, k: usize) -> (String, Lengths) {
+fn cell(s: &pc::Symbol, k: usize) -> (String, Lengths) {
     (s.name.clone(), cell_lengths(s, k))
 }
 
@@ -128,19 +115,22 @@ pub(crate) fn place<T: Clone>(v: &mut Vec<T>, idx: usize, fill: T, val: T) -> Re
 }
 
 /// First column id of `stage` in a commit with `widths` (the only column-id rule).
-pub(crate) fn stage_base(widths: &[u32], stage: u32) -> u32 {
-    widths.iter().take(stage.saturating_sub(1) as usize).sum()
+pub fn stage_base(widths: &[u32], stage: u32) -> Result<u32, PiloutError> {
+    let mut below = widths.iter().take(stage.saturating_sub(1) as usize);
+    below.try_fold(0u32, |a, w| a.checked_add(*w)).ok_or_else(|| overflow("a stage's first column id"))
 }
 
 /// What the operands of one air may refer to.
 struct Tables<'a> {
     stage_widths: &'a [u32],
-    custom_widths: &'a [Vec<u32>],
-    n_fixed: usize,
-    n_periodic: usize,
+    custom_commits: &'a [pc::CustomCommit],
+    n_fixed: u32,
+    n_periodic: u32,
     n_air_values: usize,
     n_airgroup_values: usize,
-    pilout: &'a pb::PilOut,
+    num_challenges: &'a [u32],
+    n_publics: u32,
+    num_proof_values: &'a [u32],
 }
 
 fn within(ok: bool, parent: usize, why: &'static str) -> Result<(), PiloutError> {
@@ -157,69 +147,71 @@ fn check_staged_col(widths: &[u32], stage: u32, idx: u32, parent: usize) -> Resu
     within(w.is_some_and(|w| idx < *w), parent, "witness column outside the stage widths")
 }
 
-fn lower_operand(o: &Option<pb::Operand>, parent: usize, t: &Tables) -> Result<Expr, PiloutError> {
-    let inner = o.as_ref().and_then(|o| o.operand.as_ref()).ok_or_else(|| bad(parent, "missing operand"))?;
-    Ok(match inner {
-        operand::Operand::Expression(r) => Expr::Ref(r.idx),
-        operand::Operand::Constant(c) => const_of(&c.value),
-        operand::Operand::WitnessCol(w) => {
+fn lower_operand(o: &pc::Operand, parent: usize, t: &Tables) -> Result<Expr, PiloutError> {
+    use pc::Operand as O;
+    Ok(match o {
+        O::Expression(idx) => Expr::Ref(*idx),
+        O::Constant(c) => Expr::Const(c.clone()),
+        O::WitnessCol(w) => {
             check_staged_col(t.stage_widths, w.stage, w.col_idx, parent)?;
             Expr::Col {
                 col: ColType::Witness,
                 commit_id: None,
-                id: w.col_idx + stage_base(t.stage_widths, w.stage),
-                offset: w.row_offset as i64,
+                // both below the ingestion limit
+                id: stage_base(t.stage_widths, w.stage)? + w.col_idx,
+                offset: i64::from(w.row_offset),
             }
         }
-        operand::Operand::CustomCol(c) => {
-            let w = t.custom_widths.get(c.commit_id as usize).ok_or_else(|| bad(parent, "unknown custom commit"))?;
+        O::CustomCol(c) => {
+            let w = t.custom_commits.get(c.commit_id as usize).ok_or_else(|| bad(parent, "unknown custom commit"))?;
             within(c.stage == 0, parent, "custom column of a stage other than 0")?;
-            within(w.first().is_some_and(|w| c.col_idx < *w), parent, "custom column outside the stage widths")?;
+            let first = w.stage_widths.first();
+            within(first.is_some_and(|w| c.col_idx < *w), parent, "custom column outside the stage widths")?;
             Expr::Col {
                 col: ColType::Custom,
                 commit_id: Some(c.commit_id),
-                id: c.col_idx + stage_base(w, c.stage),
-                offset: c.row_offset as i64,
+                id: c.col_idx,
+                offset: i64::from(c.row_offset),
             }
         }
-        operand::Operand::FixedCol(f) => {
-            within((f.idx as usize) < t.n_fixed, parent, "fixed column out of range")?;
-            Expr::Col { col: ColType::Fixed, commit_id: None, id: f.idx, offset: f.row_offset as i64 }
+        O::FixedCol(f) => {
+            within(f.idx < t.n_fixed, parent, "fixed column out of range")?;
+            Expr::Col { col: ColType::Fixed, commit_id: None, id: f.idx, offset: i64::from(f.row_offset) }
         }
-        operand::Operand::PeriodicCol(p) => {
-            within((p.idx as usize) < t.n_periodic, parent, "periodic column out of range")?;
-            Expr::Col { col: ColType::Fixed, commit_id: None, id: p.idx, offset: p.row_offset as i64 }
+        O::PeriodicCol(p) => {
+            within(p.idx < t.n_periodic, parent, "periodic column out of range")?;
+            Expr::Col { col: ColType::Fixed, commit_id: None, id: p.idx, offset: i64::from(p.row_offset) }
         }
-        operand::Operand::PublicValue(p) => {
-            check_public(t.pilout, p.idx, parent)?;
-            Expr::Public(p.idx)
+        O::PublicValue(idx) => {
+            check_public(t.n_publics, *idx, parent)?;
+            Expr::Public(*idx)
         }
-        operand::Operand::AirGroupValue(a) => {
-            within((a.idx as usize) < t.n_airgroup_values, parent, "airgroup value out of range")?;
-            Expr::AirgroupValue { airgroup: None, id: a.idx }
+        O::AirGroupValue(idx) => {
+            within((*idx as usize) < t.n_airgroup_values, parent, "airgroup value out of range")?;
+            Expr::AirgroupValue { airgroup: None, id: *idx }
         }
-        operand::Operand::AirValue(a) => {
-            within((a.idx as usize) < t.n_air_values, parent, "air value out of range")?;
-            Expr::AirValue(a.idx)
+        O::AirValue(idx) => {
+            within((*idx as usize) < t.n_air_values, parent, "air value out of range")?;
+            Expr::AirValue(*idx)
         }
-        operand::Operand::Challenge(c) => {
-            check_challenge(&t.pilout.num_challenges, c.stage, c.idx, parent)?;
+        O::Challenge(c) => {
+            check_challenge(t.num_challenges, c.stage, c.idx, parent)?;
             Expr::Challenge { stage: c.stage, stage_id: c.idx }
         }
-        operand::Operand::ProofValue(p) => {
-            check_proof_value(t.pilout, p.idx, parent)?;
+        O::ProofValue(p) => {
+            check_proof_value(t.num_proof_values, p.idx, parent)?;
             Expr::ProofValue(p.idx)
         }
     })
 }
 
-pub(crate) fn check_public(p: &pb::PilOut, idx: u32, parent: usize) -> Result<(), PiloutError> {
-    within(idx < p.num_public_values, parent, "public value out of range")
+pub(crate) fn check_public(n_publics: u32, idx: u32, parent: usize) -> Result<(), PiloutError> {
+    within(idx < n_publics, parent, "public value out of range")
 }
 
 /// The proof-value index is bounded by the sum over stages (per-stage vs global idx is unconfirmed).
-pub(crate) fn check_proof_value(p: &pb::PilOut, idx: u32, parent: usize) -> Result<(), PiloutError> {
-    within(idx < p.num_proof_values.iter().sum(), parent, "proof value out of range")
+pub(crate) fn check_proof_value(per_stage: &[u32], idx: u32, parent: usize) -> Result<(), PiloutError> {
+    within(u64::from(idx) < per_stage.iter().map(|n| u64::from(*n)).sum(), parent, "proof value out of range")
 }
 
 pub(crate) fn check_challenge(num_challenges: &[u32], stage: u32, idx: u32, parent: usize) -> Result<(), PiloutError> {
@@ -229,17 +221,14 @@ pub(crate) fn check_challenge(num_challenges: &[u32], stage: u32, idx: u32, pare
 
 /// An operation with its operands, the same for an air's and a global expression.
 pub(crate) enum Op<'a, O> {
-    Add(&'a Option<O>, &'a Option<O>),
-    Sub(&'a Option<O>, &'a Option<O>),
-    Mul(&'a Option<O>, &'a Option<O>),
-    Neg(&'a Option<O>),
+    Add(&'a O, &'a O),
+    Sub(&'a O, &'a O),
+    Mul(&'a O, &'a O),
+    Neg(&'a O),
 }
 
 /// The only Add/Sub/Mul/Neg lowering; `lo` lowers one operand.
-pub(crate) fn lower_op<O>(
-    op: Op<O>,
-    mut lo: impl FnMut(&Option<O>) -> Result<Expr, PiloutError>,
-) -> Result<Expr, PiloutError> {
+pub(crate) fn lower_op<O>(op: Op<O>, mut lo: impl FnMut(&O) -> Result<Expr, PiloutError>) -> Result<Expr, PiloutError> {
     Ok(match op {
         Op::Add(a, b) => Expr::Add(Box::new(lo(a)?), Box::new(lo(b)?)),
         Op::Sub(a, b) => Expr::Sub(Box::new(lo(a)?), Box::new(lo(b)?)),
@@ -248,108 +237,102 @@ pub(crate) fn lower_op<O>(
     })
 }
 
-fn lower_expression(e: &pb::Expression, i: usize, t: &Tables) -> Result<Expr, PiloutError> {
-    let op = match e.operation.as_ref().ok_or_else(|| bad(i, "expression without an operation"))? {
-        ex::Operation::Add(a) => Op::Add(&a.lhs, &a.rhs),
-        ex::Operation::Sub(a) => Op::Sub(&a.lhs, &a.rhs),
-        ex::Operation::Mul(a) => Op::Mul(&a.lhs, &a.rhs),
-        ex::Operation::Neg(a) => Op::Neg(&a.value),
+fn lower_expression(e: &pc::Expression, i: usize, t: &Tables) -> Result<Expr, PiloutError> {
+    let op = match e {
+        pc::Expression::Add([a, b]) => Op::Add(a, b),
+        pc::Expression::Sub([a, b]) => Op::Sub(a, b),
+        pc::Expression::Mul([a, b]) => Op::Mul(a, b),
+        pc::Expression::Neg(a) => Op::Neg(a),
     };
     lower_op(op, |o| lower_operand(o, i, t))
 }
 
-fn lower_constraint(k: usize, c: &pb::Constraint, n_exprs: usize, opening: Opening) -> Result<Constraint, PiloutError> {
-    use constraint::Constraint as C;
-    let inner = c.constraint.as_ref().ok_or(PiloutError::EmptyConstraint { constraint: k })?;
-    let (idx, line, boundary, name) = match inner {
-        C::EveryRow(x) => (&x.expression_idx, &x.debug_line, Boundary::EveryRow, "everyRow"),
-        C::FirstRow(x) => (&x.expression_idx, &x.debug_line, Boundary::FirstRow, "firstRow"),
-        C::LastRow(x) => (&x.expression_idx, &x.debug_line, Boundary::LastRow, "lastRow"),
-        C::EveryFrame(x) => (
-            &x.expression_idx,
-            &x.debug_line,
-            Boundary::EveryFrame { min: x.offset_min, max: x.offset_max },
-            "everyFrame",
-        ),
-    };
-    let label = line.clone().unwrap_or_default();
-    let idx = idx.as_ref().ok_or(PiloutError::MissingExpressionIdx { constraint: k })?.idx;
-    if opening == Opening::Deep && boundary != Boundary::EveryRow {
-        return Err(PiloutError::BoundaryNotEveryRow { constraint: k, line: label, boundary: name.to_string() });
+fn lower_constraint(k: usize, c: &pc::Constraint, n_exprs: usize, opening: Opening) -> Result<Constraint, PiloutError> {
+    // an absent debug line is an empty label
+    let label = c.debug_line.clone().unwrap_or_default();
+    if opening == Opening::Deep && c.kind != Boundary::EveryRow {
+        return Err(PiloutError::BoundaryNotEveryRow { constraint: k, line: label, boundary: c.kind.name().into() });
     }
-    if idx as usize >= n_exprs {
-        return Err(PiloutError::BadOperand { expr: idx, why: "constraint expression out of range" });
+    if c.expression_idx as usize >= n_exprs {
+        return Err(bad(c.expression_idx as usize, "constraint expression out of range"));
     }
-    Ok(Constraint { e: Expr::Ref(idx), boundary, label })
+    Ok(Constraint { e: Expr::Ref(c.expression_idx), boundary: c.kind.clone(), label })
 }
 
-/// Columns of kind `kind` for this air (and custom commit `commit`), in symbol order, arrays expanded.
-fn columns(
-    p: &pb::PilOut,
-    airgroup: usize,
-    air: usize,
-    kind: SymbolType,
-    commit: Option<u32>,
-    widths: &[u32],
+fn lower_hint_field(f: &pc::HintField, hint: &str, t: &Tables) -> Result<HintField, PiloutError> {
+    let value = match &f.value {
+        pc::HintValue::String(s) => HintValue::Str(s.clone()),
+        pc::HintValue::Operand(o) => HintValue::Expr(lower_operand(o, 0, t).map_err(|e| match e {
+            PiloutError::BadOperand { why, .. } => PiloutError::BadHint { hint: hint.to_string(), why },
+            e => e,
+        })?),
+        pc::HintValue::Array(a) => {
+            HintValue::Array(a.iter().map(|f| lower_hint_field(f, hint, t)).collect::<Result<_, _>>()?)
+        }
+    };
+    Ok(HintField { name: f.name.clone(), value })
+}
+
+/// This air's symbols (`air` None: of its airgroup only) of kind `kind`.
+fn of_air(core: &PiloutCore, kind: SymbolKind, airgroup: u32, air: Option<u32>) -> impl Iterator<Item = &pc::Symbol> {
+    core.symbols
+        .iter()
+        .filter(move |s| s.kind == kind && s.air_group_id == Some(airgroup) && air.is_none_or(|a| s.air_id == Some(a)))
+}
+
+/// Columns of `symbols`, arrays expanded, ids from `base` of each symbol's stage.
+fn columns<'a>(
+    symbols: impl Iterator<Item = &'a pc::Symbol>,
+    stage: impl Fn(&pc::Symbol) -> Result<u32, PiloutError>,
+    base: impl Fn(u32) -> Result<u32, PiloutError>,
     field: &FieldCfg,
 ) -> Result<Vec<Column>, PiloutError> {
     let mut out = Vec::new();
-    for s in &p.symbols {
-        if s.r#type != kind as i32 || s.air_group_id != Some(airgroup as u32) || s.air_id != Some(air as u32) {
-            continue;
-        }
-        if kind == SymbolType::CustomCol && s.commit_id != commit {
-            continue;
-        }
-        let stage = s.stage.unwrap_or(0);
-        if kind == SymbolType::CustomCol && stage != 0 {
-            return Err(bad(s.id as usize, "custom column of a stage other than 0"));
-        }
+    for s in symbols {
+        let stage = stage(s)?;
         let dim = if stage <= 1 { 1 } else { field.ext_dim() as u32 };
-        let base: u32 =
-            if kind == SymbolType::FixedCol { 0 } else { widths.iter().take(stage.saturating_sub(1) as usize).sum() };
-        for k in 0..symbol_len(s) {
-            if out.len() >= MAX_SLOTS {
-                return Err(bad(s.id as usize, "too many columns"));
-            }
-            let lengths = cell_lengths(s, k);
-            out.push(Column { name: s.name.clone(), stage, dim, id: base + s.id + k as u32, lengths });
+        let n = symbol_len(s);
+        let fits = |x: usize| x.saturating_add(n) <= MAX_SLOTS;
+        within(fits(s.id as usize) && fits(out.len()), s.id as usize, "columns past the ingestion limit")?;
+        // the base, the id and the cell are each below the ingestion limit
+        let first = base(stage)? + s.id;
+        for k in 0..n {
+            out.push(Column { name: s.name.clone(), stage, dim, id: first + k as u32, lengths: cell_lengths(s, k) });
         }
     }
     Ok(out)
 }
 
-/// `mk(symbol, cell)` of the symbols of `kind` (arrays expanded) placed at their ids; `scope` is
-/// (airgroup, optional air).
-fn named<T: Clone>(
-    p: &pb::PilOut,
-    kind: SymbolType,
-    scope: Option<(usize, Option<usize>)>,
-    fill: T,
-    mk: impl Fn(&pb::Symbol, usize) -> T,
-) -> Result<Vec<T>, PiloutError> {
-    let mut v: Vec<T> = Vec::new();
-    for s in &p.symbols {
-        let in_scope =
-            scope.is_none_or(|(g, a)| s.air_group_id == Some(g as u32) && a.is_none_or(|a| s.air_id == Some(a as u32)));
-        if s.r#type != kind as i32 || !in_scope {
-            continue;
-        }
-        for k in 0..symbol_len(s) {
-            place(&mut v, s.id as usize + k, fill.clone(), mk(s, k))?;
-        }
-    }
-    Ok(v)
+fn declared_stage(s: &pc::Symbol) -> Result<u32, PiloutError> {
+    s.stage.ok_or_else(|| PiloutError::MissingStage { symbol: s.name.clone() })
 }
 
-/// Pairs the declared stages with the symbol cells; a symbol past the table is an error, an unnamed value gets "".
+/// `mk(symbol, cell)` of `symbols` (arrays expanded) placed at their ids; a hole is an error.
+fn named<'a, T: Clone>(
+    symbols: impl Iterator<Item = &'a pc::Symbol>,
+    mk: impl Fn(&pc::Symbol, usize) -> Result<T, PiloutError>,
+) -> Result<Vec<T>, PiloutError> {
+    let mut v: Vec<Option<T>> = Vec::new();
+    for s in symbols {
+        for k in 0..symbol_len(s) {
+            place(&mut v, (s.id as usize).saturating_add(k), None, Some(mk(s, k)?))?;
+        }
+    }
+    v.into_iter().enumerate().map(|(i, x)| x.ok_or_else(|| bad(i, "a value with no symbol"))).collect()
+}
+
+fn global(core: &PiloutCore, kind: SymbolKind) -> impl Iterator<Item = &pc::Symbol> {
+    core.symbols.iter().filter(move |s| s.kind == kind)
+}
+
+/// Pairs the declared stages with the symbol cells; a symbol past the table is an error, a trailing unnamed value gets "".
 fn staged(cells: Vec<(String, Lengths)>, stages: &[u32]) -> Result<Vec<NamedValue>, PiloutError> {
     within(cells.len() <= stages.len(), 0, "a value symbol beyond the declared values")?;
     let at = |i: usize| cells.get(i).cloned().unwrap_or_default();
     Ok(stages.iter().enumerate().map(|(i, st)| NamedValue { name: at(i).0, stage: *st, lengths: at(i).1 }).collect())
 }
 
-/// Lowers air (`airgroup`, `air`) of `pilout`; reads the protobuf directly.
+/// Lowers air (`airgroup`, `air`) of `pilout`: only that air, its symbols and its hints are read.
 pub fn from_pilout(
     pilout: &pb::PilOut,
     airgroup: usize,
@@ -357,21 +340,91 @@ pub fn from_pilout(
     field: &FieldCfg,
     opening: Opening,
 ) -> Result<ConstraintSystem, PiloutError> {
-    let (ag, a) = pilout
-        .air_groups
-        .get(airgroup)
-        .and_then(|g| g.airs.get(air).map(|a| (g, a)))
-        .ok_or(PiloutError::UnknownAir { airgroup, air })?;
-    let custom_widths: Vec<Vec<u32>> = a.custom_commits.iter().map(|c| c.stage_widths.clone()).collect();
+    let unknown = PiloutError::UnknownAir { airgroup, air };
+    let ag = pilout.air_groups.get(airgroup).ok_or(unknown.clone())?;
+    let a = pc::air_of(ag.airs.get(air).ok_or(unknown)?, airgroup, air)?;
+    let at =
+        |g: Option<u32>, x: Option<u32>| g.map(|g| g as usize) == Some(airgroup) && x.map(|x| x as usize) == Some(air);
+    let own = |s: &&pb::Symbol| {
+        let agv = s.r#type == SymbolType::AirGroupValue as i32;
+        s.air_group_id.is_none_or(|g| g as usize == airgroup) && (agv || s.air_id.is_none_or(|x| x as usize == air))
+    };
+    let globals = PiloutCore {
+        num_challenges: pilout.num_challenges.clone(),
+        num_proof_values: pilout.num_proof_values.clone(),
+        num_public_values: pilout.num_public_values,
+        air_groups: Vec::new(),
+        symbols: (pilout.symbols.iter().filter(own))
+            .filter_map(|s| pc::symbol_of(s).transpose())
+            .collect::<Result<_, _>>()?,
+        hints: (pilout.hints.iter().filter(|h| at(h.air_group_id, h.air_id)))
+            .map(pc::hint_of)
+            .collect::<Result<_, _>>()?,
+    };
+    lower(&globals, &pc::air_group_values(ag)?, &a, airgroup, air, field, opening)
+}
+
+/// Lowers air (`airgroup`, `air`) of `core`.
+pub fn from_pilout_core(
+    core: &PiloutCore,
+    airgroup: usize,
+    air: usize,
+    field: &FieldCfg,
+    opening: Opening,
+) -> Result<ConstraintSystem, PiloutError> {
+    let unknown = PiloutError::UnknownAir { airgroup, air };
+    let ag = core.air_groups.get(airgroup).ok_or(unknown.clone())?;
+    lower(core, &ag.air_group_values, ag.airs.get(air).ok_or(unknown)?, airgroup, air, field, opening)
+}
+
+/// The ingestion limit: every table of `a` and of `core` below `MAX_SLOTS`.
+fn check_limits(core: &PiloutCore, a: &pc::Air) -> Result<(), PiloutError> {
+    let sum = |w: &[u32]| w.iter().map(|x| *x as usize).sum::<usize>();
+    let tables = [
+        a.expressions.len(),
+        a.constraints.len(),
+        sum(&a.stage_widths),
+        a.n_fixed_cols as usize,
+        a.n_periodic_cols as usize,
+        a.air_values.len(),
+        a.custom_commits.len(),
+        core.num_challenges.len(),
+    ];
+    let custom = a.custom_commits.iter().map(|c| sum(&c.stage_widths));
+    if tables.into_iter().chain(custom).any(|n| n >= MAX_SLOTS) {
+        return Err(overflow("a table of the air past the ingestion limit"));
+    }
+    Ok(())
+}
+
+/// Lowers `a` of airgroup values `agvs`; of `core` only the pilout-wide tables, symbols and hints are read.
+fn lower(
+    core: &PiloutCore,
+    agvs: &[AirGroupValue],
+    a: &pc::Air,
+    airgroup: usize,
+    air: usize,
+    field: &FieldCfg,
+    opening: Opening,
+) -> Result<ConstraintSystem, PiloutError> {
+    check_limits(core, a)?;
+    let unknown = || PiloutError::UnknownAir { airgroup, air };
+    let (g32, a32) = (u32::try_from(airgroup).map_err(|_| unknown())?, u32::try_from(air).map_err(|_| unknown())?);
     let tables = Tables {
         stage_widths: &a.stage_widths,
-        custom_widths: &custom_widths,
-        n_fixed: a.fixed_cols.len(),
-        n_periodic: a.periodic_cols.len(),
+        custom_commits: &a.custom_commits,
+        n_fixed: a.n_fixed_cols,
+        n_periodic: a.n_periodic_cols,
         n_air_values: a.air_values.len(),
-        n_airgroup_values: ag.air_group_values.len(),
-        pilout,
+        n_airgroup_values: agvs.len(),
+        num_challenges: &core.num_challenges,
+        n_publics: core.num_public_values,
+        num_proof_values: &core.num_proof_values,
     };
+    let rows = a.num_rows;
+    if !rows.is_power_of_two() {
+        return Err(PiloutError::NumRowsNotPowerOfTwo { airgroup, air, rows });
+    }
     let exprs = a
         .expressions
         .iter()
@@ -386,59 +439,79 @@ pub fn from_pilout(
         .map(|(k, c)| lower_constraint(k, c, exprs.len(), opening))
         .collect::<Result<Vec<_>, _>>()?;
 
-    let witness = columns(pilout, airgroup, air, SymbolType::WitnessCol, None, &a.stage_widths, field)?;
-    let fixed = columns(pilout, airgroup, air, SymbolType::FixedCol, None, &[], field)?;
-    let custom = (0..custom_widths.len())
-        .map(|c| columns(pilout, airgroup, air, SymbolType::CustomCol, Some(c as u32), &[], field))
+    let air_syms = |kind| of_air(core, kind, g32, Some(a32));
+    let witness = columns(air_syms(SymbolKind::WitnessCol), declared_stage, |s| stage_base(&a.stage_widths, s), field)?;
+    // fixed and custom columns are stage 0; a custom column declaring another stage is refused
+    let stage0 = |s: &pc::Symbol| match s.stage {
+        None | Some(0) => Ok(0),
+        Some(_) => Err(bad(s.id as usize, "custom column of a stage other than 0")),
+    };
+    let fixed = columns(air_syms(SymbolKind::FixedCol), |_| Ok(0), |_| Ok(0), field)?;
+    for s in air_syms(SymbolKind::CustomCol) {
+        let c = s.commit_id.ok_or_else(|| PiloutError::MissingCommitId { symbol: s.name.clone() })?;
+        within((c as usize) < a.custom_commits.len(), s.id as usize, "custom column of an unknown commit")?;
+    }
+    let custom = (0..a.custom_commits.len())
+        .map(|c| {
+            let syms = air_syms(SymbolKind::CustomCol).filter(move |s| s.commit_id.is_some_and(|x| x as usize == c));
+            columns(syms, stage0, |_| Ok(0), field)
+        })
         .collect::<Result<Vec<_>, _>>()?;
 
-    let challenges = pilout
-        .symbols
-        .iter()
-        .filter(|s| s.r#type == SymbolType::Challenge as i32)
-        .map(|s| (s.stage.unwrap_or(1), s.id, s.name.clone()))
-        .collect();
-    let unnamed = NamedValue { stage: 1, ..Default::default() };
-    let proof_values = named(pilout, SymbolType::ProofValue, None, unnamed.clone(), |s, k| {
+    let challenges = global(core, SymbolKind::Challenge)
+        .map(|s| Ok((declared_stage(s)?, s.id, s.name.clone())))
+        .collect::<Result<Vec<_>, PiloutError>>()?;
+    let proof_values = named(global(core, SymbolKind::ProofValue), |s, k| {
         let (name, lengths) = cell(s, k);
-        NamedValue { name, stage: s.stage.unwrap_or(1), lengths }
+        Ok(NamedValue { name, stage: declared_stage(s)?, lengths })
     })?;
-    let air_stages: Vec<u32> = a.air_values.iter().map(|v| v.stage).collect();
-    let agv_stages: Vec<u32> = ag.air_group_values.iter().map(|v| v.stage).collect();
-    let hints = pilout
+    let hints = core
         .hints
         .iter()
-        .filter(|h| h.air_id == Some(air as u32) && h.air_group_id == Some(airgroup as u32))
-        .map(|h| Hint { name: h.name.clone(), fields: h.hint_fields.clone() })
-        .collect();
-    within(!pilout.num_challenges.is_empty(), 0, "the pilout declares no challenge stages")?;
+        .filter(|h| h.air_id == Some(a32) && h.air_group_id == Some(g32))
+        .map(|h| {
+            // only what `Hint::entries` reads: a leading array alone, else every field
+            let read = match h.fields.first() {
+                Some(f @ pc::HintField { value: pc::HintValue::Array(_), .. }) => std::slice::from_ref(f),
+                _ => &h.fields[..],
+            };
+            let fields = read.iter().map(|f| lower_hint_field(f, &h.name, &tables)).collect::<Result<_, _>>()?;
+            Ok(Hint { name: h.name.clone(), fields })
+        })
+        .collect::<Result<Vec<_>, PiloutError>>()?;
     let custom_commits = a
         .custom_commits
         .iter()
         .map(|c| CustomCommit {
-            name: c.name.clone().unwrap_or_default(),
-            public_values: c.public_values.iter().map(|v| v.idx).collect(),
+            name: c.name.clone(),
+            public_values: c.public_values.clone(),
             stage_widths: c.stage_widths.clone(),
         })
         .collect();
-    let publics = named(pilout, SymbolType::PublicValue, None, unnamed, |s, k| {
+    let publics = named(global(core, SymbolKind::PublicValue), |s, k| {
         let (name, lengths) = cell(s, k);
-        NamedValue { name, stage: 1, lengths }
+        Ok(NamedValue { name, stage: 1, lengths })
     })?;
-    let air_values = staged(
-        named(pilout, SymbolType::AirValue, Some((airgroup, Some(air))), Default::default(), cell)?,
-        &air_stages,
-    )?;
-    let airgroup_values = staged(
-        named(pilout, SymbolType::AirGroupValue, Some((airgroup, None)), Default::default(), cell)?,
-        &agv_stages,
-    )?;
+    let cells = |kind, air| named(of_air(core, kind, g32, air), |s, k| Ok(cell(s, k)));
+    let air_values = staged(cells(SymbolKind::AirValue, Some(a32))?, &a.air_values)?;
+    let agv_stages: Vec<u32> = agvs.iter().map(|v| v.stage).collect();
+    let airgroup_values = staged(cells(SymbolKind::AirGroupValue, None)?, &agv_stages)?;
+
+    // n_stages = max(highest declared witness/value stage, numChallenges.len(), 1); extra stages have no challenges
+    let declared = witness
+        .iter()
+        .map(|c| c.stage)
+        .chain([&air_values, &airgroup_values, &proof_values].into_iter().flat_map(|v| v.iter().map(|x| x.stage)));
+    let n_stages = declared.fold((core.num_challenges.len() as u32).max(1), u32::max);
+    if n_stages as usize >= MAX_SLOTS {
+        return Err(overflow("the stage count past the ingestion limit"));
+    }
 
     Ok(ConstraintSystem {
         field: field.clone(),
         opening,
-        n_stages: pilout.num_challenges.len() as u32,
-        n_rows_bits: a.num_rows.map_or(0, |n| n.checked_ilog2().unwrap_or(0)),
+        n_stages,
+        n_rows_bits: rows.trailing_zeros(),
         exprs,
         constraints,
         witness,
@@ -451,6 +524,12 @@ pub fn from_pilout(
         airgroup_values,
         hints,
         custom_commits,
-        airgroup_agg_types: ag.air_group_values.iter().map(|v| v.agg_type).collect(),
+        airgroup_agg_types: agvs
+            .iter()
+            .map(|v| match v.agg_type {
+                AggType::Sum => 0,
+                AggType::Prod => 1,
+            })
+            .collect(),
     })
 }

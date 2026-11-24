@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 
 use crate::core::im::ImChoice;
-use crate::core::ir::{dim, visit, ColType, Column, ConstraintSystem, Expr, ExprId, Lengths, NamedValue};
+use crate::core::ir::{dim, visit, ColType, Column, ConstraintSystem, Expr, ExprId, Lengths, NamedValue, Unresolved};
 
 /// One committed, fixed or custom column.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -18,7 +18,8 @@ pub struct PolMap {
     pub lengths: Lengths,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ChallengeEntry {
     pub name: String,
     pub stage: u32,
@@ -68,10 +69,16 @@ pub enum LayoutError {
     Inconsistent { what: String },
 }
 
+impl From<Unresolved> for LayoutError {
+    fn from(u: Unresolved) -> Self {
+        LayoutError::Inconsistent { what: format!("unresolved {}", u.0) }
+    }
+}
+
 /// Pilout order of witness/fixed/custom columns and challenges; `std_vc` after its stage's pilout challenges;
 /// im columns appended in `ImChoice` order; then the Q pieces; `std_xi`, then `std_vf1`, `std_vf2` last.
 pub fn layout(cs: &ConstraintSystem, im: &ImChoice, params: &LayoutParams) -> Result<Layout, LayoutError> {
-    let q_dim = quotient_dim(cs, im);
+    let q_dim = quotient_dim(cs, im)?;
     let cm_pols_map = cm_pols(cs, im, params, q_dim)?;
     let const_pols_map = by_id(&cs.fixed, "fixed", |c| PolMap { stage: 0, dim: 1, stage_id: c.id, ..col(c, None) })?;
     let mut custom_pols_map = Vec::with_capacity(cs.custom.len());
@@ -80,7 +87,7 @@ pub fn layout(cs: &ConstraintSystem, im: &ImChoice, params: &LayoutParams) -> Re
         number_stages(&mut m);
         custom_pols_map.push(m);
     }
-    let map_sections_n = sections(cs, &cm_pols_map, &const_pols_map, &custom_pols_map);
+    let map_sections_n = sections(cs, &cm_pols_map, &const_pols_map, &custom_pols_map)?;
     let (challenges_map, vc) = challenges(cs, params);
     Ok(Layout {
         cm_pols_map,
@@ -132,8 +139,8 @@ fn cm_pols(
         lengths: None,
     };
     for (k, &e) in im.exprs.iter().enumerate() {
-        let stage = if params.im_pols_stages { stage_of(cs, &witness_stage, e, &mut stages) } else { n };
-        m.push(pol(format!("{}.ImPol", params.air_name), stage, dim(cs, &Expr::Ref(e)), true));
+        let stage = if params.im_pols_stages { stage_of(cs, &witness_stage, e, &mut stages)? } else { n };
+        m.push(pol(format!("{}.ImPol", params.air_name), stage, dim(cs, &Expr::Ref(e))?, true));
         debug_assert_eq!(m.len(), crate::core::im::im_column_id(cs, k) as usize + 1);
     }
     m.extend((0..params.q_deg).map(|i| pol(format!("Q{i}"), n + 1, q_dim, false)));
@@ -142,7 +149,12 @@ fn cm_pols(
 }
 
 /// `const`, the custom sections, then `cm1..cm<n+1>`, as today's insertion order, each summing its columns' dims.
-fn sections(cs: &ConstraintSystem, cm: &[PolMap], fixed: &[PolMap], custom: &[Vec<PolMap>]) -> Vec<(String, u32)> {
+fn sections(
+    cs: &ConstraintSystem,
+    cm: &[PolMap],
+    fixed: &[PolMap],
+    custom: &[Vec<PolMap>],
+) -> Result<Vec<(String, u32)>, LayoutError> {
     let mut sections: Vec<(String, u32)> = vec![("const".into(), 0)];
     for c in &cs.custom_commits {
         let widths = c.stage_widths.iter().enumerate().filter(|(_, w)| **w > 0);
@@ -156,10 +168,10 @@ fn sections(cs: &ConstraintSystem, cm: &[PolMap], fixed: &[PolMap], custom: &[Ve
     fixed.iter().for_each(|p| add("const".into(), p.dim));
     cm.iter().for_each(|p| add(format!("cm{}", p.stage), p.dim));
     for (k, m) in custom.iter().enumerate() {
-        let name = cs.custom_commits.get(k).map_or_else(|| format!("custom{k}"), |c| c.name.clone());
-        m.iter().for_each(|p| add(format!("{name}{}", p.stage), p.dim));
+        let c = cs.custom_commits.get(k).ok_or_else(|| Unresolved(format!("custom commit {k}")))?;
+        m.iter().for_each(|p| add(format!("{}{}", c.name, p.stage), p.dim));
     }
-    sections
+    Ok(sections)
 }
 
 /// The pilout challenges by (stage, id), `std_vc`, `std_xi`, the DEEP ones; and the index of `std_vc`.
@@ -209,46 +221,56 @@ fn number_stages(m: &mut [PolMap]) {
 }
 
 /// Dimension of today's cExp: a fold of two or more roots carries `std_vc`, a lone root its own, none is 1.
-pub fn quotient_dim(cs: &ConstraintSystem, im: &ImChoice) -> u32 {
+pub fn quotient_dim(cs: &ConstraintSystem, im: &ImChoice) -> Result<u32, LayoutError> {
     let roots = cs.constraints.iter().map(|c| &c.e);
     let ims: Vec<Expr> = im.exprs.iter().map(|&e| Expr::Ref(e)).collect();
     let all: Vec<&Expr> = roots.chain(&ims).collect();
-    match all.as_slice() {
+    Ok(match all.as_slice() {
         [] => 1,
-        [e] => dim(cs, e),
+        [e] => dim(cs, e)?,
         _ => cs.field.ext_dim() as u32,
-    }
+    })
 }
 
 /// Stage of expression `id`: the largest of its leaves' (witness by column, values by their stage, challenges theirs).
-fn stage_of(cs: &ConstraintSystem, witness: &[u32], id: ExprId, memo: &mut BTreeMap<ExprId, u32>) -> u32 {
+fn stage_of(
+    cs: &ConstraintSystem,
+    witness: &[u32],
+    id: ExprId,
+    memo: &mut BTreeMap<ExprId, u32>,
+) -> Result<u32, Unresolved> {
     if let Some(s) = memo.get(&id) {
-        return *s;
+        return Ok(*s);
     }
     memo.insert(id, 0); // a cycle (rejected at ingestion) reads as 0
+    let e = cs.exprs.get(id as usize).ok_or_else(|| Unresolved(format!("expression {id}")))?;
     let mut refs = Vec::new();
-    let mut s = 0;
-    if let Some(e) = cs.exprs.get(id as usize) {
-        visit(e, &mut |n| {
-            let at = |v: &[NamedValue], i: &u32| v.get(*i as usize).map_or(0, |x| x.stage);
-            s = s.max(match n {
-                Expr::Col { col: ColType::Witness, id, .. } => witness.get(*id as usize).copied().unwrap_or(0),
-                Expr::Challenge { stage, .. } => *stage,
-                Expr::Public(_) => 1,
-                Expr::ProofValue(i) => at(&cs.proof_values, i),
-                Expr::AirValue(i) => at(&cs.air_values, i),
-                Expr::AirgroupValue { airgroup: None, id } => at(&cs.airgroup_values, id),
-                Expr::Ref(r) => {
-                    refs.push(*r);
-                    0
-                }
-                _ => 0,
-            });
-        });
-    }
+    let mut s = Ok(0);
+    visit(e, &mut |n| {
+        let at = |v: &[NamedValue], i: &u32, what: &str| {
+            v.get(*i as usize).map(|x| x.stage).ok_or_else(|| Unresolved(format!("{what} {i}")))
+        };
+        let here = match n {
+            Expr::Col { col: ColType::Witness, id, .. } => {
+                witness.get(*id as usize).copied().ok_or_else(|| Unresolved(format!("witness column {id}")))
+            }
+            Expr::Challenge { stage, .. } => Ok(*stage),
+            Expr::Public(_) => Ok(1),
+            Expr::ProofValue(i) => at(&cs.proof_values, i, "proof value"),
+            Expr::AirValue(i) => at(&cs.air_values, i, "air value"),
+            Expr::AirgroupValue { airgroup: None, id } => at(&cs.airgroup_values, id, "airgroup value"),
+            Expr::Ref(r) => {
+                refs.push(*r);
+                Ok(0)
+            }
+            _ => Ok(0),
+        };
+        s = s.clone().and_then(|s| here.map(|h| s.max(h)));
+    });
+    let mut s = s?;
     for r in refs {
-        s = s.max(stage_of(cs, witness, r, memo));
+        s = s.max(stage_of(cs, witness, r, memo)?);
     }
     memo.insert(id, s);
-    s
+    Ok(s)
 }

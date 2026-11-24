@@ -24,7 +24,7 @@ pub struct GlobalSystem {
 
 fn lower_operand(o: &Option<pb::GlobalOperand>, parent: usize, p: &pb::PilOut) -> Result<Expr, PiloutError> {
     let inner = o.as_ref().and_then(|o| o.operand.as_ref()).ok_or_else(|| bad(parent, "missing operand"))?;
-    let public = |idx: u32| check_public(p, idx, parent).map(|()| Expr::Public(idx));
+    let public = |idx: u32| check_public(p.num_public_values, idx, parent).map(|()| Expr::Public(idx));
     Ok(match inner {
         go::Operand::Expression(r) => Expr::Ref(r.idx),
         go::Operand::Constant(c) => const_of(&c.value),
@@ -43,7 +43,7 @@ fn lower_operand(o: &Option<pb::GlobalOperand>, parent: usize, p: &pb::PilOut) -
             Expr::Challenge { stage: c.stage, stage_id: c.idx }
         }
         go::Operand::ProofValue(v) => {
-            check_proof_value(p, v.idx, parent)?;
+            check_proof_value(&p.num_proof_values, v.idx, parent)?;
             Expr::ProofValue(v.idx)
         }
     })
@@ -75,7 +75,7 @@ pub fn global_from_pilout(pilout: &pb::PilOut, field: &FieldCfg) -> Result<Globa
         .map(|(k, c)| {
             let idx = c.expression_idx.as_ref().ok_or(PiloutError::MissingExpressionIdx { constraint: k })?.idx;
             if idx as usize >= exprs.len() {
-                return Err(PiloutError::BadOperand { expr: idx, why: "constraint expression out of range" });
+                return Err(bad(idx as usize, "constraint expression out of range"));
             }
             Ok(GlobalConstraint { e: Expr::Ref(idx), label: c.debug_line.clone().unwrap_or_default() })
         })

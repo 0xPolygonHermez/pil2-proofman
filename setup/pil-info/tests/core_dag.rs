@@ -416,7 +416,7 @@ fn dims_follow_the_rule() {
         DagNode::AirgroupValue { id: 0 }, // stage 2
     ]
     .iter()
-    .map(|n| c.dim(n))
+    .map(|n| c.dim(0, n).unwrap())
     .collect();
     assert_eq!(dims, [1, 1, 3, 3, 3, 1, 3, 1, 3, 3]);
     // an operation takes the larger of its operands

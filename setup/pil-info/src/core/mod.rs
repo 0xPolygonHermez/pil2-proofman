@@ -8,4 +8,5 @@ pub mod im;
 pub mod ir;
 pub mod layout;
 pub mod openings;
+pub mod pilout_core;
 pub mod project;

@@ -20,7 +20,8 @@ pub fn search_im(cs: &ConstraintSystem, policy: &DegreePolicy, q_dim: usize) -> 
         let Some(set) = (Search { cs, abs_max: d, memo: BTreeMap::new() }).roots() else { continue };
         let Ok(im) = im_order(&set) else { continue };
         let Ok(checked) = check_im(cs, &im, d as u32, stark_min_q) else { continue };
-        let im_cols: usize = im.exprs.iter().map(|&i| dim(cs, &Expr::Ref(i)) as usize).sum();
+        let dims = im.exprs.iter().map(|&i| dim(cs, &Expr::Ref(i)).map(|d| d as usize));
+        let im_cols: usize = dims.sum::<Result<_, _>>().map_err(|u| PilInfoError::InvalidPilout(u.0))?;
         let cost = policy.cost(im.exprs.len(), im_cols, i64::from(checked.q_deg), q_dim);
         let empty = set.is_empty();
         if best.as_ref().is_none_or(|(c, _)| cost < *c) {

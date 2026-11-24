@@ -1,18 +1,12 @@
-//! Build the starkinfo JSON output structure from the core's projection (expressionsinfo and
-//! verifierinfo are built by `pil_info::output::expressions_info`).
-
-use serde_json::json;
+//! The starkinfo output: the core's `StarkInfoOutput` with the solved stark struct and security.
 
 use crate::types::security;
 use crate::types::security::pcs::{Batching, LowDegreeTest, Pcs};
 use crate::types::security::regimes::DecodingRegime;
 use crate::types::stark_struct::{FriStruct, StarkStruct, StirStruct};
-use crate::types::output::{
-    BoundaryOutput, ChallengeMapEntryOutput, EvMapEntry, NameStageEntry, PolMapEntry, PublicMapEntry, SecurityInfo,
-    StarkInfoOutput, StarkStructOutput,
-};
+use crate::types::output::{SecurityInfo, StarkInfoOutput, StarkStructOutput};
 
-/// The starkinfo JSON output: the thin core's projection plus the solved low-degree test.
+/// The starkinfo output: the core's projection plus the solved low-degree test.
 pub fn build_starkinfo_output_from_core(
     core: &pil_info::core::project::StarkInfoCore,
     stark_struct: &StarkStruct,
@@ -22,185 +16,16 @@ pub fn build_starkinfo_output_from_core(
     circuit_type: Option<u64>,
     air_name: &str,
 ) -> anyhow::Result<StarkInfoOutput> {
-    use pil_info::core::ir::{Boundary, ColType, NamedValue};
-
-    let v = &core.verifier;
-    let named = |m: &[NamedValue]| -> Vec<NameStageEntry> {
-        m.iter()
-            .map(|e| NameStageEntry { name: e.name.clone(), stage: e.stage as usize, lengths: lens(&e.lengths) })
-            .collect()
+    let security = SecurityInfo {
+        proximity_gap: ldt.proximity_gap(),
+        proximity_parameter: ldt.proximity_parameter(),
+        regime: ldt.regime_identifier().to_string(),
     };
-    let publics_map = v
-        .publics_map
-        .iter()
-        .map(|e| PublicMapEntry { name: e.name.clone(), stage: e.stage as usize, lengths: lens(&e.lengths) })
-        .collect();
-    let challenges_map = v
-        .challenges_map
-        .iter()
-        .map(|c| ChallengeMapEntryOutput {
-            name: c.name.clone(),
-            stage: c.stage as usize,
-            dim: c.dim as usize,
-            stage_id: c.stage_id as usize,
-        })
-        .collect();
-    let boundaries = v
-        .boundaries
-        .iter()
-        .map(|b| {
-            let (name, min, max) = match b {
-                Boundary::EveryRow => ("everyRow", None, None),
-                Boundary::FirstRow => ("firstRow", None, None),
-                Boundary::LastRow => ("lastRow", None, None),
-                Boundary::EveryFrame { min, max } => ("everyFrame", Some(*min as i64), Some(*max as i64)),
-            };
-            BoundaryOutput { name: name.to_string(), offset_min: min, offset_max: max }
-        })
-        .collect();
-    let ev_map = v
-        .ev_map
-        .iter()
-        .map(|e| EvMapEntry {
-            entry_type: match e.pol.col {
-                ColType::Witness => "cm",
-                ColType::Fixed => "const",
-                ColType::Custom => "custom",
-            }
-            .to_string(),
-            id: e.pol.id as usize,
-            prime: e.pol.offset,
-            opening_pos: e.opening_pos as usize,
-            commit_id: e.pol.commit_id.map(|c| c as usize),
-        })
-        .collect();
-    let air_group_values =
-        v.airgroup_values.iter().map(|(agg, stage)| json!({"aggType": agg, "stage": stage})).collect();
-
-    Ok(StarkInfoOutput {
-        name: air_name.to_string(),
-        cm_pols_map: cm_pols_json(core)?,
-        const_pols_map: const_pols_json(&v.const_pols_map),
-        challenges_map,
-        publics_map,
-        proof_values_map: named(&v.proof_values_map),
-        airgroup_values_map: named(&v.airgroup_values_map),
-        air_values_map: named(&v.air_values_map),
-        map_sections_n: v.map_sections_n.iter().map(|(k, v)| (k.clone(), json!(v))).collect(),
-        air_id,
-        airgroup_id,
-        circuit_type,
-        n_constants: v.n_constants as usize,
-        n_publics: v.n_publics as usize,
-        air_group_values,
-        n_stages: v.n_stages as usize,
-        custom_commits: custom_commits_json(&v.custom_commits),
-        custom_commits_map: custom_pols_json(&v.custom_pols_map),
-        stark_struct: stark_struct_output(stark_struct, ldt),
-        boundaries,
-        opening_points: v.opening_points.clone(),
-        c_exp_id: v.c_exp_id as usize,
-        q_dim: v.q_dim as usize,
-        q_deg: v.q_deg as usize,
-        n_constraints: v.n_constraints as usize,
-        n_commitments_stage1: 0,
-        ev_map,
-        fri_batch_size: v.fri_batch_size as usize,
-        security: Some(SecurityInfo {
-            proximity_gap: ldt.proximity_gap(),
-            proximity_parameter: ldt.proximity_parameter(),
-            regime: ldt.regime_identifier().to_string(),
-        }),
-        multiproof: false,
-    })
-}
-
-fn lens(l: &Option<Vec<u32>>) -> Option<Vec<usize>> {
-    l.as_ref().map(|v| v.iter().map(|x| *x as usize).collect())
-}
-
-/// cmPolsMap in the golden key order: Q pieces put stagePos before stageId, the others after lengths/imPol/expId.
-fn cm_pols_json(core: &pil_info::core::project::StarkInfoCore) -> anyhow::Result<Vec<serde_json::Value>> {
-    let v = &core.verifier;
-    let n_im = v.cm_pols_map.iter().filter(|p| p.im_pol).count();
-    anyhow::ensure!(
-        n_im == core.prover.im_exp_ids.len(),
-        "{n_im} im columns for {} im expressions",
-        core.prover.im_exp_ids.len()
-    );
-    let mut im_exp_ids = core.prover.im_exp_ids.iter();
-    let q_stage = v.n_stages + 1;
-    let pols = v.cm_pols_map.iter().enumerate().map(|(i, p)| {
-        let mut obj = serde_json::Map::new();
-        obj.insert("stage".into(), json!(p.stage));
-        obj.insert("name".into(), json!(p.name));
-        obj.insert("dim".into(), json!(p.dim));
-        obj.insert("polsMapId".into(), json!(i));
-        if p.stage == q_stage {
-            obj.insert("stagePos".into(), json!(p.stage_pos));
-            obj.insert("stageId".into(), json!(p.stage_id));
-        } else {
-            obj.insert("stageId".into(), json!(p.stage_id));
-            if let Some(l) = lens(&p.lengths) {
-                obj.insert("lengths".into(), json!(l));
-            }
-            if p.im_pol {
-                obj.insert("imPol".into(), json!(true));
-                obj.insert("expId".into(), json!(im_exp_ids.next()));
-            }
-            obj.insert("stagePos".into(), json!(p.stage_pos));
-        }
-        serde_json::Value::Object(obj)
-    });
-    Ok(pols.collect())
-}
-
-fn const_pols_json(m: &[pil_info::core::layout::PolMap]) -> Vec<PolMapEntry> {
-    m.iter()
-        .enumerate()
-        .map(|(i, p)| PolMapEntry {
-            stage: 0,
-            name: p.name.clone(),
-            dim: p.dim as usize,
-            pols_map_id: i,
-            stage_id: p.stage_id as usize,
-            lengths: lens(&p.lengths),
-            stage_pos: None,
-            im_pol: None,
-            exp_id: None,
-        })
-        .collect()
-}
-
-fn custom_commits_json(c: &[pil_info::core::ir::CustomCommit]) -> Vec<serde_json::Value> {
-    c.iter()
-        .map(|c| {
-            let public_values: Vec<serde_json::Value> = c.public_values.iter().map(|i| json!({"idx": i})).collect();
-            json!({"name": c.name, "publicValues": public_values, "stageWidths": c.stage_widths})
-        })
-        .collect()
-}
-
-fn custom_pols_json(m: &[Vec<pil_info::core::layout::PolMap>]) -> Vec<serde_json::Value> {
-    m.iter()
-        .map(|m| {
-            let entries: Vec<serde_json::Value> = m
-                .iter()
-                .enumerate()
-                .map(|(i, p)| {
-                    let mut obj = serde_json::Map::new();
-                    obj.insert("stage".into(), json!(p.stage));
-                    obj.insert("name".into(), json!(p.name.rsplit('.').next().unwrap_or(&p.name)));
-                    obj.insert("dim".into(), json!(p.dim));
-                    obj.insert("polsMapId".into(), json!(i));
-                    obj.insert("stageId".into(), json!(p.stage_id));
-                    obj.insert("stagePos".into(), json!(p.stage_pos));
-                    serde_json::Value::Object(obj)
-                })
-                .collect();
-            json!(entries)
-        })
-        .collect()
+    let ss = stark_struct_output(stark_struct, ldt);
+    let mut out = pil_info::core::project::starkinfo_output(core, air_name, airgroup_id, air_id, ss, Some(security))
+        .map_err(|e| anyhow::anyhow!("starkinfo: {e:?}"))?;
+    out.circuit_type = circuit_type;
+    Ok(out)
 }
 
 /// The stark struct with the solved query counts and grinding bits.
