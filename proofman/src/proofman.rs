@@ -5985,7 +5985,11 @@ where
                 instances.iter().filter(|&&id| self.pctx.dctx_instance_priority(id) != WitnessPriority::Last).count();
             self.last_gate.store(non_last, Ordering::Release);
             timer_start_debug!(PRE_CALCULATE_WC);
-            self.wcm.pre_calculate_witness(1, instances, self.max_num_threads, memory_handler.as_ref())?;
+            // A component may wait here for witnesses it announced, and return when the proof is
+            // cancelled: that error would hide the one that cancelled it (a failed witness, say).
+            self.wcm
+                .pre_calculate_witness(1, instances, self.max_num_threads, memory_handler.as_ref())
+                .map_err(|e| self.cancellation_info.write_recover().take_cause().unwrap_or(e))?;
             timer_stop_and_log_debug!(PRE_CALCULATE_WC);
         } else {
             // Scheduled here rather than trusting the caller: the proofs phase hands this list in

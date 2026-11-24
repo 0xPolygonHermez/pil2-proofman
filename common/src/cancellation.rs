@@ -29,6 +29,18 @@ impl CancellationInfo {
         self.token = CancellationToken::new();
         self.error = None;
     }
+
+    /// The error the proof was cancelled with, taken out; `None` when it is not cancelled, or was
+    /// cancelled without one (by the caller). A witness component that returns because it saw the
+    /// cancellation gives an error of its own, which says that it stopped and not why: the path that
+    /// reports the proof's failure asks here first.
+    pub fn take_cause(&mut self) -> Option<ProofmanError> {
+        if self.token.is_cancelled() {
+            self.error.take()
+        } else {
+            None
+        }
+    }
 }
 
 /// Poison-tolerant access to the shared cancellation hub: recovering the guard avoids a poison
@@ -52,6 +64,22 @@ impl CancellationInfoExt for RwLock<CancellationInfo> {
 mod tests {
     use super::*;
     use std::sync::Arc;
+
+    /// A component that returns because the proof was cancelled reports an error of its own; the
+    /// failure reported for the proof must be the one that cancelled it.
+    #[test]
+    fn a_cancelled_proof_reports_what_cancelled_it() {
+        let mut info = CancellationInfo::default();
+        assert!(info.take_cause().is_none(), "not cancelled");
+
+        info.cancel(Some(ProofmanError::ProofmanError("a witness failed".into())));
+        assert!(matches!(info.take_cause(), Some(ProofmanError::ProofmanError(m)) if m == "a witness failed"));
+        assert!(info.take_cause().is_none(), "taken once");
+
+        let mut by_caller = CancellationInfo::default();
+        by_caller.cancel(None);
+        assert!(by_caller.take_cause().is_none(), "cancelled by the caller: no cause to report");
+    }
 
     /// `ProofCtx` holds the shared lock and not a token, because a reset replaces the token: a reader
     /// of the lock sees the proof cancelled and the next one not, a token clone stays cancelled.
