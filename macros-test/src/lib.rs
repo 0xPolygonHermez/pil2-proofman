@@ -507,7 +507,8 @@ mod tests {
     #[test]
     fn rewriting_each_element_keeps_its_neighbours() {
         let mut row = MainRowPacked::<Goldilocks>::default();
-        let v3 = |i: usize, j: usize, k: usize, round: u16| (0xA5A5u16 ^ ((i * 8 + j * 4 + k) as u16)).wrapping_add(round);
+        let v3 =
+            |i: usize, j: usize, k: usize, round: u16| (0xA5A5u16 ^ ((i * 8 + j * 4 + k) as u16)).wrapping_add(round);
         let v2 = |i: usize, j: usize, round: u32| (0xDEAD_BEEFu32 ^ ((i * 2 + j) as u32)).wrapping_add(round);
         row.set_field1(0xFF);
         for round in 0..2 {
