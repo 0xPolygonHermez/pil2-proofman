@@ -12,11 +12,20 @@ pub type ExprId = u32;
 /// A field element, reduced mod the field's modulus.
 pub type Fe = BigUint;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ColType {
     Witness,
     Fixed,
     Custom,
+}
+
+/// One column read: the key of the evMap, the DAG leaves and `Env`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ColRef {
+    pub col: ColType,
+    pub commit_id: Option<u32>,
+    pub id: u32,
+    pub offset: i64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -64,13 +73,33 @@ pub struct Constraint {
     pub label: String,
 }
 
-/// A column in pilout order.
+/// Indices of an array symbol's cell; `None` for a scalar symbol.
+pub type Lengths = Option<Vec<u32>>;
+
+/// A column in pilout order; `name` is its symbol's, `lengths` its cell within it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Column {
     pub name: String,
     pub stage: u32,
     pub dim: u32,
     pub id: u32,
+    pub lengths: Lengths,
+}
+
+/// A custom commit as the air declares it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CustomCommit {
+    pub name: String,
+    pub public_values: Vec<u32>,
+    pub stage_widths: Vec<u32>,
+}
+
+/// A public, proof value, air value or airgroup value.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct NamedValue {
+    pub name: String,
+    pub stage: u32,
+    pub lengths: Lengths,
 }
 
 /// A pilout hint, passed through untyped until a task needs its fields.
@@ -92,17 +121,21 @@ pub struct ConstraintSystem {
     pub fixed: Vec<Column>,
     pub custom: Vec<Vec<Column>>,
     pub challenges: Vec<(u32, u32, String)>,
-    pub publics: Vec<String>,
-    pub proof_values: Vec<(u32, String)>,
-    pub air_values: Vec<(u32, String)>,
-    pub airgroup_values: Vec<(u32, String)>,
+    /// Publics are stage 1.
+    pub publics: Vec<NamedValue>,
+    pub proof_values: Vec<NamedValue>,
+    pub air_values: Vec<NamedValue>,
+    pub airgroup_values: Vec<NamedValue>,
     pub hints: Vec<Hint>,
+    pub custom_commits: Vec<CustomCommit>,
+    /// `aggType` of each of the airgroup's values.
+    pub airgroup_agg_types: Vec<i32>,
 }
 
 /// Values for `eval_expr`; a missing entry reads as 0.
 #[derive(Clone, Debug, Default)]
 pub struct Env {
-    pub cols: BTreeMap<(ColType, Option<u32>, u32, i64), Fe>,
+    pub cols: BTreeMap<ColRef, Fe>,
     pub challenges: BTreeMap<(u32, u32), Fe>,
     pub publics: BTreeMap<u32, Fe>,
     pub proof_values: BTreeMap<u32, Fe>,
@@ -159,7 +192,7 @@ pub fn dim(cs: &ConstraintSystem, e: &Expr) -> u32 {
 
 fn dim_in(cs: &ConstraintSystem, e: &Expr, witness: &[u32], memo: &mut BTreeMap<ExprId, u32>) -> u32 {
     let ext = cs.field.ext_dim() as u32;
-    let by_stage = |s: Option<&(u32, String)>| if s.is_some_and(|v| v.0 == 1) { 1 } else { ext };
+    let by_stage = |s: Option<&NamedValue>| if s.is_some_and(|v| v.stage == 1) { 1 } else { ext };
     match e {
         Expr::Add(a, b) | Expr::Sub(a, b) | Expr::Mul(a, b) => {
             dim_in(cs, a, witness, memo).max(dim_in(cs, b, witness, memo))
@@ -226,7 +259,8 @@ fn eval_in(cs: &ConstraintSystem, e: &Expr, env: &Env, memo: &mut BTreeMap<ExprI
         Expr::Neg(a) => (p - eval_in(cs, a, env, memo) % p) % p,
         Expr::Const(c) => c % p,
         Expr::Col { col, commit_id, id, offset } => {
-            env.cols.get(&(*col, *commit_id, *id, *offset)).cloned().unwrap_or_default()
+            let k = ColRef { col: *col, commit_id: *commit_id, id: *id, offset: *offset };
+            env.cols.get(&k).cloned().unwrap_or_default()
         }
         Expr::Challenge { stage, stage_id } => env.challenges.get(&(*stage, *stage_id)).cloned().unwrap_or_default(),
         Expr::Public(i) => get(&env.publics, i),

@@ -8,35 +8,12 @@ use common::*;
 use num_bigint::BigUint;
 use pil2_pilout::pilout as pb;
 use pil_info::core::from_pilout::from_pilout;
-use pil_info::core::im::{check_im, im_order, substitute, Checked, ImChoice, ImError};
-use pil_info::core::ir::{degree, eval_expr, visit, Boundary, ColType, ConstraintSystem, Env, Expr};
+use pil_info::core::im::{check_im, im_order, substitute, Checked, ImError};
+use pil_info::core::ir::{degree, eval_expr, visit, Boundary, ColRef, ColType, ConstraintSystem, Env, Expr};
 use pil_info::pil::im_polynomials::calculate_intermediate_polynomials;
 use pil_info::pil::prepare::prepare_pil;
 use pil_info::search::im::search_im;
 use pil_info::{DegreePolicy, Opening};
-
-fn cs_of(p: &pb::PilOut) -> ConstraintSystem {
-    from_pilout(p, 0, 0, &gl(), Opening::Deep).expect("a lowerable pilout")
-}
-
-/// 4 witness columns a,b,c,d; one every-row constraint per entry of `roots`.
-fn system(exprs: Vec<pb::Expression>, roots: &[u32]) -> ConstraintSystem {
-    cs_of(&pilout(&["a", "b", "c", "d"], &[], exprs, roots.iter().map(|r| every_row(*r)).collect()))
-}
-
-/// 0: a*b, 1: e0*c, 2: e1*d (degree 4), 3: e2*a (degree 5).
-fn chain() -> Vec<pb::Expression> {
-    vec![
-        mul(witness(0, 0), witness(1, 0)),
-        mul(exp(0), witness(2, 0)),
-        mul(exp(1), witness(3, 0)),
-        mul(exp(2), witness(0, 0)),
-    ]
-}
-
-fn choice(v: &[u32]) -> ImChoice {
-    ImChoice { exprs: v.to_vec() }
-}
 
 #[test]
 fn accepts_empty_choice_when_degree_fits() {
@@ -137,12 +114,13 @@ fn substitute_resolves_refs_and_promoted_become_columns() {
     // semantics: with each im column set to the value of its expression, the root evaluates the same
     let mut env = Env::default();
     for (k, v) in [(0u32, 3u32), (1, 5), (2, 7), (3, 11)] {
-        env.cols.insert((ColType::Witness, None, k, 0), BigUint::from(v));
+        env.cols.insert(ColRef { col: ColType::Witness, commit_id: None, id: k, offset: 0 }, BigUint::from(v));
     }
     let mut full = env.clone();
     for (c, i) in cols.iter().zip(&im.exprs) {
         let Expr::Col { id, .. } = c else { unreachable!() };
-        full.cols.insert((ColType::Witness, None, *id, 0), eval_expr(&cs, &Expr::Ref(*i), &env));
+        let k = ColRef { col: ColType::Witness, commit_id: None, id: *id, offset: 0 };
+        full.cols.insert(k, eval_expr(&cs, &Expr::Ref(*i), &env));
     }
     assert_eq!(eval_expr(&cs, &sub_root, &full), eval_expr(&cs, &root, &env));
     // an empty choice only inlines
@@ -151,81 +129,6 @@ fn substitute_resolves_refs_and_promoted_become_columns() {
 }
 
 // ---- the old search as oracle -------------------------------------------------------------
-
-struct Rng(u64);
-impl Rng {
-    fn next(&mut self) -> u64 {
-        self.0 = self.0.wrapping_add(0x9E37_79B9_7F4A_7C15);
-        let mut z = self.0;
-        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
-        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
-        z ^ (z >> 31)
-    }
-    fn below(&mut self, n: u64) -> u64 {
-        self.next() % n
-    }
-}
-
-/// A seeded random DAG of <= 9 expressions over 4 columns, depth <= 6, every constraint of degree 1..=24.
-fn random_pilout(seed: u64) -> (pb::PilOut, ConstraintSystem) {
-    random_pilout_in(seed, Opening::Deep)
-}
-
-/// As `random_pilout`; under Shplonk the roots also take firstRow/lastRow/everyFrame boundaries.
-fn random_pilout_in(seed: u64, opening: Opening) -> (pb::PilOut, ConstraintSystem) {
-    let mut rng = Rng(seed);
-    loop {
-        let n = 3 + rng.below(7) as u32;
-        let mut depth: Vec<u32> = Vec::new();
-        let mut exprs = Vec::new();
-        for i in 0..n {
-            let operand = |rng: &mut Rng, depth: &Vec<u32>| -> (Option<pb::Operand>, u32) {
-                match rng.below(20) {
-                    0..=7 => (witness(rng.below(4) as u32, rng.below(2) as i32), 0),
-                    8..=10 => (constant(&(1 + rng.below(9)).to_string()), 0),
-                    _ if i > 0 => {
-                        let j = rng.below(i as u64) as usize;
-                        if depth[j] < 6 {
-                            (exp(j as u32), depth[j])
-                        } else {
-                            (witness(rng.below(4) as u32, 0), 0)
-                        }
-                    }
-                    _ => (witness(rng.below(4) as u32, 0), 0),
-                }
-            };
-            let (l, dl) = operand(&mut rng, &depth);
-            let (r, dr) = operand(&mut rng, &depth);
-            let (e, d) = match rng.below(9) {
-                0..=2 => (add(l, r), dl.max(dr) + 1),
-                3..=4 => (sub(l, r), dl.max(dr) + 1),
-                5..=7 => (mul(l, r), dl.max(dr) + 1),
-                _ => (neg(l), dl + 1),
-            };
-            exprs.push(e);
-            depth.push(d);
-        }
-        let mut roots = vec![n - 1];
-        for _ in 0..rng.below(3) {
-            roots.push(rng.below(n as u64) as u32);
-        }
-        let cons = roots
-            .iter()
-            .map(|r| match (opening, rng.below(4)) {
-                (Opening::Deep, _) | (_, 0) => every_row(*r),
-                (_, 1) => first_row(*r),
-                (_, 2) => last_row(*r),
-                _ => every_frame(*r, 0, 1),
-            })
-            .collect();
-        let p = pilout(&["a", "b", "c", "d"], &[], exprs, cons);
-        let Ok(cs) = from_pilout(&p, 0, 0, &gl(), opening) else { continue };
-        let degs: Vec<u32> = cs.constraints.iter().map(|c| degree(&cs, &c.e)).collect();
-        if degs.iter().all(|d| (1..=24).contains(d)) {
-            return (p, cs);
-        }
-    }
-}
 
 fn policies() -> Vec<DegreePolicy> {
     vec![

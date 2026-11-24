@@ -3,7 +3,9 @@
 use num_bigint::BigUint;
 use pil2_pilout::pilout::{self as pb, constraint, expression as ex, operand, SymbolType};
 
-use super::ir::{visit, Boundary, ColType, Column, Constraint, ConstraintSystem, Expr, Hint};
+use super::ir::{
+    visit, Boundary, ColType, Column, Constraint, ConstraintSystem, CustomCommit, Expr, Hint, Lengths, NamedValue,
+};
 use crate::cfg::{FieldCfg, Opening};
 
 /// Largest id a symbol table may reach; keeps a hostile id from allocating the world.
@@ -94,12 +96,23 @@ pub(crate) fn symbol_len(s: &pb::Symbol) -> usize {
     }
 }
 
-fn cell_name(s: &pb::Symbol, k: usize) -> String {
+/// Indices of the `k`-th cell of `s`, last index fastest; `None` for a scalar.
+fn cell_lengths(s: &pb::Symbol, k: usize) -> Lengths {
     if s.dim == 0 {
-        s.name.clone()
-    } else {
-        format!("{}[{k}]", s.name)
+        return None;
     }
+    let mut rest = k;
+    let mut idx = vec![0u32; s.lengths.len()];
+    for (i, l) in s.lengths.iter().enumerate().rev() {
+        let l = (*l as usize).max(1);
+        idx[i] = (rest % l) as u32;
+        rest /= l;
+    }
+    Some(idx)
+}
+
+fn cell(s: &pb::Symbol, k: usize) -> (String, Lengths) {
+    (s.name.clone(), cell_lengths(s, k))
 }
 
 /// Place `name` at `idx`, padding with `fill`.
@@ -299,7 +312,8 @@ fn columns(
             if out.len() >= MAX_SLOTS {
                 return Err(bad(s.id as usize, "too many columns"));
             }
-            out.push(Column { name: cell_name(s, k), stage, dim, id: base + s.id + k as u32 });
+            let lengths = cell_lengths(s, k);
+            out.push(Column { name: s.name.clone(), stage, dim, id: base + s.id + k as u32, lengths });
         }
     }
     Ok(out)
@@ -328,10 +342,11 @@ fn named<T: Clone>(
     Ok(v)
 }
 
-/// Pairs the declared stages with the symbol names; a symbol past the table is an error, an unnamed value gets "".
-fn staged(names: Vec<String>, stages: &[u32]) -> Result<Vec<(u32, String)>, PiloutError> {
-    within(names.len() <= stages.len(), 0, "a value symbol beyond the declared values")?;
-    Ok(stages.iter().enumerate().map(|(i, st)| (*st, names.get(i).cloned().unwrap_or_default())).collect())
+/// Pairs the declared stages with the symbol cells; a symbol past the table is an error, an unnamed value gets "".
+fn staged(cells: Vec<(String, Lengths)>, stages: &[u32]) -> Result<Vec<NamedValue>, PiloutError> {
+    within(cells.len() <= stages.len(), 0, "a value symbol beyond the declared values")?;
+    let at = |i: usize| cells.get(i).cloned().unwrap_or_default();
+    Ok(stages.iter().enumerate().map(|(i, st)| NamedValue { name: at(i).0, stage: *st, lengths: at(i).1 }).collect())
 }
 
 /// Lowers air (`airgroup`, `air`) of `pilout`; reads the protobuf directly.
@@ -383,8 +398,10 @@ pub fn from_pilout(
         .filter(|s| s.r#type == SymbolType::Challenge as i32)
         .map(|s| (s.stage.unwrap_or(1), s.id, s.name.clone()))
         .collect();
-    let proof_values = named(pilout, SymbolType::ProofValue, None, (1, String::new()), |s, k| {
-        (s.stage.unwrap_or(1), cell_name(s, k))
+    let unnamed = NamedValue { stage: 1, ..Default::default() };
+    let proof_values = named(pilout, SymbolType::ProofValue, None, unnamed.clone(), |s, k| {
+        let (name, lengths) = cell(s, k);
+        NamedValue { name, stage: s.stage.unwrap_or(1), lengths }
     })?;
     let air_stages: Vec<u32> = a.air_values.iter().map(|v| v.stage).collect();
     let agv_stages: Vec<u32> = ag.air_group_values.iter().map(|v| v.stage).collect();
@@ -395,6 +412,27 @@ pub fn from_pilout(
         .map(|h| Hint { name: h.name.clone(), fields: h.hint_fields.clone() })
         .collect();
     within(!pilout.num_challenges.is_empty(), 0, "the pilout declares no challenge stages")?;
+    let custom_commits = a
+        .custom_commits
+        .iter()
+        .map(|c| CustomCommit {
+            name: c.name.clone().unwrap_or_default(),
+            public_values: c.public_values.iter().map(|v| v.idx).collect(),
+            stage_widths: c.stage_widths.clone(),
+        })
+        .collect();
+    let publics = named(pilout, SymbolType::PublicValue, None, unnamed, |s, k| {
+        let (name, lengths) = cell(s, k);
+        NamedValue { name, stage: 1, lengths }
+    })?;
+    let air_values = staged(
+        named(pilout, SymbolType::AirValue, Some((airgroup, Some(air))), Default::default(), cell)?,
+        &air_stages,
+    )?;
+    let airgroup_values = staged(
+        named(pilout, SymbolType::AirGroupValue, Some((airgroup, None)), Default::default(), cell)?,
+        &agv_stages,
+    )?;
 
     Ok(ConstraintSystem {
         field: field.clone(),
@@ -407,16 +445,12 @@ pub fn from_pilout(
         fixed,
         custom,
         challenges,
-        publics: named(pilout, SymbolType::PublicValue, None, String::new(), cell_name)?,
+        publics,
         proof_values,
-        air_values: staged(
-            named(pilout, SymbolType::AirValue, Some((airgroup, Some(air))), String::new(), cell_name)?,
-            &air_stages,
-        )?,
-        airgroup_values: staged(
-            named(pilout, SymbolType::AirGroupValue, Some((airgroup, None)), String::new(), cell_name)?,
-            &agv_stages,
-        )?,
+        air_values,
+        airgroup_values,
         hints,
+        custom_commits,
+        airgroup_agg_types: ag.air_group_values.iter().map(|v| v.agg_type).collect(),
     })
 }

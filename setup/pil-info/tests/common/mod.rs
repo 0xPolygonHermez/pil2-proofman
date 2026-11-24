@@ -2,6 +2,12 @@
 #![allow(dead_code)]
 
 use num_bigint::BigUint;
+use pil_info::core::from_pilout::from_pilout;
+use pil_info::core::im::{check_im, im_order, Checked, ImChoice};
+use pil_info::core::ir::{degree, ConstraintSystem};
+use pil_info::pil::prepare::PrepareOptions;
+use pil_info::search::im::search_im;
+use pil_info::{Opening, PilInfoCfg};
 use pil2_pilout::pilout::{self as pb, constraint, expression, global_expression, global_operand, operand, SymbolType};
 
 pub const R: &str = "21888242871839275222246405745257275088548364400416034343698204186575808495617";
@@ -185,4 +191,157 @@ pub fn real_pilouts() -> Vec<(std::path::PathBuf, pb::PilOut)> {
     }
     assert!(!out.is_empty(), "no pilout under {root:?}");
     out
+}
+
+// ---- shared core helpers ----
+
+pub fn cs_of(p: &pb::PilOut) -> ConstraintSystem {
+    from_pilout(p, 0, 0, &gl(), Opening::Deep).expect("a lowerable pilout")
+}
+
+/// 4 witness columns a,b,c,d; one every-row constraint per entry of `roots`.
+pub fn system(exprs: Vec<pb::Expression>, roots: &[u32]) -> ConstraintSystem {
+    cs_of(&pilout(&["a", "b", "c", "d"], &[], exprs, roots.iter().map(|r| every_row(*r)).collect()))
+}
+
+/// 0: a*b, 1: e0*c, 2: e1*d (degree 4), 3: e2*a (degree 5).
+pub fn chain() -> Vec<pb::Expression> {
+    vec![
+        mul(witness(0, 0), witness(1, 0)),
+        mul(exp(0), witness(2, 0)),
+        mul(exp(1), witness(3, 0)),
+        mul(exp(2), witness(0, 0)),
+    ]
+}
+
+pub fn choice(v: &[u32]) -> ImChoice {
+    ImChoice { exprs: v.to_vec() }
+}
+
+pub struct Rng(pub u64);
+impl Rng {
+    pub fn next(&mut self) -> u64 {
+        self.0 = self.0.wrapping_add(0x9E37_79B9_7F4A_7C15);
+        let mut z = self.0;
+        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+        z ^ (z >> 31)
+    }
+    pub fn below(&mut self, n: u64) -> u64 {
+        self.next() % n
+    }
+}
+
+/// A seeded random DAG of <= 9 expressions over 4 columns, depth <= 6, every constraint of degree 1..=24.
+pub fn random_pilout(seed: u64) -> (pb::PilOut, ConstraintSystem) {
+    random_pilout_in(seed, Opening::Deep)
+}
+
+/// As `random_pilout`; under Shplonk the roots also take firstRow/lastRow/everyFrame boundaries.
+pub fn random_pilout_in(seed: u64, opening: Opening) -> (pb::PilOut, ConstraintSystem) {
+    let mut rng = Rng(seed);
+    loop {
+        let n = 3 + rng.below(7) as u32;
+        let mut depth: Vec<u32> = Vec::new();
+        let mut exprs = Vec::new();
+        for i in 0..n {
+            let operand = |rng: &mut Rng, depth: &Vec<u32>| -> (Option<pb::Operand>, u32) {
+                match rng.below(20) {
+                    0..=7 => (witness(rng.below(4) as u32, rng.below(2) as i32), 0),
+                    8..=10 => (constant(&(1 + rng.below(9)).to_string()), 0),
+                    _ if i > 0 => {
+                        let j = rng.below(i as u64) as usize;
+                        if depth[j] < 6 {
+                            (exp(j as u32), depth[j])
+                        } else {
+                            (witness(rng.below(4) as u32, 0), 0)
+                        }
+                    }
+                    _ => (witness(rng.below(4) as u32, 0), 0),
+                }
+            };
+            let (l, dl) = operand(&mut rng, &depth);
+            let (r, dr) = operand(&mut rng, &depth);
+            let (e, d) = match rng.below(9) {
+                0..=2 => (add(l, r), dl.max(dr) + 1),
+                3..=4 => (sub(l, r), dl.max(dr) + 1),
+                5..=7 => (mul(l, r), dl.max(dr) + 1),
+                _ => (neg(l), dl + 1),
+            };
+            exprs.push(e);
+            depth.push(d);
+        }
+        let mut roots = vec![n - 1];
+        for _ in 0..rng.below(3) {
+            roots.push(rng.below(n as u64) as u32);
+        }
+        let cons = roots
+            .iter()
+            .map(|r| match (opening, rng.below(4)) {
+                (Opening::Deep, _) | (_, 0) => every_row(*r),
+                (_, 1) => first_row(*r),
+                (_, 2) => last_row(*r),
+                _ => every_frame(*r, 0, 1),
+            })
+            .collect();
+        let p = pilout(&["a", "b", "c", "d"], &[], exprs, cons);
+        let Ok(cs) = from_pilout(&p, 0, 0, &gl(), opening) else { continue };
+        let degs: Vec<u32> = cs.constraints.iter().map(|c| degree(&cs, &c.e)).collect();
+        if degs.iter().all(|d| (1..=24).contains(d)) {
+            return (p, cs);
+        }
+    }
+}
+
+/// Two stages: witness a,b (stage 1) and x,y (stage 2, extension), challenges alpha,beta (stage 2).
+pub fn pilout2(fixed_names: &[&str], exprs: Vec<pb::Expression>, constraints: Vec<pb::Constraint>) -> pb::PilOut {
+    let mut p = pilout(&["a", "b"], fixed_names, exprs, constraints);
+    p.num_challenges = vec![0, 2];
+    for (i, n) in ["x", "y"].iter().enumerate() {
+        p.symbols.push(symbol(n, SymbolType::WitnessCol, 2, i as u32));
+    }
+    for (i, n) in ["alpha", "beta"].iter().enumerate() {
+        p.symbols.push(symbol(n, SymbolType::Challenge, 2, i as u32));
+    }
+    p.air_groups[0].airs[0].stage_widths = vec![2, 2];
+    p
+}
+
+/// The old pipeline and the new core on one air, over the same promoted set.
+pub struct OldRun {
+    pub cs: ConstraintSystem,
+    pub im: ImChoice,
+    pub chk: Checked,
+    pub old: pil_info::PilInfoResult,
+    pub blowup_bits: usize,
+    pub im_pols_stages: bool,
+}
+
+/// None when the old pipeline or the search finds the air infeasible at this blowup.
+pub fn old_run(p: &pb::PilOut, airgroup: usize, air: usize, blowup_bits: usize) -> Option<OldRun> {
+    old_run_with(p, airgroup, air, blowup_bits, false)
+}
+
+/// `old_run`, the old pipeline given `--impols`.
+pub fn old_run_with(
+    p: &pb::PilOut,
+    airgroup: usize,
+    air: usize,
+    blowup_bits: usize,
+    im_pols_stages: bool,
+) -> Option<OldRun> {
+    let cfg = PilInfoCfg::goldilocks(blowup_bits);
+    let cs = from_pilout(p, airgroup, air, &gl(), Opening::Deep).ok()?;
+    let prep = pil_info::pil::prepare::prepare_pil(p, airgroup, air, &gl()).ok()?;
+    let set = search_im(&cs, &cfg.degree_policy, prep.constraint_poly.q_dim).ok()?;
+    let im = im_order(&set).ok()?;
+    let chk = check_im(&cs, &im, cfg.degree_policy.max_constraint_degree() as u32, true).ok()?;
+    let opts = PrepareOptions { im_pols_stages, ..Default::default() };
+    let old = pil_info::run(p, airgroup, air, &cfg, &opts).ok()?;
+    Some(OldRun { cs, im, chk, old, blowup_bits, im_pols_stages })
+}
+
+/// `old_run` at the first blowup of 1..=3 bits that is feasible.
+pub fn old_run_any(p: &pb::PilOut, airgroup: usize, air: usize) -> Option<OldRun> {
+    (1..=3).find_map(|b| old_run(p, airgroup, air, b))
 }

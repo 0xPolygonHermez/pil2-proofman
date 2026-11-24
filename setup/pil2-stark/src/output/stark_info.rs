@@ -33,43 +33,7 @@ pub fn build_starkinfo_output(
     c_exp_id: usize,
     q_deg: i64,
 ) -> StarkInfoOutput {
-    // The query counts and grinding bits are the solved values, not the settings.
-    let low_degree_test = match (ldt, &stark_struct.low_degree_test) {
-        (LowDegreeTest::Fri(fri), crate::types::stark_struct::LowDegreeTest::Fri(schedule)) => {
-            let sec = fri.security_params();
-            let solved = FriStruct {
-                num_queries: sec.n_queries as usize,
-                grinding_bits_queries: sec.grinding_bits_query as usize,
-                ..schedule.clone()
-            };
-            crate::types::stark_struct::LowDegreeTest::Fri(solved)
-        }
-        (LowDegreeTest::Stir(stir), crate::types::stark_struct::LowDegreeTest::Stir(schedule)) => {
-            let sec = stir.security_params();
-            let solved = StirStruct {
-                num_queries: sec.num_queries.iter().map(|&t| t as usize).collect(),
-                grinding_bits_queries: sec.grinding_bits_queries.iter().map(|&g| g as usize).collect(),
-                ..schedule.clone()
-            };
-            crate::types::stark_struct::LowDegreeTest::Stir(solved)
-        }
-        (ldt, schedule) => panic!(
-            "solved low-degree test {} does not match the stark struct's {:?}",
-            ldt.identifier(),
-            schedule.kind()
-        ),
-    };
-    let stark_struct_out = StarkStructOutput {
-        n_bits: stark_struct.n_bits,
-        merkle_tree_arity: stark_struct.merkle_tree_arity,
-        transcript_arity: stark_struct.transcript_arity,
-        merkle_tree_custom: stark_struct.merkle_tree_custom,
-        last_level_verification: stark_struct.last_level_verification,
-        hash_commits: stark_struct.hash_commits,
-        n_bits_ext: stark_struct.n_bits_ext,
-        verification_hash_type: stark_struct.verification_hash_type.clone(),
-        low_degree_test,
-    };
+    let stark_struct_out = stark_struct_output(stark_struct, ldt);
 
     let boundaries: Vec<BoundaryOutput> = {
         let mut seen = Vec::new();
@@ -307,6 +271,236 @@ pub fn build_starkinfo_output(
     }
 }
 
+/// As `build_starkinfo_output`, from the thin core's projection (the old one stays until Task 8).
+pub fn build_starkinfo_output_from_core(
+    core: &pil_info::core::project::StarkInfoCore,
+    stark_struct: &StarkStruct,
+    ldt: &LowDegreeTest,
+    airgroup_id: usize,
+    air_id: usize,
+    circuit_type: Option<u64>,
+    air_name: &str,
+) -> anyhow::Result<StarkInfoOutput> {
+    use pil_info::core::ir::{Boundary, ColType, NamedValue};
+
+    let v = &core.verifier;
+    let named = |m: &[NamedValue]| -> Vec<NameStageEntry> {
+        m.iter()
+            .map(|e| NameStageEntry { name: e.name.clone(), stage: e.stage as usize, lengths: lens(&e.lengths) })
+            .collect()
+    };
+    let publics_map = v
+        .publics_map
+        .iter()
+        .map(|e| PublicMapEntry { name: e.name.clone(), stage: e.stage as usize, lengths: lens(&e.lengths) })
+        .collect();
+    let challenges_map = v
+        .challenges_map
+        .iter()
+        .map(|c| ChallengeMapEntryOutput {
+            name: c.name.clone(),
+            stage: c.stage as usize,
+            dim: c.dim as usize,
+            stage_id: c.stage_id as usize,
+        })
+        .collect();
+    let boundaries = v
+        .boundaries
+        .iter()
+        .map(|b| {
+            let (name, min, max) = match b {
+                Boundary::EveryRow => ("everyRow", None, None),
+                Boundary::FirstRow => ("firstRow", None, None),
+                Boundary::LastRow => ("lastRow", None, None),
+                Boundary::EveryFrame { min, max } => ("everyFrame", Some(*min as i64), Some(*max as i64)),
+            };
+            BoundaryOutput { name: name.to_string(), offset_min: min, offset_max: max }
+        })
+        .collect();
+    let ev_map = v
+        .ev_map
+        .iter()
+        .map(|e| EvMapEntry {
+            entry_type: match e.pol.col {
+                ColType::Witness => "cm",
+                ColType::Fixed => "const",
+                ColType::Custom => "custom",
+            }
+            .to_string(),
+            id: e.pol.id as usize,
+            prime: e.pol.offset,
+            opening_pos: e.opening_pos as usize,
+            commit_id: e.pol.commit_id.map(|c| c as usize),
+        })
+        .collect();
+    let air_group_values =
+        v.airgroup_values.iter().map(|(agg, stage)| json!({"aggType": agg, "stage": stage})).collect();
+
+    Ok(StarkInfoOutput {
+        name: air_name.to_string(),
+        cm_pols_map: cm_pols_json(core)?,
+        const_pols_map: const_pols_json(&v.const_pols_map),
+        challenges_map,
+        publics_map,
+        proof_values_map: named(&v.proof_values_map),
+        airgroup_values_map: named(&v.airgroup_values_map),
+        air_values_map: named(&v.air_values_map),
+        map_sections_n: v.map_sections_n.iter().map(|(k, v)| (k.clone(), json!(v))).collect(),
+        air_id,
+        airgroup_id,
+        circuit_type,
+        n_constants: v.n_constants as usize,
+        n_publics: v.n_publics as usize,
+        air_group_values,
+        n_stages: v.n_stages as usize,
+        custom_commits: custom_commits_json(&v.custom_commits),
+        custom_commits_map: custom_pols_json(&v.custom_pols_map),
+        stark_struct: stark_struct_output(stark_struct, ldt),
+        boundaries,
+        opening_points: v.opening_points.clone(),
+        c_exp_id: v.c_exp_id as usize,
+        q_dim: v.q_dim as usize,
+        q_deg: v.q_deg as usize,
+        n_constraints: v.n_constraints as usize,
+        n_commitments_stage1: 0,
+        ev_map,
+        fri_batch_size: v.fri_batch_size as usize,
+        security: Some(SecurityInfo {
+            proximity_gap: ldt.proximity_gap(),
+            proximity_parameter: ldt.proximity_parameter(),
+            regime: ldt.regime_identifier().to_string(),
+        }),
+        multiproof: false,
+    })
+}
+
+fn lens(l: &Option<Vec<u32>>) -> Option<Vec<usize>> {
+    l.as_ref().map(|v| v.iter().map(|x| *x as usize).collect())
+}
+
+/// cmPolsMap in the golden key order: Q pieces put stagePos before stageId, the others after lengths/imPol/expId.
+fn cm_pols_json(core: &pil_info::core::project::StarkInfoCore) -> anyhow::Result<Vec<serde_json::Value>> {
+    let v = &core.verifier;
+    let n_im = v.cm_pols_map.iter().filter(|p| p.im_pol).count();
+    anyhow::ensure!(
+        n_im == core.prover.im_exp_ids.len(),
+        "{n_im} im columns for {} im expressions",
+        core.prover.im_exp_ids.len()
+    );
+    let mut im_exp_ids = core.prover.im_exp_ids.iter();
+    let q_stage = v.n_stages + 1;
+    let pols = v.cm_pols_map.iter().enumerate().map(|(i, p)| {
+        let mut obj = serde_json::Map::new();
+        obj.insert("stage".into(), json!(p.stage));
+        obj.insert("name".into(), json!(p.name));
+        obj.insert("dim".into(), json!(p.dim));
+        obj.insert("polsMapId".into(), json!(i));
+        if p.stage == q_stage {
+            obj.insert("stagePos".into(), json!(p.stage_pos));
+            obj.insert("stageId".into(), json!(p.stage_id));
+        } else {
+            obj.insert("stageId".into(), json!(p.stage_id));
+            if let Some(l) = lens(&p.lengths) {
+                obj.insert("lengths".into(), json!(l));
+            }
+            if p.im_pol {
+                obj.insert("imPol".into(), json!(true));
+                obj.insert("expId".into(), json!(im_exp_ids.next()));
+            }
+            obj.insert("stagePos".into(), json!(p.stage_pos));
+        }
+        serde_json::Value::Object(obj)
+    });
+    Ok(pols.collect())
+}
+
+fn const_pols_json(m: &[pil_info::core::layout::PolMap]) -> Vec<PolMapEntry> {
+    m.iter()
+        .enumerate()
+        .map(|(i, p)| PolMapEntry {
+            stage: 0,
+            name: p.name.clone(),
+            dim: p.dim as usize,
+            pols_map_id: i,
+            stage_id: p.stage_id as usize,
+            lengths: lens(&p.lengths),
+            stage_pos: None,
+            im_pol: None,
+            exp_id: None,
+        })
+        .collect()
+}
+
+fn custom_commits_json(c: &[pil_info::core::ir::CustomCommit]) -> Vec<serde_json::Value> {
+    c.iter()
+        .map(|c| {
+            let public_values: Vec<serde_json::Value> = c.public_values.iter().map(|i| json!({"idx": i})).collect();
+            json!({"name": c.name, "publicValues": public_values, "stageWidths": c.stage_widths})
+        })
+        .collect()
+}
+
+fn custom_pols_json(m: &[Vec<pil_info::core::layout::PolMap>]) -> Vec<serde_json::Value> {
+    m.iter()
+        .map(|m| {
+            let entries: Vec<serde_json::Value> = m
+                .iter()
+                .enumerate()
+                .map(|(i, p)| {
+                    let mut obj = serde_json::Map::new();
+                    obj.insert("stage".into(), json!(p.stage));
+                    obj.insert("name".into(), json!(p.name.rsplit('.').next().unwrap_or(&p.name)));
+                    obj.insert("dim".into(), json!(p.dim));
+                    obj.insert("polsMapId".into(), json!(i));
+                    obj.insert("stageId".into(), json!(p.stage_id));
+                    obj.insert("stagePos".into(), json!(p.stage_pos));
+                    serde_json::Value::Object(obj)
+                })
+                .collect();
+            json!(entries)
+        })
+        .collect()
+}
+
+/// The stark struct with the solved query counts and grinding bits.
+fn stark_struct_output(stark_struct: &StarkStruct, ldt: &LowDegreeTest) -> StarkStructOutput {
+    use crate::types::stark_struct::LowDegreeTest as Schedule;
+    let low_degree_test = match (ldt, &stark_struct.low_degree_test) {
+        (LowDegreeTest::Fri(fri), Schedule::Fri(schedule)) => {
+            let sec = fri.security_params();
+            Schedule::Fri(FriStruct {
+                num_queries: sec.n_queries as usize,
+                grinding_bits_queries: sec.grinding_bits_query as usize,
+                ..schedule.clone()
+            })
+        }
+        (LowDegreeTest::Stir(stir), Schedule::Stir(schedule)) => {
+            let sec = stir.security_params();
+            Schedule::Stir(StirStruct {
+                num_queries: sec.num_queries.iter().map(|&t| t as usize).collect(),
+                grinding_bits_queries: sec.grinding_bits_queries.iter().map(|&g| g as usize).collect(),
+                ..schedule.clone()
+            })
+        }
+        (ldt, schedule) => panic!(
+            "solved low-degree test {} does not match the stark struct's {:?}",
+            ldt.identifier(),
+            schedule.kind()
+        ),
+    };
+    StarkStructOutput {
+        n_bits: stark_struct.n_bits,
+        merkle_tree_arity: stark_struct.merkle_tree_arity,
+        transcript_arity: stark_struct.transcript_arity,
+        merkle_tree_custom: stark_struct.merkle_tree_custom,
+        last_level_verification: stark_struct.last_level_verification,
+        hash_commits: stark_struct.hash_commits,
+        n_bits_ext: stark_struct.n_bits_ext,
+        verification_hash_type: stark_struct.verification_hash_type.clone(),
+        low_degree_test,
+    }
+}
+
 pub fn collect_opening_points(setup: &SetupResult) -> Vec<i64> {
     setup.opening_points.clone()
 }
@@ -428,5 +622,94 @@ mod tests {
     #[should_panic(expected = "every round must need at most round 0's queries")]
     fn later_round_needing_more_queries_is_refused() {
         solve_low_degree_test(&stir(20, 4, 2, &[30]), 200);
+    }
+
+    /// The core's starkinfo is the old one byte for byte on random pilouts, with and without `--impols`.
+    #[test]
+    fn starkinfo_matches_old_oracle() {
+        use crate::output::json::to_json_string;
+        use crate::output::test_support::{core_starkinfo, full_random_in};
+
+        for ips in [false, true] {
+            let runs = full_random_in(10, ips);
+            assert_eq!(runs.len(), 10, "not enough feasible random pilouts");
+            for (k, f) in runs.iter().enumerate() {
+                let c = f.run.old.c_exp_id;
+                let new = core_starkinfo(&f.run, &f.stark_struct, &f.ldt, (0, 0, "Synthetic"), &[], c);
+                assert_eq!(to_json_string(&new).unwrap(), to_json_string(&f.old_out).unwrap(), "pilout {k} {ips}");
+            }
+        }
+    }
+
+    /// The expressions a hint names (today's `keep`): a top-level `Expression` operand, unless the old
+    /// formatter inlines it (`leaf +/- 0`).
+    fn hint_roots(p: &pil2_pilout::pilout::PilOut, g: usize, a: usize) -> Vec<pil_info::core::ir::Expr> {
+        use pil2_pilout::pilout::{expression::Operation as Op, hint_field::Value, operand::Operand as O, HintField};
+        let exprs = &p.air_groups[g].airs[a].expressions;
+        let inlined = |idx: u32| {
+            let (l, r) = match exprs.get(idx as usize).and_then(|e| e.operation.as_ref()) {
+                Some(Op::Add(x)) => (&x.lhs, &x.rhs),
+                Some(Op::Sub(x)) => (&x.lhs, &x.rhs),
+                _ => return false,
+            };
+            let op = |o: &Option<pil2_pilout::pilout::Operand>| o.as_ref().and_then(|o| o.operand.clone());
+            let zero = matches!(op(r), Some(O::Constant(c)) if c.value.iter().all(|b| *b == 0));
+            zero && !matches!(op(l), Some(O::Expression(_)) | None)
+        };
+        fn walk(f: &HintField, out: &mut Vec<u32>) {
+            match &f.value {
+                Some(Value::HintFieldArray(arr)) => arr.hint_fields.iter().for_each(|h| walk(h, out)),
+                Some(Value::Operand(o)) => {
+                    if let Some(O::Expression(e)) = &o.operand {
+                        out.push(e.idx);
+                    }
+                }
+                _ => {}
+            }
+        }
+        let mut ids = Vec::new();
+        let mine = p.hints.iter().filter(|h| h.air_group_id == Some(g as u32) && h.air_id == Some(a as u32));
+        mine.flat_map(|h| &h.hint_fields).for_each(|f| walk(f, &mut ids));
+        ids.into_iter().filter(|i| !inlined(*i)).map(pil_info::core::ir::Expr::Ref).collect()
+    }
+
+    /// Byte-equal starkinfo on every air of every example pilout (2^18 rows), hints as extra roots.
+    #[test]
+    fn starkinfo_matches_old_oracle_on_real_pilouts() {
+        use crate::output::json::to_json_string;
+        use crate::output::test_support::common::{old_run, real_pilouts};
+        use crate::output::test_support::{core_starkinfo, solved, N_BITS};
+
+        let mut compared = 0;
+        for (f, mut p) in real_pilouts() {
+            for g in 0..p.air_groups.len() {
+                for a in 0..p.air_groups[g].airs.len() {
+                    p.air_groups[g].airs[a].num_rows = Some(1 << N_BITS);
+                    let found = (1..=3).find_map(|bits: usize| old_run(&p, g, a, bits).map(|r| (r, solved(bits))));
+                    let Some((run, (ss, ldt))) = found else { continue };
+                    let old = &run.old;
+                    let name = old.setup.name.clone();
+                    let ct = Some(proofman_common::circuit_type_of(0, 1));
+                    let old_out = build_starkinfo_output(
+                        &old.setup,
+                        ss,
+                        &old.pil_code,
+                        &collect_opening_points(&old.setup),
+                        ldt,
+                        g,
+                        a,
+                        ct,
+                        &name,
+                        old.c_exp_id,
+                        old.q_deg,
+                    );
+                    let extra = hint_roots(&p, g, a);
+                    let new = core_starkinfo(&run, ss, ldt, (g, a, &name), &extra, old.c_exp_id);
+                    assert_eq!(to_json_string(&new).unwrap(), to_json_string(&old_out).unwrap(), "{f:?} {g}/{a}");
+                    compared += 1;
+                }
+            }
+        }
+        assert!(compared >= 40, "only {compared} airs compared");
     }
 }
