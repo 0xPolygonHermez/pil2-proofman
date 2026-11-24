@@ -51,15 +51,12 @@ int main(int argc, char **argv)
     string expressionsInfoFile = "";
     string expressionsBinFile = "";
     bool isGlobal = false;
-    bool isVerifier = false;
 
     ArgumentParser aParser (argc, argv);
 
     try {
 
         isGlobal = aParser.argumentExists("-g", "--global");
-
-        isVerifier = aParser.argumentExists("-v", "--verifier");
 
         //Input arguments
         if(!isGlobal) {
@@ -82,8 +79,7 @@ int main(int argc, char **argv)
 
         cout << "Writing expressions bin file..." << endl;
 
-        cout << isVerifier << endl;
-        ExpressionsBin(starkInfoFile, expressionsInfoFile, expressionsBinFile, isGlobal, isVerifier);
+        ExpressionsBin(starkInfoFile, expressionsInfoFile, expressionsBinFile, isGlobal);
         
         cout << "File successfully written" << endl;
 

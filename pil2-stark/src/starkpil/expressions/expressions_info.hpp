@@ -154,11 +154,11 @@ public:
     std::vector<uint64_t> numbersExps;
 
 
-    ExpressionsInfo(string starkInfoFile, string expressionsInfofile, bool verifier = false);
+    ExpressionsInfo(string starkInfoFile, string expressionsInfofile);
 
     ExpressionsInfo(string expressionsInfoFile);
 
-    void load(json j, bool global, bool verifier);
+    void load(json j, bool global);
 
     std::map<std::pair<std::string, std::vector<std::string>>, uint64_t> getAllOperations();
 
@@ -169,8 +169,6 @@ public:
     ExpInfoBin getParserArgs(std::vector<CodeOperation> &code, uint64_t nTmpUsed, std::vector<uint64_t> &numbers, bool global = false);
 
     void prepareExpressionsBin();
-
-    void prepareVerifierExpressionsBin();
 
     void prepareGlobalExpressionsBin();
 

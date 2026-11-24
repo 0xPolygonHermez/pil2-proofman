@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 
 use crate::core::dag::format::{ConstraintDag, DagBoundary, DagError, DagNode};
 use crate::core::fold::fold_roots;
-use crate::core::ir::ColRef;
+use crate::core::ir::{ColRef, ColType};
 
 /// What a DAG's references resolve against; `ev_map[k]` is evaluation `k`, `challenges[k]` is `(stage, stage_id)`.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -73,6 +73,62 @@ pub struct Instr {
 pub struct VerifierCode {
     pub tmp_used: usize,
     pub code: Vec<Instr>,
+}
+
+/// An evMap entry (`cm`, `const` or `custom` with its commit) as the column it opens; `None` for another type.
+pub fn ev_col_ref(ty: &str, commit_id: Option<u32>, id: u32, offset: i64) -> Option<ColRef> {
+    let (col, commit_id) = match ty {
+        "cm" => (ColType::Witness, None),
+        "const" => (ColType::Fixed, None),
+        "custom" => (ColType::Custom, Some(commit_id?)),
+        _ => return None,
+    };
+    Some(ColRef { col, commit_id, id, offset })
+}
+
+/// Index of the challenge named `std_vc`.
+pub fn std_vc_index<'a>(names: impl IntoIterator<Item = &'a str>) -> Option<usize> {
+    names.into_iter().position(|n| n == "std_vc")
+}
+
+impl VerifierCode {
+    /// The one dimension rule of the lowered code's consumers: an operand has its kind's dimension (a temporary its
+    /// definition's, a value 1 at stage 1), a result the max of its operands'; each temporary is written once, before
+    /// it is read.
+    pub fn check_dims(&self, ext_dim: usize) -> Result<(), DagError> {
+        let mut defs: BTreeMap<u32, usize> = BTreeMap::new();
+        for ins in &self.code {
+            let bad = |what: String| DagError::Dimension { tmp: ins.dest, what };
+            let n_src = if ins.op == CodeOp::Copy { 1 } else { 2 };
+            if ins.src.len() != n_src {
+                return Err(bad(format!("{:?} takes {n_src} operands, got {}", ins.op, ins.src.len())));
+            }
+            for s in &ins.src {
+                let by_stage = |stage: u32| if stage == 1 { 1 } else { ext_dim };
+                let d = match s.operand {
+                    Operand::Tmp(k) => {
+                        *defs.get(&k).ok_or_else(|| bad(format!("reads tmp {k} before it is written")))?
+                    }
+                    Operand::Eval(_) | Operand::Challenge { .. } | Operand::Zi { .. } => ext_dim,
+                    Operand::Number(_) | Operand::Public(_) => 1,
+                    Operand::ProofValue { stage, .. }
+                    | Operand::AirValue { stage, .. }
+                    | Operand::AirgroupValue { stage, .. } => by_stage(stage),
+                };
+                if s.dim != d {
+                    return Err(bad(format!("operand {:?} typed dim {} but has dim {d}", s.operand, s.dim)));
+                }
+            }
+            let dim = ins.src.iter().map(|s| s.dim).max().unwrap_or(1);
+            if ins.dim != dim {
+                return Err(bad(format!("typed dim {} over operands of dim {dim}", ins.dim)));
+            }
+            if defs.insert(ins.dest, dim).is_some() {
+                return Err(bad("assigned twice".into()));
+            }
+        }
+        Ok(())
+    }
 }
 
 impl LowerCtx {

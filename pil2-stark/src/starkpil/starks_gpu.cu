@@ -216,20 +216,6 @@ void computeZerofier(Goldilocks::Element *d_zi, uint64_t nBits, uint64_t nBitsEx
     dim3 blocks((NExtended + threads.x - 1) / threads.x);
     size_t shared_mem_size = extend * sizeof(gl64_t);
     buildZHInv_kernel<<<blocks, threads, shared_mem_size, stream>>>((gl64_t *)d_zi, extend, NExtended, w, sn);
-    
-    // TODO!
-    // for(uint64_t i = 1; i < boundaries.size(); ++i) {
-    //         Boundary boundary = boundaries[i];
-    //     if(boundary.name == "everyRow") {
-    //         buildZHInv(nBits, nBitsExt);
-    //     } else if(boundary.name == "firstRow") {
-    //         buildOneRowZerofierInv(nBits, nBitsExt, i, 0);
-    //     } else if(boundary.name == "lastRow") {
-    //         buildOneRowZerofierInv(nBits, nBitsExt, i, N);
-    //     } else if(boundary.name == "everyFrame") {
-    //         buildFrameZerofierInv(nBits, nBitsExt, i, boundary.offsetMin, boundary.offsetMax);
-    //     }
-    // }
 }
 
 __global__ void setProdIdentity3(gl64_t *pol) {

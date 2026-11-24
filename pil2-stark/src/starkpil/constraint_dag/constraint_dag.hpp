@@ -24,15 +24,28 @@ struct DagNode
     Goldilocks::Element value;
 };
 
+// Where a leaf's value lives in DagInputs: element offset and dimension.
+enum class DagSrc : uint8_t { Number, Eval, Challenge, Public, ProofValue, AirValue, AirgroupValue };
+struct DagLeaf
+{
+    DagSrc src;
+    uint64_t pos, dim;
+};
+
 struct ConstraintDag
 {
     std::vector<DagNode> nodes;
     std::vector<uint64_t> rootNode;
     std::vector<uint8_t> rootBoundary; // labels ignored
+    // Filled by checkConstraintDag: each node's resolved leaf (unused for an op node) and std_vc's index.
+    std::vector<DagLeaf> leaves;
+    uint64_t vc = 0;
 };
 
 namespace constraint_dag_detail
 {
+using Src = DagSrc;
+using Leaf = DagLeaf;
 
 inline bool fail(std::string &err, const std::string &msg)
 {
@@ -64,14 +77,6 @@ inline bool readConst(const json &j, Goldilocks::Element &out)
     return true;
 }
 
-// Where a leaf's value lives in DagInputs: element offset and dimension.
-enum class Src : uint8_t { Number, Eval, Challenge, Public, ProofValue, AirValue, AirgroupValue };
-struct Leaf
-{
-    Src src;
-    uint64_t pos, dim;
-};
-
 // The only resolver of col/challenge/value references (mirrors Rust LowerCtx::resolve and its unique-key rule).
 struct Resolver
 {
@@ -86,20 +91,15 @@ struct Resolver
         return {uint64_t(t), t == EvMap::custom ? commitId : 0, id, prime};
     }
 
-    // Values are packed consecutively, 1 element for a stage-1 entry, else 3; the map's dim must agree.
-    static bool pack(const std::vector<PolMap> &map, std::vector<Value> &out, const char *what, std::string &err)
+    // Values are packed consecutively, StarkInfo::valueDim elements each.
+    static void pack(const std::vector<PolMap> &map, std::vector<Value> &out)
     {
         uint64_t pos = 0;
-        for (uint64_t i = 0; i < map.size(); i++)
+        for (const PolMap &m : map)
         {
-            uint64_t dim = map[i].stage == 1 ? 1 : FIELD_EXTENSION;
-            if (map[i].dim != dim)
-                return fail(err, std::string(what) + " " + std::to_string(i) + " has dimension " + std::to_string(map[i].dim) +
-                                     ", its stage needs " + std::to_string(dim));
-            out.push_back({pos, dim});
-            pos += dim;
+            out.push_back({pos, StarkInfo::valueDim(m)});
+            pos += StarkInfo::valueDim(m);
         }
-        return true;
     }
 
     bool init(const StarkInfo &si, std::string &err)
@@ -126,8 +126,10 @@ struct Resolver
         }
         if (!hasVc) return fail(err, "no std_vc challenge");
         nPublics = si.nPublics;
-        return pack(si.proofValuesMap, proofValues, "proof value", err) && pack(si.airValuesMap, airValues, "air value", err) &&
-               pack(si.airgroupValuesMap, airgroupValues, "airgroup value", err);
+        pack(si.proofValuesMap, proofValues);
+        pack(si.airValuesMap, airValues);
+        pack(si.airgroupValuesMap, airgroupValues);
+        return true;
     }
 
     static bool value(const std::vector<Value> &vals, uint64_t id, Src src, Leaf &out, const char *what, std::string &err)
@@ -250,16 +252,18 @@ inline bool readConstraintDag(const json &j, ConstraintDag &out, std::string &er
     return true;
 }
 
-// Resolves col/challenge/value refs and std_vc; every root everyRow (0); dimensions; unique evMap/challenge matches.
-inline bool checkConstraintDag(const ConstraintDag &dag, const StarkInfo &si, std::string &err)
+// Resolves col/challenge/value refs and std_vc once, into dag.leaves/dag.vc; every root everyRow (0); dimensions;
+// unique evMap/challenge matches.
+inline bool checkConstraintDag(ConstraintDag &dag, const StarkInfo &si, std::string &err)
 {
     using namespace constraint_dag_detail;
+    dag.leaves.clear();
     Resolver res;
     if (!res.init(si, err)) return false;
+    std::vector<Leaf> leaves(dag.nodes.size(), Leaf{Src::Number, 0, 0});
     for (uint64_t i = 0; i < dag.nodes.size(); i++)
     {
-        Leaf leaf;
-        if (!isOp(dag.nodes[i].kind) && !res.resolve(dag.nodes[i], leaf, err))
+        if (!isOp(dag.nodes[i].kind) && !res.resolve(dag.nodes[i], leaves[i], err))
         {
             err += " (node " + std::to_string(i) + ")";
             return false;
@@ -267,6 +271,8 @@ inline bool checkConstraintDag(const ConstraintDag &dag, const StarkInfo &si, st
     }
     for (uint64_t r = 0; r < dag.rootNode.size(); r++)
         if (dag.rootBoundary[r] != 0) return fail(err, "root " + std::to_string(r) + " is not everyRow");
+    dag.leaves = std::move(leaves);
+    dag.vc = res.vc;
     return true;
 }
 
@@ -278,14 +284,12 @@ struct DagInputs
     Goldilocks::Element zi[3];
 };
 
-// out = Horner(roots, vc) * zi; the DAG must have passed checkConstraintDag against si.
-inline void evalConstraintDag(const ConstraintDag &dag, const StarkInfo &si, const DagInputs &in, Goldilocks::Element out[3])
+// out = Horner(roots, vc) * zi; the DAG must have passed checkConstraintDag (its resolved leaves).
+inline void evalConstraintDag(const ConstraintDag &dag, const DagInputs &in, Goldilocks::Element out[3])
 {
     using namespace constraint_dag_detail;
     using E3 = Goldilocks3::Element;
-    Resolver res;
-    std::string err;
-    zkassertpermanent(res.init(si, err));
+    zkassertpermanent(dag.leaves.size() == dag.nodes.size());
     std::vector<Goldilocks::Element> v(dag.nodes.size() * FIELD_EXTENSION, Goldilocks::zero());
     auto at = [&](uint64_t k) -> E3 & { return *(E3 *)&v[k * FIELD_EXTENSION]; };
     for (uint64_t i = 0; i < dag.nodes.size(); i++)
@@ -305,15 +309,14 @@ inline void evalConstraintDag(const ConstraintDag &dag, const StarkInfo &si, con
         }
         default: break;
         }
-        Leaf leaf;
-        zkassertpermanent(res.resolve(n, leaf, err));
+        const Leaf &leaf = dag.leaves[i];
         const Goldilocks::Element *srcs[] = {&n.value, in.evals, in.challenges, in.publics, in.proofValues, in.airValues, in.airgroupValues};
         const Goldilocks::Element *p = srcs[uint8_t(leaf.src)] + leaf.pos;
         for (uint64_t k = 0; k < leaf.dim; k++) d[k] = p[k]; // a base value embeds with zero high limbs
     }
 
     // The protocol fold: acc = c_0, acc = vc*acc + c_i, then times zi.
-    const E3 &vc = *(const E3 *)&in.challenges[res.vc * FIELD_EXTENSION];
+    const E3 &vc = *(const E3 *)&in.challenges[dag.vc * FIELD_EXTENSION];
     E3 acc;
     for (uint64_t r = 0; r < dag.rootNode.size(); r++)
     {

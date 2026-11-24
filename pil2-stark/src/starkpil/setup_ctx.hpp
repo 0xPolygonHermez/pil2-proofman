@@ -16,28 +16,18 @@ class ProverHelpers {
     ProverHelpers(StarkInfo &starkInfo, bool pil1) {
         uint64_t nBits = starkInfo.starkStruct.nBits;
         uint64_t nBitsExt = starkInfo.starkStruct.nBitsExt;
-        vector<Boundary> boundaries = starkInfo.boundaries;
         computeX(nBits, nBitsExt, pil1);
-        computeZerofier(nBits, nBitsExt, boundaries);
+        computeZerofier(nBits, nBitsExt, starkInfo.boundaries);
     }
 
-    void computeZerofier(uint64_t nBits, uint64_t nBitsExt, vector<Boundary> boundaries) {
-        uint64_t N = 1 << nBits;
-        uint64_t NExtended = 1 << nBitsExt;
-        zi = new Goldilocks::Element[boundaries.size() * NExtended];
-
-        for(uint64_t i = 0; i < boundaries.size(); ++i) {
-            Boundary boundary = boundaries[i];
-            if(boundary.name == "everyRow") {
-                buildZHInv(nBits, nBitsExt);
-            } else if(boundary.name == "firstRow") {
-                buildOneRowZerofierInv(nBits, nBitsExt, i, 0);
-            } else if(boundary.name == "lastRow") {
-                buildOneRowZerofierInv(nBits, nBitsExt, i, N);
-            } else if(boundary.name == "everyFrame") {
-                buildFrameZerofierInv(nBits, nBitsExt, i, boundary.offsetMin, boundary.offsetMax);
-            }
+    // A STARK key has the everyRow boundary only (the setup refuses any other).
+    void computeZerofier(uint64_t nBits, uint64_t nBitsExt, const vector<Boundary> &boundaries) {
+        if(boundaries.size() != 1 || boundaries[0].name != "everyRow") {
+            zklog.error("ProverHelpers: a STARK key has the everyRow boundary only; regenerate the setup");
+            exitProcess();
         }
+        zi = new Goldilocks::Element[1 << nBitsExt];
+        buildZHInv(nBits, nBitsExt);
     }
 
     void computeX(uint64_t nBits, uint64_t nBitsExt, bool pil1) {
@@ -76,51 +66,6 @@ class ProverHelpers {
             zi[i] = zi[i % extend];
         }
     };
-
-    void buildOneRowZerofierInv(uint64_t nBits, uint64_t nBitsExt, uint64_t offset, uint64_t rowIndex)
-    {
-        uint64_t NExtended = 1 << nBitsExt;
-        Goldilocks::Element root = Goldilocks::one();
-
-        for(uint64_t i = 0; i < rowIndex; ++i) {
-            root = root * Goldilocks::w(nBits);
-        }
-
-    #pragma omp parallel for
-        for(uint64_t i = 0; i < NExtended; ++i) {
-            Goldilocks::inv(zi[i + offset * NExtended], (x[i] - root) * zi[i]);
-        }
-    }
-
-    void buildFrameZerofierInv(uint64_t nBits, uint64_t nBitsExt, uint64_t offset, uint64_t offsetMin, uint64_t offsetMax)
-    {
-        uint64_t NExtended = 1 << nBitsExt;
-        uint64_t N = 1 << nBits;
-        uint64_t nRoots = offsetMin + offsetMax;
-        Goldilocks::Element roots[nRoots];
-
-        for(uint64_t i = 0; i < offsetMin; ++i) {
-            roots[i] = Goldilocks::one();
-            for(uint64_t j = 0; j < i; ++j) {
-                roots[i] = roots[i] * Goldilocks::w(nBits);
-            }
-        }
-
-        for(uint64_t i = 0; i < offsetMax; ++i) {
-            roots[i + offsetMin] = Goldilocks::one();
-            for(uint64_t j = 0; j < (N - i - 1); ++j) {
-                roots[i + offsetMin] = roots[i + offsetMin] * Goldilocks::w(nBits);
-            }
-        }
-
-    #pragma omp parallel for
-        for(uint64_t i = 0; i < NExtended; ++i) {
-            zi[i + offset*NExtended] = Goldilocks::one();
-            for(uint64_t j = 0; j < nRoots; ++j) {
-                zi[i + offset*NExtended] = zi[i + offset*NExtended] * (x[i] - roots[j]);
-            }
-        }
-    }
 
     ~ProverHelpers() {
         if(zi != nullptr) delete[] zi;

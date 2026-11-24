@@ -132,7 +132,7 @@ bool starkVerify(json jproof, StarkInfo& starkInfo, ExpressionsBin& expressionsB
     Goldilocks::Element airgroupValues[starkInfo.airgroupValuesSize];
     uint64_t ag = 0;
     for(uint64_t i = 0; i < starkInfo.airgroupValuesMap.size() ; ++i) {
-        uint64_t width = starkInfo.airgroupValuesMap[i].stage == 1 ? 1 : FIELD_EXTENSION;
+        uint64_t width = StarkInfo::valueDim(starkInfo.airgroupValuesMap[i]);
         for(uint64_t j = 0; j < width; ++j) {
             airgroupValues[ag++] = Goldilocks::fromString(jproof["airgroupvalues"][i][j]);
         }
@@ -147,12 +147,8 @@ bool starkVerify(json jproof, StarkInfo& starkInfo, ExpressionsBin& expressionsB
     Goldilocks::Element airValues[starkInfo.airValuesSize];
     uint64_t a = 0;
     for(uint64_t i = 0; i < starkInfo.airValuesMap.size(); ++i) {
-        if(starkInfo.airValuesMap[i].stage == 1) {
-            airValues[a++] = Goldilocks::fromString(jproof["airvalues"][i][0]);
-        } else {
-            airValues[a++] = Goldilocks::fromString(jproof["airvalues"][i][0]);
-            airValues[a++] = Goldilocks::fromString(jproof["airvalues"][i][1]);
-            airValues[a++] = Goldilocks::fromString(jproof["airvalues"][i][2]);
+        for(uint64_t j = 0; j < StarkInfo::valueDim(starkInfo.airValuesMap[i]); ++j) {
+            airValues[a++] = Goldilocks::fromString(jproof["airvalues"][i][j]);
         }
     }
 
@@ -222,14 +218,10 @@ bool starkVerify(json jproof, StarkInfo& starkInfo, ExpressionsBin& expressionsB
 
         uint64_t p = 0;
         for(uint64_t i = 0; i < starkInfo.airValuesMap.size(); i++) {
-            if(starkInfo.airValuesMap[i].stage == 1) {
-                p++;
-            } else {
-                if(starkInfo.airValuesMap[i].stage == s) {
-                    transcript.put(&airValues[p], FIELD_EXTENSION);
-                }
-                p += 3;
+            if(starkInfo.airValuesMap[i].stage != 1 && starkInfo.airValuesMap[i].stage == s) {
+                transcript.put(&airValues[p], FIELD_EXTENSION);
             }
+            p += StarkInfo::valueDim(starkInfo.airValuesMap[i]);
         }
         // Bind airgroupvalues to the transcript (they are otherwise only used in the Q check).
         // Only the Goldilocks transcript absorbs airgroupvalues.
@@ -242,7 +234,7 @@ bool starkVerify(json jproof, StarkInfo& starkInfo, ExpressionsBin& expressionsB
         uint64_t pag = 0;
         for(uint64_t i = 0; i < starkInfo.airgroupValuesMap.size(); i++) {
             // Stage 1 is absorbed in round 2; wider stages in their own round.
-            uint64_t width = starkInfo.airgroupValuesMap[i].stage == 1 ? 1 : FIELD_EXTENSION;
+            uint64_t width = StarkInfo::valueDim(starkInfo.airgroupValuesMap[i]);
             uint64_t eff = starkInfo.airgroupValuesMap[i].stage < 2 ? 2 : starkInfo.airgroupValuesMap[i].stage;
             if(eff == s) {
                 transcript.put(&airgroupValues[pag], width);
@@ -464,7 +456,7 @@ bool starkVerify(json jproof, StarkInfo& starkInfo, ExpressionsBin& expressionsB
     DagInputs dagInputs = {evals, challenges, publics, proofValues, airValues, airgroupValues, {xN[0] - Goldilocks::one(), xN[1], xN[2]}};
     Goldilocks3::inv((Goldilocks3::Element &)dagInputs.zi, (Goldilocks3::Element &)dagInputs.zi);
     Goldilocks::Element buff[FIELD_EXTENSION];
-    evalConstraintDag(expressionsBin.constraintDag, starkInfo, dagInputs, buff);
+    evalConstraintDag(expressionsBin.constraintDag, dagInputs, buff);
 
     Goldilocks::Element xAcc[3] = { Goldilocks::one(), Goldilocks::zero(), Goldilocks::zero() };
     Goldilocks::Element q[3] = { Goldilocks::zero(), Goldilocks::zero(), Goldilocks::zero() };

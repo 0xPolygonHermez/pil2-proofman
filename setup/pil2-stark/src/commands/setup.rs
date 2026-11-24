@@ -320,9 +320,7 @@ pub fn run_setup(opts: &SetupOptions) -> Result<()> {
                 write_bin_files_from_pil_code(
                     &starkinfo_json,
                     &pil_code.expressions_info,
-                    &pil_code.verifier_info,
                     &files_dir.join(format!("{}.bin", item.air_name)),
-                    &files_dir.join(format!("{}.verifier.bin", item.air_name)),
                 )?;
 
                 tracing::info!("Setup for air '{}' complete", item.air_name);
@@ -418,13 +416,11 @@ pub fn run_setup(opts: &SetupOptions) -> Result<()> {
     Ok(())
 }
 
-/// Write binary files using in-memory generate_pil_code structs (no disk round-trip).
+/// Write the `.bin` from the in-memory generate_pil_code structs (no disk round-trip).
 fn write_bin_files_from_pil_code(
     starkinfo_json: &str,
     expressions_info: &crate::pil::gen_code::ExpressionsInfo,
-    verifier_info: &crate::pil::gen_code::VerifierInfo,
     bin_output: &Path,
-    verifier_bin_output: &Path,
 ) -> Result<()> {
     use crate::types::stark_info::StarkInfo;
 
@@ -432,16 +428,7 @@ fn write_bin_files_from_pil_code(
     let stark_info = StarkInfo::from_json(&si_json)?;
 
     let ei = crate::types::stark_info::ExpressionsInfo::try_from(expressions_info)?;
-    crate::io::bin_file::write_expressions_bin_file(bin_output.to_str().unwrap_or(""), &stark_info, &ei)?;
-
-    let vi = crate::types::stark_info::VerifierInfo::try_from(verifier_info)?;
-    crate::io::bin_file::write_verifier_expressions_bin_file(
-        verifier_bin_output.to_str().unwrap_or(""),
-        &stark_info,
-        &vi,
-    )?;
-
-    Ok(())
+    crate::io::bin_file::write_expressions_bin_file(bin_output.to_str().unwrap_or(""), &stark_info, &ei)
 }
 
 /// Compute floor(log2(n)) for a nonzero usize.

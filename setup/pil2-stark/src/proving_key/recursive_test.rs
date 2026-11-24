@@ -285,7 +285,7 @@ pub fn gen_recursive_test_setup(
     fs::write(files_dir.join(format!("{}.verkey.bin", NAME_FILE)), &verkey_bin)?;
 
     // -------------------------------------------------------------------------
-    // Step 14: Write .bin and .verifier.bin (always written in the test setup).
+    // Step 14: Write .bin (always written in the test setup).
     // -------------------------------------------------------------------------
     let si_val: serde_json::Value = serde_json::from_str(&fs::read_to_string(&starkinfo_path)?)?;
     let stark_info_loaded = crate::types::stark_info::StarkInfo::from_json(&si_val)?;
@@ -295,13 +295,6 @@ pub fn gen_recursive_test_setup(
         files_dir.join(format!("{}.bin", NAME_FILE)).to_str().unwrap(),
         &stark_info_loaded,
         &expressions_loaded,
-    )?;
-
-    let verifier_loaded = crate::types::stark_info::VerifierInfo::try_from(vi_ref)?;
-    crate::io::bin_file::write_verifier_expressions_bin_file(
-        files_dir.join(format!("{}.verifier.bin", NAME_FILE)).to_str().unwrap(),
-        &stark_info_loaded,
-        &verifier_loaded,
     )?;
 
     // -------------------------------------------------------------------------

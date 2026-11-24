@@ -81,7 +81,6 @@ fn prepare_verifier_rust(
     let mut lines: Vec<String> = Vec::new();
 
     lines.push("use alloc::vec;".to_string());
-    lines.push("use alloc::string::ToString;".to_string());
     let mut hash_imports: Vec<&str> = Vec::new();
     for ht in [merkle_hash_type, grinding_type]
         .into_iter()
@@ -96,11 +95,10 @@ fn prepare_verifier_rust(
         .push(format!("use proofman_fields::{{Goldilocks, CubicExtensionField, Field, {}}};", hash_imports.join(", ")));
     if is_stir {
         lines.push(
-            "use crate::{stark_verify_stir, Boundary, FriEvalGroup, FriEvalRef, StirParams, StirVerifierInfo};"
-                .to_string(),
+            "use crate::{stark_verify_stir, FriEvalGroup, FriEvalRef, StirParams, StirVerifierInfo};".to_string(),
         );
     } else {
-        lines.push("use crate::{stark_verify, Boundary, FriEvalGroup, FriEvalRef, VerifierInfo};".to_string());
+        lines.push("use crate::{stark_verify, FriEvalGroup, FriEvalRef, VerifierInfo};".to_string());
     }
     if vadcop_final_proof || stark_info.multiproof {
         lines.push("use crate::VadcopFinalProof;".to_string());
@@ -126,22 +124,6 @@ fn prepare_verifier_rust(
     // The shared STARK geometry, identical for both low-degree tests.
 
     let opening_points_str: Vec<String> = stark_info.opening_points.iter().map(|p| p.to_string()).collect();
-
-    let mut boundary_strs: Vec<String> = Vec::new();
-    for b in &stark_info.boundaries {
-        let offset_min = match b.offset_min {
-            Some(v) => v.to_string(),
-            None => "None".to_string(),
-        };
-        let offset_max = match b.offset_max {
-            Some(v) => v.to_string(),
-            None => "None".to_string(),
-        };
-        boundary_strs.push(format!(
-            "Boundary {{ name: \"{}\".to_string(), offset_min: {}, offset_max: {} }}",
-            b.name, offset_min, offset_max
-        ));
-    }
 
     // The FRI query polynomial is structural, so the verifier evaluates it from
     // the evaluation map instead of an unrolled per-air function.
@@ -206,7 +188,6 @@ fn prepare_verifier_rust(
 
             lines.push(format!("        num_vals: vec![{}],", num_vals.join(", ")));
             lines.push(format!("        opening_points: vec![{}],", opening_points_str.join(", ")));
-            lines.push(format!("        boundaries: vec![{}],", boundary_strs.join(", ")));
             lines.push(format!("        q_deg: {},", stark_info.q_deg));
             lines.push(format!("        q_index: {},", q_ev_index));
 
@@ -234,7 +215,6 @@ fn prepare_verifier_rust(
 
             lines.push(format!("        num_vals: vec![{}],", num_vals.join(", ")));
             lines.push(format!("        opening_points: vec![{}],", opening_points_str.join(", ")));
-            lines.push(format!("        boundaries: vec![{}],", boundary_strs.join(", ")));
             lines.push(format!("        q_deg: {},", stark_info.q_deg));
             lines.push(format!("        q_index: {},", q_ev_index));
             lines.push(fri_ev_groups_str.clone());
@@ -397,6 +377,23 @@ mod tests {
         vi.constraint_dag.as_mut().expect("the key carries constraintDag").roots[0].boundary = DagBoundary::FirstRow;
         let e = write(&si, &vi).expect_err("a STARK root is everyRow");
         assert!(format!("{e:#}").contains("everyRow"), "{e:#}");
+    }
+
+    // DAG-level negative: one constant changed. Render it, then the harness must reject the real proof:
+    // PIL2_CHANGED_VERIFIER=<abs .rs> cargo test -p pil2-stark-setup --lib -- --ignored changed_dag
+    // PIL2_EXPECT_REJECT=1 PIL2_GENERATED_VERIFIER=<same .rs> ... --test generated_verifier (see that file)
+    #[test]
+    #[ignore = "writes $PIL2_CHANGED_VERIFIER from the shared key"]
+    fn writes_a_verifier_from_a_changed_dag() {
+        let Some((si, mut vi)) = shared_key() else { return };
+        let out = std::env::var("PIL2_CHANGED_VERIFIER").expect("set PIL2_CHANGED_VERIFIER");
+        let dag = vi.constraint_dag.as_mut().expect("the key carries constraintDag");
+        let c = dag.nodes.iter_mut().find_map(|n| match n {
+            DagNode::Const { value } if value != "0" => Some(value),
+            _ => None,
+        });
+        *c.expect("the DAG has a non-zero constant") = "1234567".into();
+        write_verifier_rust_file(&out, &si, &vi, true, "blake3").unwrap();
     }
 
     // Dimension corruption: an ext-typed instruction over a base-field operand, and the reverse.

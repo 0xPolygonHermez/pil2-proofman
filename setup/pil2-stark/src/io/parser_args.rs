@@ -58,11 +58,6 @@ pub struct ExpsInfo {
     pub im_pol: u64,
 }
 
-#[derive(Debug, Clone, Default)]
-pub struct ParserArgsResult {
-    pub exps_info: ExpsInfo,
-}
-
 /// The Rust source of a generated `q_verify`: the chunk helpers and the function body.
 #[derive(Debug, Clone, Default)]
 pub struct VerifyRust {
@@ -80,46 +75,43 @@ pub fn rust_verify_lines(
     // slot reuse would need owner approval (Task D speed rule)
     ensure!(!packed, "packed verifier temporaries are not implemented");
     let ext = FIELD_EXTENSION as usize;
+    code.check_dims(ext).map_err(|e| anyhow!("{function_name}: {e:?}"))?;
     let mut slots: HashMap<u32, (usize, usize)> = HashMap::new();
     let mut count = [0usize; 2];
     let mut lines: Vec<String> = Vec::with_capacity(code.code.len());
     let mut uses: Vec<Uses> = Vec::with_capacity(code.code.len());
     for ins in &code.code {
-        let n_src = if ins.op == CodeOp::Copy { 1 } else { 2 };
-        ensure!(ins.src.len() == n_src, "tmp {}: {:?} takes {n_src} operands, got {}", ins.dest, ins.op, ins.src.len());
         let mut u = Uses::default();
         let mut args: Vec<(String, usize)> = Vec::with_capacity(2);
         for s in &ins.src {
-            let (e, d) = match s.operand {
+            let e = match s.operand {
                 Operand::Tmp(k) => {
-                    let &(d, slot) =
-                        slots.get(&k).ok_or_else(|| anyhow!("tmp {}: reads tmp {k} before it is written", ins.dest))?;
-                    (format!("tmp_{d}[{slot}]"), d)
+                    let (d, slot) = slots[&k];
+                    format!("tmp_{d}[{slot}]")
                 }
-                Operand::Eval(k) => (format!("evals[{k}]"), ext),
-                Operand::Challenge { id, .. } => (format!("challenges[{id}]"), ext),
-                Operand::Number(ref v) => (format!("Goldilocks::new({})", goldilocks_u64(v)?), 1),
+                Operand::Eval(k) => format!("evals[{k}]"),
+                Operand::Challenge { id, .. } => format!("challenges[{id}]"),
+                Operand::Number(ref v) => format!("Goldilocks::new({})", goldilocks_u64(v)?),
                 Operand::Public(id) => {
                     ensure!((id as u64) < stark_info.n_publics, "tmp {}: public {id} is out of range", ins.dest);
-                    (format!("_publics[{id}]"), 1)
+                    format!("_publics[{id}]")
                 }
                 Operand::Zi { boundary } => {
                     ensure!(boundary == 0, "tmp {}: Zi {boundary}: q_verify has only the everyRow zerofier", ins.dest);
-                    (String::from("zi[0]"), ext)
+                    String::from("zi[0]")
                 }
                 Operand::ProofValue { .. } | Operand::AirValue { .. } | Operand::AirgroupValue { .. } => {
                     bail!("tmp {}: q_verify has no {:?} input", ins.dest, s.operand)
                 }
             };
-            ensure!(s.dim == d, "tmp {}: operand {:?} typed dim {} but has dim {d}", ins.dest, s.operand, s.dim);
-            u.add(&s.operand);
-            args.push((e, d));
+            u.add(&s.operand, s.dim == ext);
+            args.push((e, s.dim));
         }
-        let dim = args.iter().map(|a| a.1).max().unwrap_or(1);
-        ensure!(ins.dim == dim, "tmp {}: typed dim {} over operands of dim {dim}", ins.dest, ins.dim);
+        let dim = ins.dim;
         let slot = count[usize::from(dim == ext)];
         count[usize::from(dim == ext)] += 1;
-        ensure!(slots.insert(ins.dest, (dim, slot)).is_none(), "tmp {} is assigned twice", ins.dest);
+        slots.insert(ins.dest, (dim, slot));
+        u.tmp[usize::from(dim == ext)] = true;
         let dest = format!("tmp_{dim}[{slot}]");
         // the scalar goes on the right: CubicExtensionField implements ext op base
         let line = match (ins.op, args.as_slice()) {
@@ -161,14 +153,13 @@ pub fn rust_verify_lines(
         {
             let used = us.iter().fold(Uses::default(), |a, b| a.or(b));
             // a chunk that does not touch a tmp vector still takes it, underscored
-            let touches = |name: &str| body.iter().any(|l| l.contains(name));
             let (mut params, mut call) = (Vec::new(), Vec::new());
-            for (n, ty, present) in [
-                ("tmp_1", "&mut [Goldilocks]", count1d > 0),
-                ("tmp_3", "&mut [CubicExtensionField<Goldilocks>]", count3d > 0),
+            for (k, n, ty, present) in [
+                (0, "tmp_1", "&mut [Goldilocks]", count1d > 0),
+                (1, "tmp_3", "&mut [CubicExtensionField<Goldilocks>]", count3d > 0),
             ] {
                 if present {
-                    let u = if touches(&format!("{n}[")) { "" } else { "_" };
+                    let u = if used.tmp[k] { "" } else { "_" };
                     params.push(format!("{u}{n}: {ty}"));
                     call.push(format!("&mut {n}"));
                 }
@@ -197,22 +188,24 @@ pub fn rust_verify_lines(
     Ok(out)
 }
 
-/// The `q_verify` inputs a block of lines reads.
+/// The `q_verify` inputs and temporary vectors (`tmp[0]` base, `tmp[1]` ext) a block of lines reads or writes.
 #[derive(Default, Clone, Copy)]
 struct Uses {
     challenges: bool,
     evals: bool,
     publics: bool,
     zi: bool,
+    tmp: [bool; 2],
 }
 
 impl Uses {
-    fn add(&mut self, o: &Operand) {
+    fn add(&mut self, o: &Operand, ext: bool) {
         match o {
             Operand::Challenge { .. } => self.challenges = true,
             Operand::Eval(_) => self.evals = true,
             Operand::Public(_) => self.publics = true,
             Operand::Zi { .. } => self.zi = true,
+            Operand::Tmp(_) => self.tmp[usize::from(ext)] = true,
             _ => {}
         }
     }
@@ -223,6 +216,7 @@ impl Uses {
             evals: self.evals | o.evals,
             publics: self.publics | o.publics,
             zi: self.zi | o.zi,
+            tmp: [self.tmp[0] | o.tmp[0], self.tmp[1] | o.tmp[1]],
         }
     }
 }
@@ -244,12 +238,10 @@ const OPERATIONS: [OperationEntry; 3] = [
 ];
 
 /// Returns the type key string used in the operations map for a given CodeType.
-fn get_type_key(r: &CodeType, verify: bool) -> String {
+fn get_type_key(r: &CodeType) -> String {
     match r.op_type {
         OpType::Cm => format!("commit{}", r.dim),
-        OpType::Const | OpType::Zi if !verify => "commit1".to_string(),
-        OpType::Zi if verify => "commit3".to_string(),
-        OpType::Const => "commit1".to_string(),
+        OpType::Const | OpType::Zi => "commit1".to_string(),
         OpType::Custom if r.dim == 1 => "custom1".to_string(),
         OpType::Custom if r.dim == FIELD_EXTENSION => "custom3".to_string(),
         OpType::Custom => format!("custom{}", r.dim),
@@ -266,7 +258,7 @@ fn dim_str(dim: u64) -> String {
 }
 
 /// Sorts sources and determines the operation, potentially swapping to sub_swap.
-fn get_operation(r: &CodeOperation, verify: bool) -> (String, u64, Vec<CodeType>, String, String) {
+fn get_operation(r: &CodeOperation) -> (String, u64, Vec<CodeType>, String, String) {
     let op = r.op.clone();
     let _dest_dim = dim_str(r.dest.dim);
 
@@ -279,8 +271,8 @@ fn get_operation(r: &CodeOperation, verify: bool) -> (String, u64, Vec<CodeType>
         return (op, 0, srcs, src0_dim, src1_dim);
     }
 
-    let op_a_key = get_type_key(&srcs[0], verify);
-    let op_b_key = get_type_key(&srcs[1], verify);
+    let op_a_key = get_type_key(&srcs[0]);
+    let op_b_key = get_type_key(&srcs[1]);
     let op_a = operations_map_value(&op_a_key);
     let op_b = operations_map_value(&op_b_key);
 
@@ -306,16 +298,13 @@ fn get_operation(r: &CodeOperation, verify: bool) -> (String, u64, Vec<CodeType>
 
 /// Port of getParserArgs from JS. Converts code blocks into flat arrays
 /// (ops, args, numbers) suitable for the binary file format.
-///
-/// `verify` types `Zi` as an extension operand (the verifier's Q code).
 pub fn get_parser_args(
     stark_info: &StarkInfo,
     code_info_code: &[CodeOperation],
     numbers: &mut Vec<String>,
     global: bool,
-    verify: bool,
     global_info: Option<&GlobalInfo>,
-) -> Result<ParserArgsResult> {
+) -> Result<ExpsInfo> {
     let mut numbers_index: HashMap<String, u32> =
         numbers.iter().enumerate().map(|(i, s)| (s.clone(), i as u32)).collect();
 
@@ -336,7 +325,7 @@ pub fn get_parser_args(
     let (count1d, count3d) = get_id_maps(maxid, &mut id1d, &mut id3d, code_info_code, FIELD_EXTENSION)?;
 
     for r in code_info_code {
-        let (op, _dest_dim_val, mut sorted_src, src0_dim, mut src1_dim) = get_operation(r, verify);
+        let (op, _dest_dim_val, mut sorted_src, src0_dim, mut src1_dim) = get_operation(r);
         // The C++ reads 8 args per op (6 global): a copy is `src + 0`.
         let pads_copy = r.op == "copy";
         if pads_copy {
@@ -395,9 +384,7 @@ pub fn get_parser_args(
         bail!("Unknown destination dimension");
     };
 
-    Ok(ParserArgsResult {
-        exps_info: ExpsInfo { n_temp1: count1d, n_temp3: count3d, ops, args, dest_dim, dest_id, ..Default::default() },
-    })
+    Ok(ExpsInfo { n_temp1: count1d, n_temp3: count3d, ops, args, dest_dim, dest_id, ..Default::default() })
 }
 
 /// Information about global proof structure needed by pushArgs in global mode.
@@ -654,8 +641,7 @@ mod tests {
             ..Default::default()
         };
         let mut numbers = Vec::new();
-        let res = get_parser_args(&info, code, &mut numbers, global, false, None).unwrap();
-        (res.exps_info, numbers)
+        (get_parser_args(&info, code, &mut numbers, global, None).unwrap(), numbers)
     }
 
     // A copy is `src + 0`: the C++ strides 8 args per op (6 global), so a 1-operand copy would desync it.

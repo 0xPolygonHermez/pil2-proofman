@@ -675,17 +675,11 @@ pub fn gen_recursive_setup(
                     serde_json::to_string_pretty(existing_ei)?,
                 )?;
 
-                let vi_loaded = crate::types::stark_info::VerifierInfo::from_json(existing_vi)?;
                 let ei_loaded = crate::types::stark_info::ExpressionsInfo::from_json(existing_ei)?;
                 crate::io::bin_file::write_expressions_bin_file(
                     files_dir.join(format!("{}.bin", template_str)).to_str().unwrap(),
                     &stark_info_loaded,
                     &ei_loaded,
-                )?;
-                crate::io::bin_file::write_verifier_expressions_bin_file(
-                    files_dir.join(format!("{}.verifier.bin", template_str)).to_str().unwrap(),
-                    &stark_info_loaded,
-                    &vi_loaded,
                 )?;
             }
 
@@ -760,13 +754,6 @@ pub fn gen_recursive_setup(
                     files_dir.join(format!("{}.bin", template_str)).to_str().unwrap(),
                     &stark_info_loaded,
                     &expressions_loaded,
-                )?;
-
-                let verifier_loaded = crate::types::stark_info::VerifierInfo::try_from(verifier_info_ref)?;
-                crate::io::bin_file::write_verifier_expressions_bin_file(
-                    files_dir.join(format!("{}.verifier.bin", template_str)).to_str().unwrap(),
-                    &stark_info_loaded,
-                    &verifier_loaded,
                 )?;
             }
 

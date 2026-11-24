@@ -395,11 +395,6 @@ pub fn gen_final_setup(config: &FinalSetupConfig<'_>, witness_tracker: &WitnessT
         )?;
 
         let verifier_loaded = crate::types::stark_info::VerifierInfo::try_from(verifier_info_ref)?;
-        crate::io::bin_file::write_verifier_expressions_bin_file(
-            files_dir.join("vadcop_final.verifier.bin").to_str().unwrap(),
-            &stark_info_loaded,
-            &verifier_loaded,
-        )?;
 
         // Write verifier Rust file
         crate::output::verifier::write_verifier_rust_file(

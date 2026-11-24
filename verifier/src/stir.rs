@@ -31,7 +31,7 @@ use proofman_fields::{
 use crate::layout::{merkle_proof_levels, sibling_words};
 use crate::multiproof::{expand_stir_checked, Proven};
 use crate::replay::{prefix_transcript, stir_transcript, StirTranscript};
-use crate::verifier::{deep_denominators_inv, Boundary, DeepQueryConsts, FriEvalGroup};
+use crate::verifier::{deep_denominators_inv, DeepQueryConsts, FriEvalGroup};
 
 type E3 = CubicExtensionField<Goldilocks>;
 
@@ -132,7 +132,6 @@ pub struct StirVerifierInfo {
     pub n_challenges_total: u64,
     pub num_vals: Vec<u64>,
     pub opening_points: Vec<i64>,
-    pub boundaries: Vec<Boundary>,
     pub q_deg: u64,
     pub q_index: u64,
     /// The DEEP polynomial's evaluation table, the same one FRI's `VerifierInfo` carries.

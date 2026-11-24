@@ -1,4 +1,3 @@
-use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
 
@@ -11,14 +10,6 @@ use proofman_fields::{
     cubic_mul_acc, intt_tiny, DotAcc, partial_merkle_tree, verify_fold, verify_mt, CubicExtensionField, Field,
     Goldilocks, Hash, PrimeField64, TranscriptLike,
 };
-
-#[allow(dead_code)]
-#[derive(Debug, Clone)]
-pub struct Boundary {
-    pub name: String,
-    pub offset_min: Option<u64>,
-    pub offset_max: Option<u64>,
-}
 
 pub struct VerifierInfo {
     pub n_stages: u32,
@@ -38,7 +29,6 @@ pub struct VerifierInfo {
     pub hash_commits: bool,
     pub num_vals: Vec<u64>,
     pub opening_points: Vec<i64>,
-    pub boundaries: Vec<Boundary>,
     pub q_deg: u64,
     pub q_index: u64,
     pub last_level_verification: u64,
@@ -783,7 +773,6 @@ mod tests {
             hash_commits: true,
             num_vals: vec![],
             opening_points: vec![],
-            boundaries: vec![],
             q_deg: 0,
             q_index: 0,
             last_level_verification: 0,

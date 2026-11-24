@@ -6,7 +6,7 @@
 //! No per-family verifier is committed here. The recursion aggregator binds the
 //! application's publics into the q_verify expression, so a verifier generated
 //! for one application rejects proofs another's correct prover produced. proofman
-//! verifies from the proving key (`<base>.starkinfo.json` + `<base>.verifier.bin` +
+//! verifies from the proving key (`<base>.starkinfo.json` + `<base>.verifierinfo.json` +
 //! `<base>.verkey.json`, see `proofman::verify_proof`); consumers that need a
 //! compiled `no_std` verifier commit their own, generated from their own key by
 //! `proofman-setup setup -r`, against the items this crate exports.

@@ -169,6 +169,9 @@ static constexpr uint64_t STARK_INFO_KEY_VERSION = 2;
 class StarkInfo
 {
 public:
+    // Elements of an air/airgroup/proof value: 1 at stage 1, else FIELD_EXTENSION (3, not defined here).
+    static uint64_t valueDim(const PolMap &m) { return m.stage == 1 ? 1 : 3; }
+
     // Read from starkInfo file
     StarkStruct starkStruct;
 

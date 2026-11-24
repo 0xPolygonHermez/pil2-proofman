@@ -38,14 +38,6 @@ pub struct CustomCommit {
     pub name: String,
 }
 
-/// Boundary descriptor.
-#[derive(Debug, Clone)]
-pub struct Boundary {
-    pub name: String,
-    pub offset_min: Option<u64>,
-    pub offset_max: Option<u64>,
-}
-
 /// Mirrors the C++ StarkInfo loaded from starkinfo.json.
 #[derive(Debug, Clone, Default)]
 pub struct StarkInfo {
@@ -64,7 +56,6 @@ pub struct StarkInfo {
 
     pub ev_map: Vec<EvMap>,
     pub opening_points: Vec<i64>,
-    pub boundaries: Vec<Boundary>,
 
     pub q_deg: u64,
     pub q_dim: u64,
@@ -273,20 +264,6 @@ impl StarkInfo {
             .map(|arr| arr.iter().map(|v| v.as_i64().unwrap_or(0)).collect())
             .unwrap_or_default();
 
-        let boundaries: Vec<Boundary> = j
-            .get("boundaries")
-            .and_then(|a| a.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .map(|b| Boundary {
-                        name: get_str(b, "name").to_string(),
-                        offset_min: b.get("offsetMin").and_then(|v| v.as_u64()),
-                        offset_max: b.get("offsetMax").and_then(|v| v.as_u64()),
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
-
         let mut map_sections_n: HashMap<String, u64> = HashMap::new();
         if let Some(msn) = j.get("mapSectionsN").and_then(|v| v.as_object()) {
             for (k, v) in msn {
@@ -312,7 +289,6 @@ impl StarkInfo {
             proof_values_map: parse_pol_map_array(j, "proofValuesMap"),
             ev_map,
             opening_points,
-            boundaries,
             q_deg: get_u64(j, "qDeg"),
             q_dim: get_u64(j, "qDim"),
             c_exp_id: get_u64(j, "cExpId"),

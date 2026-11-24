@@ -5,17 +5,13 @@ bool isHexadecimal(const std::string& str) {
     return true;
 }
 
-ExpressionsInfo::ExpressionsInfo(string starkInfoFile, string expressionsInfofile, bool verifier) : starkInfo(starkInfoFile)
+ExpressionsInfo::ExpressionsInfo(string starkInfoFile, string expressionsInfofile) : starkInfo(starkInfoFile)
 {   
     // Load contents from json file
     json expressionsInfoJson;
     file2json(expressionsInfofile, expressionsInfoJson);
-    load(expressionsInfoJson, false, verifier);
-    if(verifier) {
-        prepareVerifierExpressionsBin();
-    } else {
-        prepareExpressionsBin();
-    }
+    load(expressionsInfoJson, false);
+    prepareExpressionsBin();
 }
 
 // For Global Constraints
@@ -24,57 +20,12 @@ ExpressionsInfo::ExpressionsInfo(string expressionsInfofile)
     // Load contents from json file
     json expressionsInfoJson;
     file2json(expressionsInfofile, expressionsInfoJson);
-    load(expressionsInfoJson, true, false);
+    load(expressionsInfoJson, true);
     prepareGlobalExpressionsBin();
 }
 
-void ExpressionsInfo::load(json j, bool global, bool verifier)
+void ExpressionsInfo::load(json j, bool global)
 {
-    if(verifier) {
-        cout << "Loading verifier expressions info..." << endl;
-        ExpInfo qExpInfo;
-        qExpInfo.expId = starkInfo.cExpId;
-        qExpInfo.stage = starkInfo.nStages + 1;
-        qExpInfo.line = "";
-        qExpInfo.tmpUsed = j["qVerifier"]["tmpUsed"];
-
-        for(uint64_t k = 0; k < j["qVerifier"]["code"].size(); ++k) {
-            CodeOperation c;
-            c.setOperation(j["qVerifier"]["code"][k]["op"]);
-            c.dest.type = string2opType(j["qVerifier"]["code"][k]["dest"]["type"]);
-
-            if(j["qVerifier"]["code"][k]["dest"].contains("id")) c.dest.id = j["qVerifier"]["code"][k]["dest"]["id"];  
-            if(j["qVerifier"]["code"][k]["dest"].contains("prime")) c.dest.prime = j["qVerifier"]["code"][k]["dest"]["prime"];  
-            if(j["qVerifier"]["code"][k]["dest"].contains("dim")) c.dest.dim = j["qVerifier"]["code"][k]["dest"]["dim"];  
-            if(j["qVerifier"]["code"][k]["dest"].contains("commitId")) c.dest.commitId = j["qVerifier"]["code"][k]["dest"]["commitId"];  
-            for (uint64_t l = 0; l < j["qVerifier"]["code"][k]["src"].size(); l++) {
-                CodeType src;
-                src.type = string2opType(j["qVerifier"]["code"][k]["src"][l]["type"]);
-                if(j["qVerifier"]["code"][k]["src"][l].contains("id")) src.id = j["qVerifier"]["code"][k]["src"][l]["id"];  
-                if(j["qVerifier"]["code"][k]["src"][l].contains("prime")) src.prime = j["qVerifier"]["code"][k]["src"][l]["prime"];  
-                if(j["qVerifier"]["code"][k]["src"][l].contains("dim")) src.dim = j["qVerifier"]["code"][k]["src"][l]["dim"];  
-                if(j["qVerifier"]["code"][k]["src"][l].contains("value")) src.value = std::stoull(j["qVerifier"]["code"][k]["src"][l]["value"].get<std::string>());
-                if(j["qVerifier"]["code"][k]["src"][l].contains("commitId")) src.commitId = j["qVerifier"]["code"][k]["src"][l]["commitId"];
-                if(j["qVerifier"]["code"][k]["src"][l].contains("boundaryId")) src.boundaryId = j["qVerifier"]["code"][k]["src"][l]["boundaryId"];
-                if(j["qVerifier"]["code"][k]["src"][l].contains("airgroupId")) src.airgroupId = j["qVerifier"]["code"][k]["src"][l]["airgroupId"];
-                c.src.push_back(src);
-            }
-            qExpInfo.code.push_back(c);
-        }
-
-        if(j["qVerifier"].contains("dest")) {
-            qExpInfo.dest.type = string2opType(j["qVerifier"]["dest"]["op"]);
-            if(j["qVerifier"]["dest"].contains("id")) qExpInfo.dest.id = j["qVerifier"]["dest"]["id"];  
-            if(j["qVerifier"]["dest"].contains("prime")) qExpInfo.dest.prime = j["qVerifier"]["dest"]["prime"];  
-            if(j["qVerifier"]["dest"].contains("dim")) qExpInfo.dest.dim = j["qVerifier"]["dest"]["dim"];  
-            if(j["qVerifier"]["dest"].contains("commitId")) qExpInfo.dest.commitId = j["qVerifier"]["dest"]["commitId"];  
-        }
-
-        expressionsCode.push_back(qExpInfo);
-
-        cout << "Loaded qVerifier expression" << endl;
-        return;
-    }
     
 
     string hints = global ? "hints" : "hintsInfo";
@@ -592,23 +543,6 @@ void ExpressionsInfo::prepareGlobalExpressionsBin() {
         ExpInfoBin globalConstraintInfo = getParserArgs(constraint.code, constraint.tmpUsed, numbersConstraints, true);
         globalConstraintInfo.line = constraint.line;
         constraintsInfo.push_back(globalConstraintInfo);
-    }
-}
-
-void ExpressionsInfo::prepareVerifierExpressionsBin() {
-    for(uint64_t i = 0; i < expressionsCode.size(); ++i) {
-        ExpInfo expCode = expressionsCode[i];
-        ExpInfoBin expressionInfo = getParserArgs(expCode.code, expCode.tmpUsed, numbersExps, false);
-
-        expressionInfo.expId = expCode.expId;
-        expressionInfo.stage = expCode.stage;
-        expressionInfo.line = expCode.line;
-        expressionsInfo.push_back(expressionInfo);
-
-        if(expressionInfo.nTemp1 > maxTmp1) maxTmp1 = expressionInfo.nTemp1;
-        if(expressionInfo.nTemp3 > maxTmp3) maxTmp3 = expressionInfo.nTemp3;
-        if(expressionInfo.args.size() > maxArgs) maxArgs = expressionInfo.args.size();
-        if(expressionInfo.ops.size() > maxOps) maxOps = expressionInfo.ops.size();
     }
 }
 

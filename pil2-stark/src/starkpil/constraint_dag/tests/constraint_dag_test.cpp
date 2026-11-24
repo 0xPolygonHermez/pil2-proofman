@@ -27,7 +27,6 @@ PolMap valueMap(uint64_t stage)
 {
     PolMap p{};
     p.stage = stage;
-    p.dim = stage == 1 ? 1 : FIELD_EXTENSION;
     return p;
 }
 
@@ -124,10 +123,10 @@ V3 direct(const Values &v)
     return mul(acc, e3(v.zi));
 }
 
-V3 evalTo(const ConstraintDag &dag, const StarkInfo &si, const Values &v)
+V3 evalTo(const ConstraintDag &dag, const Values &v)
 {
     V3 o;
-    evalConstraintDag(dag, si, v.inputs(), o.c);
+    evalConstraintDag(dag, v.inputs(), o.c);
     return o;
 }
 
@@ -151,7 +150,7 @@ TEST(ConstraintDag, MatchesDirectFormula)
     std::string err;
     ASSERT_TRUE(readAndCheck(makeJson(), si, dag, err)) << err;
     Values v;
-    EXPECT_TRUE(same(evalTo(dag, si, v), direct(v)));
+    EXPECT_TRUE(same(evalTo(dag, v), direct(v)));
 }
 
 TEST(ConstraintDag, ZiIsOneOverXiNMinusOne)
@@ -166,7 +165,7 @@ TEST(ConstraintDag, ZiIsOneOverXiNMinusOne)
     p = sub(p, base(Goldilocks::one()));
     F3::inv(zInv.r(), p.r());
     for (int k = 0; k < 3; k++) v.zi[k] = zInv.c[k];
-    EXPECT_TRUE(same(evalTo(dag, si, v), direct(v)));
+    EXPECT_TRUE(same(evalTo(dag, v), direct(v)));
 }
 
 TEST(ConstraintDag, DetectsChangedEval)
@@ -176,9 +175,9 @@ TEST(ConstraintDag, DetectsChangedEval)
     std::string err;
     ASSERT_TRUE(readAndCheck(makeJson(), si, dag, err)) << err;
     Values v;
-    V3 before = evalTo(dag, si, v);
+    V3 before = evalTo(dag, v);
     v.evals[4] = v.evals[4] + Goldilocks::one();
-    V3 after = evalTo(dag, si, v);
+    V3 after = evalTo(dag, v);
     EXPECT_FALSE(same(before, after));
     EXPECT_TRUE(same(after, direct(v)));
 }
@@ -295,27 +294,6 @@ TEST(ConstraintDag, RejectsPublicOutOfRange)
     std::string err;
     EXPECT_FALSE(readAndCheck(makeJson("[[7,1]]", "[[0,0,\"x\"]]"), si, dag, err));
     EXPECT_NE(err.find("public"), std::string::npos) << err;
-}
-
-// Dimension corruption: the map says ext for a stage-1 value, or base for a later-stage one.
-TEST(ConstraintDag, RejectsWrongDimensionStage1ValueTypedExt)
-{
-    StarkInfo si = makeInfo();
-    si.airValuesMap[0].dim = FIELD_EXTENSION;
-    ConstraintDag dag;
-    std::string err;
-    EXPECT_FALSE(readAndCheck(makeJson(), si, dag, err));
-    EXPECT_NE(err.find("dimension"), std::string::npos) << err;
-}
-
-TEST(ConstraintDag, RejectsWrongDimensionLaterStageValueTypedBase)
-{
-    StarkInfo si = makeInfo();
-    si.airValuesMap[1].dim = 1;
-    ConstraintDag dag;
-    std::string err;
-    EXPECT_FALSE(readAndCheck(makeJson(), si, dag, err));
-    EXPECT_NE(err.find("dimension"), std::string::npos) << err;
 }
 
 // A col node is ext whatever its column's dim (evals at xi are ext), so the ext slot to corrupt is a challenge.

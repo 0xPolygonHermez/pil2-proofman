@@ -64,6 +64,8 @@ pub enum DagError {
     Unbuildable { what: String },
     // a resolver table repeats a key
     DuplicateKey { what: String },
+    // lowered code whose dimensions or temporaries disagree (`VerifierCode::check_dims`)
+    Dimension { tmp: u32, what: String },
 }
 
 impl ConstraintDag {

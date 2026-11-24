@@ -1,4 +1,5 @@
 //! Common-subexpression elimination for straight-line expression code.
+//! TODO(piece 3 G2: after circom E): delete with the STARK qVerifier.
 //!
 //! Relies on the code being SSA — each operation writes a fresh `tmp` and reads
 //! only already-defined ones — which reduces deduplication to a hash-cons.

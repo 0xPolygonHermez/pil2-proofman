@@ -51,7 +51,7 @@ proofman-setup setup \
 
 Without `--recursive`, only the per-AIR artifacts are produced
 (`<airgroup>/airs/<air>/air/<air>.{starkinfo,verifierinfo,expressionsinfo,verkey}.json`,
-plus `.const`, `.consttree`, `.bin`, `.verifier.bin`, `.verifier.rs`).
+plus `.const`, `.consttree`, `.bin`, `.verifier.rs`).
 
 With `--recursive`, the recursive layers are added under
 `<airgroup>/airs/<air>/{compressor,recursive1}/`,

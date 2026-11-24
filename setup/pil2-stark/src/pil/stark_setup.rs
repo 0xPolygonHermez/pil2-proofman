@@ -86,6 +86,7 @@ pub fn stark_setup(
     let mut pil_code = emitted.code;
     let si = StarkInfo::from_json(&serde_json::to_value(&starkinfo)?)?;
     let vi = VerifierInfo::try_from(&pil_code.verifier_info)?;
+    // TODO(piece 3 G2: after circom E): goes with the STARK qVerifier
     crate::output::dag_eval::check_dag_parity(&dag, &si, &vi).with_context(at)?;
     pil_code.verifier_info.constraint_dag = Some(dag);
 

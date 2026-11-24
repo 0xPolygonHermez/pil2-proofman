@@ -1496,39 +1496,57 @@ fn the_cpp_fixture_is_what_the_encoder_writes() {
 }
 
 /// The qVerifier of pilfflonk's fixtures is the lowered constraint DAG (`Fold::Shplonk`), as in
-/// `pil-info`'s `tests/constraint_dag.rs`, on the real Fibonacci and sum bus.
+/// `pil-info`'s `tests/constraint_dag.rs`, on the real Fibonacci, sum bus and signed (3 im pols at
+/// degree 3); signed's is also equal in value to the pre-DAG generator's (frozen in
+/// `fixtures/bytecode/signed/q_verifier_before.json`, written from the old generator with
+/// `PILFFLONK_UPDATE_FIXTURES=1`; TODO(piece 3 G2: after circom E) delete with the old generator).
 #[test]
 #[ignore = "needs PIL2C_EXEC"]
 fn the_q_verifiers_of_the_fixtures_are_the_lowered_dag() {
-    use pil_info::core::dag::build::build_dag;
-    use pil_info::core::dag::format::DagBoundary;
     use pil_info::core::dag::lower_code::{lower_to_code, Fold};
-    use pil_info::core::from_pilout::from_pilout;
-    use pil_info::core::im::im_order;
     use pil_info::emit::verifier::expression_code;
     use pil_info::pil::gen_code::lower_ctx_from_pil;
-    use pil_info::search::im::search_im;
+    use pil_info::pil::info::{constraint_dag, dag_boundaries};
+    use pilfflonk_setup::command::DEFAULT_MAX_CONSTRAINT_DEGREE;
 
-    for pil in ["fibonacci/fibonacci.pil", "sum_bus/sum_bus.pil"] {
+    for (pil, max_degree) in [
+        ("signed/signed.pil", 3),
+        ("fibonacci/fibonacci.pil", DEFAULT_MAX_CONSTRAINT_DEGREE),
+        ("sum_bus/sum_bus.pil", DEFAULT_MAX_CONSTRAINT_DEGREE),
+    ] {
         let pilout = compile_bn128(&format!("pilfflonk/tests/fixtures/{pil}"));
-        let result = run_bn128(&pilout);
-        let cfg = pilfflonk_setup::passes::cfg(pilfflonk_setup::command::DEFAULT_MAX_CONSTRAINT_DEGREE).unwrap();
-        let cs = from_pilout(&pilout, 0, 0, &cfg.field, cfg.opening).unwrap();
-        let im = im_order(&cs, &search_im(&cs, &cfg.degree_policy, 1).unwrap()).unwrap();
-        let dag = build_dag(&cs, &im).unwrap();
-        let boundaries: Vec<DagBoundary> = result
-            .boundaries
-            .iter()
-            .map(|b| match b.name.as_str() {
-                "everyRow" => DagBoundary::EveryRow,
-                "firstRow" => DagBoundary::FirstRow,
-                "lastRow" => DagBoundary::LastRow,
-                _ => DagBoundary::EveryFrame { min: b.offset_min.unwrap() as i64, max: b.offset_max.unwrap() as i64 },
-            })
-            .collect();
+        let cfg = pilfflonk_setup::passes::cfg(max_degree).unwrap();
+        let result = pil_info::run(&pilout, 0, 0, &cfg, &Default::default()).unwrap();
+        let dag = constraint_dag(&pilout, 0, 0, &cfg, &result.setup.symbols).unwrap();
+        let boundaries = dag_boundaries(&result.boundaries).unwrap();
         let ctx = lower_ctx_from_pil(&result.setup.symbols, &result.pil_code.ev_map, &cfg.field).unwrap();
         let want = expression_code(&lower_to_code(&dag, &ctx, Fold::Shplonk { boundaries: &boundaries }).unwrap());
         let got = &result.pil_code.verifier_info.q_verifier;
+        if pil.starts_with("signed") {
+            assert_eq!(result.setup.symbols.iter().filter(|s| s.im_pol && s.sym_type == "witness").count(), 3);
+            let path =
+                Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/bytecode/signed/q_verifier_before.json");
+            if std::env::var_os("PILFFLONK_UPDATE_FIXTURES").is_some() {
+                fs::create_dir_all(path.parent().unwrap()).unwrap();
+                fs::write(&path, serde_json::to_string_pretty(&got.code).unwrap()).unwrap();
+            }
+            // both through the same JSON round trip (a number's ref is written without an id)
+            let entries = |mut v: serde_json::Value| -> Vec<CodeEntry> {
+                for c in v.as_array_mut().unwrap() {
+                    for r in c["src"].as_array_mut().unwrap() {
+                        r.as_object_mut().unwrap().entry("id").or_insert(0.into());
+                    }
+                }
+                serde_json::from_value(v).unwrap()
+            };
+            let old = entries(serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap());
+            let new = entries(serde_json::to_value(&got.code).unwrap());
+            assert_eq!(
+                evaluate(&new).last(),
+                evaluate(&old).last(),
+                "{pil}: Q(xi) differs from the pre-DAG generator's"
+            );
+        }
         assert_eq!(got.tmp_used, want.tmp_used, "{pil}");
         assert_eq!(serde_json::to_value(&got.code).unwrap(), serde_json::to_value(&want.code).unwrap(), "{pil}");
     }

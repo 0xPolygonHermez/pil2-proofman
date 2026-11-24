@@ -52,8 +52,8 @@ pub fn run(
 }
 
 /// The air's constraint DAG from the core, with the passes' im pols in their column order (the prover's
-/// cExp folds them in that order): the qVerifier's source.
-fn constraint_dag(
+/// cExp folds them in that order): the qVerifier's source. `symbols` are the passes' (`r.setup.symbols`).
+pub fn constraint_dag(
     pilout: &pb::PilOut,
     airgroup_id: usize,
     air_id: usize,
@@ -70,11 +70,24 @@ fn constraint_dag(
         .iter()
         .map(|s| s.exp_id.and_then(|e| ids.get(e).copied()).ok_or_else(|| err(&format!("im pol {}", s.name))))
         .collect::<Result<Vec<_>>>()?;
-    build_dag(&cs, &ImChoice { exprs }).map_err(|e| err(&e))
+    // canonical numbering may merge two equal im expressions: refuse, the passes kept them apart
+    if exprs.iter().collect::<std::collections::BTreeSet<_>>().len() != exprs.len() {
+        return Err(err(&"two im pols share one core expression"));
+    }
+    let dag = build_dag(&cs, &ImChoice { exprs }).map_err(|e| err(&e))?;
+    if dag.roots.len() != cs.constraints.len() + im.len() {
+        return Err(err(&format!(
+            "{} roots for {} constraints and {} im pols",
+            dag.roots.len(),
+            cs.constraints.len(),
+            im.len()
+        )));
+    }
+    Ok(dag)
 }
 
 /// `boundaries` (in `boundaryId` order) as the DAG's.
-fn dag_boundaries(boundaries: &[Boundary]) -> Result<Vec<DagBoundary>> {
+pub fn dag_boundaries(boundaries: &[Boundary]) -> Result<Vec<DagBoundary>> {
     boundaries
         .iter()
         .map(|b| match (b.name.as_str(), b.offset_min, b.offset_max) {

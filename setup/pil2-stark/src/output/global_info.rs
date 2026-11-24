@@ -214,7 +214,7 @@ pub(crate) fn write_global_info(
     Ok(())
 }
 
-/// Read expressionsinfo and verifierinfo JSON files from disk and write binary outputs.
+/// Read the starkinfo and expressionsinfo JSON files from disk and write the `.bin`.
 ///
 /// Used by the golden-reference test suite. In production the binary files are
 /// written directly from in-memory structs via `write_bin_files_from_pil_code`.
@@ -222,12 +222,10 @@ pub(crate) fn write_global_info(
 pub(crate) fn write_bin_files_native(
     starkinfo_path: &Path,
     expressionsinfo_path: &Path,
-    verifierinfo_path: &Path,
     bin_output: &Path,
-    verifier_bin_output: &Path,
 ) -> Result<()> {
     use anyhow::Context;
-    use crate::types::stark_info::{ExpressionsInfo, StarkInfo, VerifierInfo};
+    use crate::types::stark_info::{ExpressionsInfo, StarkInfo};
 
     let si_data =
         fs::read_to_string(starkinfo_path).with_context(|| format!("Cannot read starkinfo: {:?}", starkinfo_path))?;
@@ -239,19 +237,7 @@ pub(crate) fn write_bin_files_native(
     let ei_json: serde_json::Value = serde_json::from_str(&ei_data)?;
     let ei = ExpressionsInfo::from_json(&ei_json)?;
 
-    let vi_data = fs::read_to_string(verifierinfo_path)
-        .with_context(|| format!("Cannot read verifierinfo: {:?}", verifierinfo_path))?;
-    let vi_json: serde_json::Value = serde_json::from_str(&vi_data)?;
-    let vi = VerifierInfo::from_json(&vi_json)?;
-
-    crate::io::bin_file::write_expressions_bin_file(bin_output.to_str().unwrap_or(""), &stark_info, &ei)?;
-    crate::io::bin_file::write_verifier_expressions_bin_file(
-        verifier_bin_output.to_str().unwrap_or(""),
-        &stark_info,
-        &vi,
-    )?;
-
-    Ok(())
+    crate::io::bin_file::write_expressions_bin_file(bin_output.to_str().unwrap_or(""), &stark_info, &ei)
 }
 
 #[cfg(test)]
@@ -422,24 +408,12 @@ mod tests {
         let tmp = std::env::temp_dir().join(format!("pil2_bin_regression_{}", std::process::id()));
         let _ = std::fs::create_dir_all(&tmp);
         let out_bin = tmp.join("Dma.bin");
-        let out_vbin = tmp.join("Dma.verifier.bin");
-        write_bin_files_native(
-            &si,
-            &dir.join("Dma.expressionsinfo.json"),
-            &dir.join("Dma.verifierinfo.json"),
-            &out_bin,
-            &out_vbin,
-        )
-        .expect("write_bin_files_native failed");
+        write_bin_files_native(&si, &dir.join("Dma.expressionsinfo.json"), &out_bin)
+            .expect("write_bin_files_native failed");
         let golden = std::fs::read(&golden_bin).unwrap();
         let actual = std::fs::read(&out_bin).unwrap();
         assert_eq!(golden.len(), actual.len(), "Dma.bin size mismatch");
         assert_eq!(golden, actual, "Dma.bin content mismatch");
-        assert_eq!(
-            std::fs::read(dir.join("Dma.verifier.bin")).unwrap(),
-            std::fs::read(&out_vbin).unwrap(),
-            "Dma.verifier.bin mismatch"
-        );
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
@@ -456,15 +430,8 @@ mod tests {
         let tmp = std::env::temp_dir().join(format!("pil2_binary_bin_regression_{}", std::process::id()));
         let _ = std::fs::create_dir_all(&tmp);
         let out_bin = tmp.join("Binary.bin");
-        let out_vbin = tmp.join("Binary.verifier.bin");
-        write_bin_files_native(
-            &si,
-            &dir.join("Binary.expressionsinfo.json"),
-            &dir.join("Binary.verifierinfo.json"),
-            &out_bin,
-            &out_vbin,
-        )
-        .expect("write_bin_files_native failed");
+        write_bin_files_native(&si, &dir.join("Binary.expressionsinfo.json"), &out_bin)
+            .expect("write_bin_files_native failed");
         let golden = std::fs::read(&golden_bin).unwrap();
         let actual = std::fs::read(&out_bin).unwrap();
         assert_eq!(golden.len(), actual.len(), "Binary.bin size mismatch");
@@ -472,7 +439,6 @@ mod tests {
             let pos = golden.iter().zip(actual.iter()).position(|(a, b)| a != b).unwrap_or(0);
             panic!("Binary.bin mismatch at byte {} (golden={:#x} actual={:#x})", pos, golden[pos], actual[pos]);
         }
-        assert_eq!(std::fs::read(dir.join("Binary.verifier.bin")).unwrap(), std::fs::read(&out_vbin).unwrap());
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
@@ -489,19 +455,11 @@ mod tests {
         let tmp = std::env::temp_dir().join(format!("pil2_arith_bin_{}", std::process::id()));
         let _ = std::fs::create_dir_all(&tmp);
         let out_bin = tmp.join("Arith.bin");
-        let out_vbin = tmp.join("Arith.verifier.bin");
-        write_bin_files_native(
-            &si,
-            &dir.join("Arith.expressionsinfo.json"),
-            &dir.join("Arith.verifierinfo.json"),
-            &out_bin,
-            &out_vbin,
-        )
-        .expect("write_bin_files_native failed");
+        write_bin_files_native(&si, &dir.join("Arith.expressionsinfo.json"), &out_bin)
+            .expect("write_bin_files_native failed");
         let golden = std::fs::read(&golden_bin).unwrap();
         let actual = std::fs::read(&out_bin).unwrap();
         assert_eq!(golden, actual, "Arith.bin mismatch");
-        assert_eq!(std::fs::read(dir.join("Arith.verifier.bin")).unwrap(), std::fs::read(&out_vbin).unwrap());
         let _ = std::fs::remove_dir_all(&tmp);
     }
 }

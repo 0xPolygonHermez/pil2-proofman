@@ -4,9 +4,8 @@ use anyhow::{anyhow, bail, Result};
 use proofman_fields::{CubicExtensionField, Goldilocks};
 
 use pil_info::core::dag::format::{ConstraintDag, DagNode};
-use pil_info::core::dag::lower_code::{stark_roots, LowerCtx, LowerTables, Operand};
+use pil_info::core::dag::lower_code::{ev_col_ref, stark_roots, std_vc_index, LowerCtx, LowerTables, Operand};
 use pil_info::core::fold::fold_roots;
-use pil_info::core::ir::{ColRef, ColType};
 
 use crate::types::stark_info::{CodeOperation, OpType, PolMap, StarkInfo, VerifierInfo};
 use crate::types::{goldilocks_u64, GOLDILOCKS_MODULUS};
@@ -31,18 +30,13 @@ pub fn lower_ctx(si: &StarkInfo) -> Result<LowerCtx> {
         .ev_map
         .iter()
         .map(|e| {
-            let (col, commit_id) = match e.ev_type.as_str() {
-                "custom" => (ColType::Custom, Some(e.commit_id as u32)),
-                "const" => (ColType::Fixed, None),
-                "cm" => (ColType::Witness, None),
-                t => bail!("evMap entry of unknown type {t:?}"),
-            };
-            Ok(ColRef { col, commit_id, id: e.id as u32, offset: e.prime })
+            ev_col_ref(&e.ev_type, Some(e.commit_id as u32), e.id as u32, e.prime)
+                .ok_or_else(|| anyhow!("evMap entry of unknown type {:?}", e.ev_type))
         })
         .collect::<Result<Vec<_>>>()?;
     let challenges: Vec<(u32, u32)> = si.challenges_map.iter().map(|c| (c.stage as u32, c.stage_id as u32)).collect();
     // a missing `std_vc` is past the end, so lowering and evaluation report it unresolved
-    let vc = si.challenges_map.iter().position(|c| c.name == "std_vc").unwrap_or(challenges.len());
+    let vc = std_vc_index(si.challenges_map.iter().map(|c| c.name.as_str())).unwrap_or(challenges.len());
     let stages = |m: &[PolMap]| m.iter().map(|p| p.stage as u32).collect();
     let t = LowerTables {
         ev_map,
@@ -163,7 +157,7 @@ pub fn eval_dag(dag: &ConstraintDag, ctx: &LowerCtx, inp: &GlInputs) -> Result<E
     Ok(c * inp.zi)
 }
 
-/// The value of the last instruction of `code`.
+/// The value of the last instruction of `code`. TODO(piece 3 G2: after circom E): delete with `check_dag_parity`.
 pub fn eval_code(code: &[CodeOperation], ctx: &LowerCtx, inp: &GlInputs) -> Result<E3> {
     let mut tmp: Vec<E3> = Vec::new();
     for (k, c) in code.iter().enumerate() {
@@ -206,7 +200,7 @@ pub fn eval_code(code: &[CodeOperation], ctx: &LowerCtx, inp: &GlInputs) -> Resu
     at(&tmp, last.dest.id, "temporary")
 }
 
-/// TODO(piece 3): delete once qVerifier comes from `lower_to_code`. `dag` against `vi`'s qVerifier code on three seeds; the error says "differs" on a mismatch.
+/// TODO(piece 3 G2: after circom E): delete with the STARK qVerifier, and `eval_code`. `dag` against `vi`'s qVerifier code on three seeds; the error says "differs" on a mismatch.
 /// (`dag` is an added parameter: `si` and `vi` alone carry no DAG.)
 pub fn check_dag_parity(dag: &ConstraintDag, si: &StarkInfo, vi: &VerifierInfo) -> Result<()> {
     let ctx = lower_ctx(si)?;
@@ -229,7 +223,7 @@ mod tests {
     use pil_info::core::dag::format::{DagBoundary, DagNode, DagRoot};
     use pil_info::core::dag::lower_code::{lower_to_code, Fold};
     use pil_info::core::im::im_column_id;
-    use pil_info::core::ir::{eval_expr, Env, Expr};
+    use pil_info::core::ir::{eval_expr, ColRef, ColType, Env, Expr};
     use pil_info::emit::verifier::expression_code;
     use pil_info::pil::gen_code;
     use proofman_fields::{Field, PrimeField64};

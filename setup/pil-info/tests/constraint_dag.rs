@@ -2,20 +2,17 @@
 //! `expression_code(lower_to_code(dag, ctx, Fold::Shplonk{..}))`, and equal in value to the pre-DAG generator's.
 //!
 //! The pre-DAG reference is frozen in `fixtures/constraint_dag/shplonk_q_verifier_before.json` (write it
-//! from the old generator with `PIL_INFO_UPDATE_FIXTURES=1`; it is deleted with the old generator in Task G).
+//! from the old generator with `PIL_INFO_UPDATE_FIXTURES=1`; TODO(piece 3 G2: after circom E): delete it with the old generator).
 
 use std::path::PathBuf;
 
 use num_bigint::BigUint;
 use pil2_pilout::pilout as pb;
-use pil_info::core::dag::build::build_dag;
 use pil_info::core::dag::format::DagBoundary;
 use pil_info::core::dag::lower_code::{lower_to_code, Fold, LowerCtx};
-use pil_info::core::from_pilout::from_pilout;
-use pil_info::core::im::im_order;
 use pil_info::emit::verifier::expression_code;
 use pil_info::pil::gen_code::lower_ctx_from_pil;
-use pil_info::search::im::search_im;
+use pil_info::pil::info::{constraint_dag, dag_boundaries};
 use pil_info::{PilInfoCfg, PilInfoResult};
 
 mod common;
@@ -47,25 +44,12 @@ fn run(p: &pb::PilOut) -> PilInfoResult {
 }
 
 fn boundaries(r: &PilInfoResult) -> Vec<DagBoundary> {
-    r.boundaries
-        .iter()
-        .map(|b| match b.name.as_str() {
-            "everyRow" => DagBoundary::EveryRow,
-            "firstRow" => DagBoundary::FirstRow,
-            "lastRow" => DagBoundary::LastRow,
-            "everyFrame" => {
-                DagBoundary::EveryFrame { min: b.offset_min.unwrap() as i64, max: b.offset_max.unwrap() as i64 }
-            }
-            n => panic!("boundary {n}"),
-        })
-        .collect()
+    dag_boundaries(&r.boundaries).unwrap()
 }
 
-/// The DAG of the same air from the core, over the same degree policy as the old pipeline's search.
-fn dag_of(p: &pb::PilOut) -> pil_info::core::dag::format::ConstraintDag {
-    let cs = from_pilout(p, 0, 0, &cfg().field, cfg().opening).unwrap();
-    let set = search_im(&cs, &cfg().degree_policy, 1).unwrap();
-    build_dag(&cs, &im_order(&cs, &set).unwrap()).unwrap()
+/// The DAG of the same air from the core, with the passes' im choice (`r`'s symbols).
+fn dag_of(p: &pb::PilOut, r: &PilInfoResult) -> pil_info::core::dag::format::ConstraintDag {
+    constraint_dag(p, 0, 0, &cfg(), &r.setup.symbols).unwrap()
 }
 
 fn ctx_of(r: &PilInfoResult) -> LowerCtx {
@@ -78,7 +62,7 @@ fn shplonk_q_verifier_is_lowered_dag() {
     let r = run(&p);
     let b = boundaries(&r);
     assert_eq!(b.len(), 4);
-    let want = expression_code(&lower_to_code(&dag_of(&p), &ctx_of(&r), Fold::Shplonk { boundaries: &b }).unwrap());
+    let want = expression_code(&lower_to_code(&dag_of(&p, &r), &ctx_of(&r), Fold::Shplonk { boundaries: &b }).unwrap());
     let got = &r.pil_code.verifier_info.q_verifier;
     assert_eq!(got.tmp_used, want.tmp_used);
     assert_eq!(serde_json::to_value(&got.code).unwrap(), serde_json::to_value(&want.code).unwrap());
@@ -172,7 +156,7 @@ fn shplonk_refuses_dimension_mismatch() {
     let mut t = ctx_of(&r).tables().clone();
     t.ext_dim = 3;
     let ctx = LowerCtx::new(t).unwrap();
-    assert!(lower_to_code(&dag_of(&p), &ctx, Fold::Shplonk { boundaries: &b }).is_err());
+    assert!(lower_to_code(&dag_of(&p, &r), &ctx, Fold::Shplonk { boundaries: &b }).is_err());
 }
 
 // A root whose boundary is not in the list has no Zi.
@@ -181,5 +165,5 @@ fn shplonk_refuses_an_unlisted_boundary() {
     let p = mixed_boundaries_pilout();
     let r = run(&p);
     let only_every_row = [DagBoundary::EveryRow];
-    assert!(lower_to_code(&dag_of(&p), &ctx_of(&r), Fold::Shplonk { boundaries: &only_every_row }).is_err());
+    assert!(lower_to_code(&dag_of(&p, &r), &ctx_of(&r), Fold::Shplonk { boundaries: &only_every_row }).is_err());
 }

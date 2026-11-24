@@ -3,7 +3,7 @@ use anyhow::Result;
 use crate::io::bin_file_writer::BinFileWriter;
 use crate::io::parser_args::{get_parser_args, ExpsInfo};
 use crate::types::goldilocks_u64;
-use crate::types::stark_info::{ExpressionsInfo, Hint, OpType, StarkInfo, VerifierInfo};
+use crate::types::stark_info::{ExpressionsInfo, Hint, OpType, StarkInfo};
 
 const CHELPERS_NSECTIONS: u32 = 3;
 const CHELPERS_EXPRESSIONS_SECTION: u32 = 1;
@@ -17,16 +17,6 @@ struct PreparedExpressionsBin {
     hints_info: Vec<Hint>,
     numbers_exps: Vec<String>,
     numbers_constraints: Vec<String>,
-    max_tmp1: u64,
-    max_tmp3: u64,
-    max_args: u64,
-    max_ops: u64,
-}
-
-/// Prepared verifier binary data.
-struct PreparedVerifierBin {
-    q_code: ExpsInfo,
-    numbers_exps: Vec<String>,
     max_tmp1: u64,
     max_tmp3: u64,
     max_args: u64,
@@ -59,10 +49,7 @@ fn prepare_expressions_bin(
             other => anyhow::bail!("Invalid boundary: {}", other),
         };
 
-        let result =
-            get_parser_args(stark_info, &constraint_code.code, &mut numbers_constraints, false, false, None)?;
-
-        let mut info = result.exps_info;
+        let mut info = get_parser_args(stark_info, &constraint_code.code, &mut numbers_constraints, false, None)?;
         info.stage = constraint_code.stage;
         info.first_row = first_row;
         info.last_row = last_row;
@@ -101,9 +88,7 @@ fn prepare_expressions_bin(
             }
         }
 
-        let result = get_parser_args(stark_info, &exp_code.code, &mut numbers_exps, false, false, None)?;
-
-        let mut info = result.exps_info;
+        let mut info = get_parser_args(stark_info, &exp_code.code, &mut numbers_exps, false, None)?;
         info.exp_id = exp_code.exp_id;
         info.stage = exp_code.stage;
         info.line = exp_code.line.clone();
@@ -134,28 +119,6 @@ fn prepare_expressions_bin(
         max_tmp3,
         max_args,
         max_ops,
-    })
-}
-
-fn prepare_verifier_expressions_bin(
-    stark_info: &StarkInfo,
-    verifier_info: &VerifierInfo,
-) -> Result<PreparedVerifierBin> {
-    let mut numbers_exps: Vec<String> = Vec::new();
-    let q_result =
-        get_parser_args(stark_info, &verifier_info.q_verifier.code, &mut numbers_exps, false, true, None)?;
-    let mut q_code = q_result.exps_info;
-    q_code.exp_id = stark_info.c_exp_id;
-    q_code.stage = stark_info.n_stages + 1;
-    q_code.line = String::new();
-
-    Ok(PreparedVerifierBin {
-        max_tmp1: q_code.n_temp1,
-        max_tmp3: q_code.n_temp3,
-        max_args: q_code.args.len() as u64,
-        max_ops: q_code.ops.len() as u64,
-        q_code,
-        numbers_exps,
     })
 }
 
@@ -389,41 +352,6 @@ pub fn write_expressions_bin_file(
     )?;
 
     write_hints_section(&mut writer, &bin.hints_info, CHELPERS_HINTS_SECTION)?;
-
-    println!("> Writing the chelpers file finished");
-    println!("---------------------------------------------");
-
-    writer.close()?;
-    Ok(())
-}
-
-/// Writes the verifier expressions binary file (1 section: the expression for q).
-pub fn write_verifier_expressions_bin_file(
-    path: &str,
-    stark_info: &StarkInfo,
-    verifier_info: &VerifierInfo,
-) -> Result<()> {
-    if let Some(dag) = &verifier_info.constraint_dag {
-        crate::output::dag_eval::check_dag_parity(dag, stark_info, verifier_info)?;
-    }
-    println!("> Writing chelpers verifier file");
-
-    let bin = prepare_verifier_expressions_bin(stark_info, verifier_info)?;
-
-    let ver_exps = vec![bin.q_code];
-
-    let mut writer = BinFileWriter::new(path, "chps", 1, 1)?;
-
-    write_expressions_section(
-        &mut writer,
-        &ver_exps,
-        &bin.numbers_exps,
-        bin.max_tmp1,
-        bin.max_tmp3,
-        bin.max_args,
-        bin.max_ops,
-        CHELPERS_EXPRESSIONS_SECTION,
-    )?;
 
     println!("> Writing the chelpers file finished");
     println!("---------------------------------------------");

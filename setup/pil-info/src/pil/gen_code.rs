@@ -7,8 +7,7 @@
 //! - Hint computations
 
 use crate::core::dag::format::{ConstraintDag, DagBoundary};
-use crate::core::dag::lower_code::{lower_to_code, Fold, LowerCtx, LowerTables};
-use crate::core::ir::{ColRef, ColType};
+use crate::core::dag::lower_code::{ev_col_ref, lower_to_code, std_vc_index, Fold, LowerCtx, LowerTables};
 use crate::emit::verifier::expression_code;
 use crate::cfg::{FieldCfg, Opening};
 use crate::error::{PilInfoError, Result};
@@ -306,17 +305,10 @@ pub fn lower_ctx_from_pil(symbols: &[SymbolInfo], ev_map: &[EvMapRef], field: &F
     let err = |what: String| PilInfoError::ConstraintDag(what);
     let ev_map = ev_map
         .iter()
-        .map(|e| {
-            let (col, commit_id) = match e.entry_type.as_str() {
-                "cm" => (ColType::Witness, None),
-                "const" => (ColType::Fixed, None),
-                "custom" => (
-                    ColType::Custom,
-                    Some(e.commit_id.ok_or_else(|| err("a custom evaluation without commit".into()))? as u32),
-                ),
-                t => return Err(PilInfoError::UnknownEvaluation(t.to_string())),
-            };
-            Ok(ColRef { col, commit_id, id: e.id as u32, offset: e.prime })
+        .map(|e| match e.entry_type.as_str() {
+            "cm" | "const" | "custom" => ev_col_ref(&e.entry_type, e.commit_id.map(|c| c as u32), e.id as u32, e.prime)
+                .ok_or_else(|| err("a custom evaluation without commit".into())),
+            t => Err(PilInfoError::UnknownEvaluation(t.to_string())),
         })
         .collect::<Result<Vec<_>>>()?;
     // the symbols of type `ty`, placed at their id; each id exactly once
@@ -334,7 +326,8 @@ pub fn lower_ctx_from_pil(symbols: &[SymbolInfo], ev_map: &[EvMapRef], field: &F
     let stage = |s: &&SymbolInfo| s.stage.unwrap_or(0) as u32;
     let stages = |ty: &str| by_id(ty).map(|v| v.iter().map(stage).collect());
     let challenges = by_id("challenge")?;
-    let vc = challenges.iter().position(|c| c.name == "std_vc").ok_or_else(|| err("no std_vc challenge".into()))?;
+    let vc =
+        std_vc_index(challenges.iter().map(|c| c.name.as_str())).ok_or_else(|| err("no std_vc challenge".into()))?;
     let t = LowerTables {
         ev_map,
         challenges: challenges.iter().map(|c| (stage(c), c.stage_id.unwrap_or(0) as u32)).collect(),
@@ -371,7 +364,7 @@ pub fn generate_pil_code(
     // Pre-compute witness symbol index for O(1) lookups in fix_commit_pol
     let witness_index = build_witness_index(symbols, params.air_id, params.airgroup_id);
 
-    // TODO(piece 3 G): keep only its evMap (`build_ev_map`); the STARK qVerifier leaves with it
+    // TODO(piece 3 G2: after circom E): keep only its evMap (`build_ev_map`); the STARK qVerifier feeds circom until then
     let mut q_verifier =
         generate_constraint_polynomial_verifier_code(params, symbols, expressions, &mut ev_map_items, &witness_index)?;
 
@@ -388,6 +381,7 @@ pub fn generate_pil_code(
                 .map_err(|e| PilInfoError::ConstraintDag(format!("{e:?}")))?;
             q_verifier = ExpressionCodeEntry { exp_id: params.c_exp_id, ..expression_code(&code) };
         }
+        // TODO(piece 3 G2: after circom E): the STARK qVerifier and its CSE go once circom reads the DAG
         (Opening::Deep, None) => {
             // The verifier entry only: it feeds the Rust/C++ verifiers and the circom recursion circuit,
             // none of which is the prover's cExp.
@@ -571,6 +565,7 @@ fn generate_constraints_debug_code(
 /// Generate verifier code for the constraint polynomial.
 ///
 /// Mirrors JS `generateConstraintPolynomialVerifierCode(res, verifierInfo, symbols, expressions)`.
+/// TODO(piece 3 G2: after circom E): only its evMap survives (`build_ev_map`).
 fn generate_constraint_polynomial_verifier_code(
     params: &CodeGenParams,
     symbols: &[SymbolInfo],

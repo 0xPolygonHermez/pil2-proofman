@@ -5,6 +5,10 @@ ExpressionsBin::ExpressionsBin(string file, bool globalBin, bool verifierBin) {
     binFile = file;
     if(verifierBin) {
         // The verifier reads <air>.verifierinfo.json, not a bin file.
+        if(!fileExists(file)) {
+            zklog.error("ExpressionsBin: " + file + " is missing; regenerate the setup");
+            exitProcess();
+        }
         json j;
         file2json(file, j);
         std::string err = "no constraintDag key";
@@ -23,14 +27,11 @@ ExpressionsBin::ExpressionsBin(string file, bool globalBin, bool verifierBin) {
     }
 }
 
-ExpressionsBin::ExpressionsBin(string starkInfoFile, string expressionsInfoFile, string expressionsBinFile, bool globalBin, bool verifierBin) {
+ExpressionsBin::ExpressionsBin(string starkInfoFile, string expressionsInfoFile, string expressionsBinFile, bool globalBin) {
     write = true;
     if(globalBin) {
         ExpressionsInfo expsInfo(expressionsInfoFile);
         writeGlobalExpressionsBin(expressionsBinFile, expsInfo);
-    } else if(verifierBin) {
-        ExpressionsInfo expsInfo(starkInfoFile, expressionsInfoFile, true);
-        writeVerifierBin(expressionsBinFile, expsInfo);
     } else {
         ExpressionsInfo expsInfo(starkInfoFile, expressionsInfoFile);
         writeExpressionsBin(expressionsBinFile, expsInfo);
@@ -59,13 +60,6 @@ void ExpressionsBin::writeExpressionsBin(string binFile, ExpressionsInfo& expsIn
 
     // Write HintsSection
     writeHintsSection(fdBinFile, HINTS_SECTION, expsInfo.hintsInfo);
-}
-
-void ExpressionsBin::writeVerifierBin(string binFile, ExpressionsInfo& expsInfo) {
-    BinFileUtils::BinFileWriter fdBinFile(binFile, "chps", 1, 1);
-
-    // Write ExpressionsSection
-    writeExpressionsSection(fdBinFile, EXPRESSIONS_SECTION, expsInfo.expressionsInfo, expsInfo.numbersExps, expsInfo.maxTmp1, expsInfo.maxTmp3, expsInfo.maxArgs, expsInfo.maxOps);
 }
 
 void ExpressionsBin::writeExpressionsSection(BinFileUtils::BinFileWriter &binFile, int section, std::vector<ExpInfoBin> expressionsInfo, std::vector<uint64_t> numbersExps, uint64_t maxTmp1, uint64_t maxTmp3, uint64_t maxArgs, uint64_t maxOps) {

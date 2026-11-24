@@ -124,7 +124,7 @@ public:
     /* Constructor */
     ExpressionsBin(string file, bool globalBin = false, bool verifierBin = false);
 
-    ExpressionsBin(string starkInfoFile, string expressionsInfoFile, string expressionsBinFile, bool globalBin = false, bool verifierBin = false);
+    ExpressionsBin(string starkInfoFile, string expressionsInfoFile, string expressionsBinFile, bool globalBin = false);
 
     void loadExpressionsBin(BinFileUtils::BinFile *expressionsBin);
 
@@ -133,8 +133,6 @@ public:
     void writeGlobalExpressionsBin(string binFile, ExpressionsInfo& expsInfo);
 
     void writeExpressionsBin(string binFile, ExpressionsInfo& expsInfo);
-
-    void writeVerifierBin(string binFile, ExpressionsInfo& expsInfo);
 
     void writeExpressionsSection(BinFileUtils::BinFileWriter &binFile, int section, std::vector<ExpInfoBin> expressionsInfo, std::vector<uint64_t> numbersExps, uint64_t maxTmp1, uint64_t maxTmp3, uint64_t maxArgs, uint64_t maxOps);
     
