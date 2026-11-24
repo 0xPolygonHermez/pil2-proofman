@@ -63,7 +63,7 @@ impl WaitTimeoutTracker {
                 current,
                 expected
             );
-            cancellation_info.write_recover().token.cancel();
+            cancellation_info.write_recover().cancel(None);
             return false;
         }
 
