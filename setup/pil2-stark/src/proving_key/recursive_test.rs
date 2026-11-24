@@ -16,7 +16,8 @@ use crate::io::fixed_cols;
 use crate::output::witness_gen::WitnessTracker;
 use crate::proving_key::bctree;
 use crate::proving_key::recursive::compile_pil;
-use crate::commands::recursive_setup::resolve_path_env;
+use crate::proving_key::util::exact_log2;
+use proofman_common::hash_family::HashFamily;
 use crate::types::stark_struct::generate_stark_struct;
 
 /// Run the recursive test setup from a user-provided circom file.
@@ -51,6 +52,7 @@ pub fn gen_recursive_test_setup(
     circom_exec: &str,
     circuits_gl_path: &str,
     recurser_circuits_path: &str,
+    std_pil_path: &str,
     recurser_pil_path: &str,
     circom_helpers_dir: &str,
     witness_tracker: &WitnessTracker,
@@ -59,6 +61,7 @@ pub fn gen_recursive_test_setup(
     blowup_override: Option<usize>,
     min_n_bits: Option<usize>,
 ) -> Result<()> {
+    let family: HashFamily = hash.parse().map_err(anyhow::Error::msg)?;
     if !["compressor", "aggregation"].contains(&setup_type) {
         bail!("Invalid setup type '{}'. Must be one of: compressor, aggregation", setup_type);
     }
@@ -145,7 +148,7 @@ pub fn gen_recursive_test_setup(
     // parameters, but 177 intermediate polynomials against far fewer, so stage 2 came out 501 columns
     // wide against 255. A fixture that verifies THAT air says nothing about the one being shipped.
     // `--blowup` overrides the template's; the degree follows it, which is the coupling being swept.
-    let blowup = blowup_override.unwrap_or_else(|| crate::proving_key::recursive::recursive_blowup(template, hash));
+    let blowup = blowup_override.unwrap_or_else(|| crate::proving_key::recursive::recursive_blowup(template, family));
     let max_constraint_degree = Some(proofman_common::hash_family::max_constraint_degree_for_blowup(blowup));
     let plonk_opts = PlonkOptions {
         airgroup_name: Some(NAME_FILE.to_string()),
@@ -194,8 +197,7 @@ pub fn gen_recursive_test_setup(
     // Step 8: Compile PIL via pil2com (npm package).
     // -------------------------------------------------------------------------
     let pilout_path = build_inner.join(format!("{}.pilout", NAME_FILE));
-    let std_pil_path = resolve_path_env("STD_PIL_PATH", "pil2-components/lib/std/pil");
-    compile_pil(pil_path.to_str().unwrap(), pilout_path.to_str().unwrap(), &std_pil_path, recurser_pil_path)?;
+    compile_pil(pil_path.to_str().unwrap(), pilout_path.to_str().unwrap(), std_pil_path, recurser_pil_path)?;
 
     // -------------------------------------------------------------------------
     // Step 9: Load compiled pilout and run pil_info.
@@ -210,8 +212,9 @@ pub fn gen_recursive_test_setup(
         bail!("Compiled pilout has no AIR groups: {}", pilout_str);
     }
     let air = &pilout.air_groups[0].airs[0];
-    let num_rows = air.num_rows.unwrap_or(0) as usize;
-    let n_bits_air = if num_rows > 0 { (num_rows as f64).log2() as usize } else { plonk_result.n_bits };
+    let num_rows = u64::from(air.num_rows.unwrap_or(0));
+    let n_bits_air =
+        if num_rows > 0 { exact_log2(num_rows).context("recursive test row count")? } else { plonk_result.n_bits };
 
     // JS genRecursiveSetupTest always used {blowupFactor: 3, lastLevelVerification: 1} regardless of
     // the setup type. The blowup now follows the family, because the point of a test key is to
@@ -221,7 +224,7 @@ pub fn gen_recursive_test_setup(
     // Exactly the real recursion layers' settings (low-degree test, blowup, terminal degree,
     // grinding, kept levels), so a test key matches their geometry: left to generic defaults the
     // fixture once verified a FRI shape the pipeline never builds.
-    let mut settings = crate::proving_key::recursive::recursive_stark_settings(template, hash, recursion_settings);
+    let mut settings = crate::proving_key::recursive::recursive_stark_settings(template, family, recursion_settings);
     // finalDegree is the final polynomial's degree bound, so an overridden blowup leaves it alone.
     settings.initial_blowup_factor = Some(blowup);
     let stark_struct = generate_stark_struct(&settings, n_bits_air, hash);
@@ -333,4 +336,17 @@ pub fn gen_recursive_test_setup(
 
     println!("files Generated Correctly");
     Ok(())
+}
+
+#[cfg(test)]
+mod std_pil_path_tests {
+    /// The generator takes `std_pil_path` from its caller; it does not read the env itself.
+    #[test]
+    fn std_pil_path_is_a_parameter() {
+        let src = include_str!("recursive_test.rs");
+        let needle = ["resolve_path_env(", "\"STD_PIL_PATH\""].concat();
+        let body = src.split("#[cfg(test)]").next().unwrap();
+        assert!(!body.contains(&needle), "generator must not resolve STD_PIL_PATH itself");
+        assert!(body.contains("std_pil_path: &str"), "signature must carry std_pil_path");
+    }
 }

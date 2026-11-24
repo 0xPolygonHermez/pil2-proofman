@@ -27,6 +27,7 @@ use pil2_stark_recurser::stark2circom::{
     gen_circom_circuit, gen_stark_verifier, CircomGenOptions, GenCircomCircuitInput, StarkVerifierOptions,
 };
 use crate::proving_key::recursive::compile_pil;
+use proofman_common::hash_family::HashFamily;
 use crate::output::witness_gen::WitnessTracker;
 
 /// Configuration for the compressed final setup.
@@ -54,6 +55,7 @@ pub struct CompressedFinalConfig<'a> {
 ///
 /// Ports `genCompressedFinalSetup()` from `generateCompressedFinalSetup.js`.
 pub fn gen_compressed_final_setup(config: &CompressedFinalConfig<'_>, witness_tracker: &WitnessTracker) -> Result<()> {
+    let family: HashFamily = config.hash.parse().map_err(anyhow::Error::msg)?;
     let template = "vadcop_final_compressed";
     let verifier_name = "vadcop_final_stark.verifier.circom";
     let build_dir = PathBuf::from(config.build_dir);
@@ -165,7 +167,7 @@ pub fn gen_compressed_final_setup(config: &CompressedFinalConfig<'_>, witness_tr
     let plonk_opts = PlonkOptions {
         airgroup_name: Some("VadcopFinalCompressed".to_string()),
         // blake3 follows the blowup, as vadcop_final does; poseidon keeps the packer default.
-        max_constraint_degree: (config.hash == "blake3").then(|| {
+        max_constraint_degree: family.is_blake3().then(|| {
             proofman_common::hash_family::max_constraint_degree_for_blowup(
                 proofman_common::hash_family::compressed_final_blowup_factor(config.hash),
             )
@@ -244,9 +246,9 @@ pub fn gen_compressed_final_setup(config: &CompressedFinalConfig<'_>, witness_tr
         .filter(|(measured, _)| pinned(*measured));
     let compressed_settings = crate::types::stark_struct::StarkSettings {
         initial_blowup_factor: Some(proofman_common::hash_family::compressed_final_blowup_factor(config.hash)),
-        initial_folding_factor: Some(if config.hash == "blake3" { 4 } else { 3 }),
+        initial_folding_factor: Some(if family.is_blake3() { 4 } else { 3 }),
         grinding_bits: Some(proofman_common::hash_family::compressed_final_grinding_bits(config.hash)),
-        merkle_tree_arity: (config.hash != "blake3").then_some(2),
+        merkle_tree_arity: (!family.is_blake3()).then_some(2),
         last_level_verification: if multiproof {
             Some(0)
         } else {
@@ -346,21 +348,17 @@ pub fn gen_compressed_final_setup(config: &CompressedFinalConfig<'_>, witness_tr
     // Compute constant tree
     tracing::info!("Computing Constant Tree for {}...", template);
     let verkey_json_path = files_dir.join(format!("{}.verkey.json", template));
-    if const_path.exists() {
-        let root = bctree::compute_const_tree(
-            const_path.to_str().unwrap(),
-            starkinfo_path.to_str().unwrap(),
-            verkey_json_path.to_str().unwrap(),
-        )?;
-
-        let mut verkey_bin = Vec::with_capacity(32);
-        for &val in root.iter() {
-            verkey_bin.extend_from_slice(&val.to_le_bytes());
-        }
-        fs::write(files_dir.join(format!("{}.verkey.bin", template)), &verkey_bin)?;
-    } else {
-        tracing::warn!("Skipping const tree for {}: const file not found", template);
+    crate::proving_key::util::require_const_file(template, &const_path)?;
+    let root = bctree::compute_const_tree(
+        const_path.to_str().unwrap(),
+        starkinfo_path.to_str().unwrap(),
+        verkey_json_path.to_str().unwrap(),
+    )?;
+    let mut verkey_bin = Vec::with_capacity(32);
+    for &val in root.iter() {
+        verkey_bin.extend_from_slice(&val.to_le_bytes());
     }
+    fs::write(files_dir.join(format!("{}.verkey.bin", template)), &verkey_bin)?;
 
     // Write verifier.rs from computed starkinfo and verifierinfo
     {
@@ -394,5 +392,15 @@ mod tests {
             assert_eq!(proofman_common::hash_family::compressed_final_blowup_factor(fam), 4, "{fam} blowup");
             assert_eq!(proofman_common::hash_family::compressed_final_grinding_bits(fam), 22, "{fam} grinding");
         }
+    }
+}
+
+#[cfg(test)]
+mod missing_const_tests {
+    /// The const-tree block bails on a missing const file instead of warning and returning a zero root.
+    #[test]
+    fn missing_const_file_is_an_error() {
+        let p = std::path::Path::new("/nonexistent/compressed_final.const");
+        assert!(crate::proving_key::util::require_const_file("compressed_final", p).is_err());
     }
 }

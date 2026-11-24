@@ -24,9 +24,44 @@ pub enum GateRole {
     RangeCheck,
 }
 
+/// Typed STARK hash family. Parsing is case-sensitive (`Poseidon1`/`Poseidon2`/`blake3`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum HashFamily {
+    Poseidon1,
+    Poseidon2,
+    Blake3,
+}
+
+impl HashFamily {
+    pub const ALL: [HashFamily; 3] = [HashFamily::Poseidon1, HashFamily::Poseidon2, HashFamily::Blake3];
+
+    pub fn is_blake3(self) -> bool {
+        self == HashFamily::Blake3
+    }
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            HashFamily::Poseidon1 => "Poseidon1",
+            HashFamily::Poseidon2 => "Poseidon2",
+            HashFamily::Blake3 => "blake3",
+        }
+    }
+}
+
+impl std::str::FromStr for HashFamily {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, String> {
+        Self::ALL
+            .into_iter()
+            .find(|f| f.as_str() == s)
+            .ok_or_else(|| format!("unknown hash family '{s}'; valid (case-sensitive): {}", FAMILIES.join(", ")))
+    }
+}
+
 /// The STARK's hash families: what `--hash`, a proof and a `globalInfo.json` name, and what every
 /// per-family function below answers for. All of them are over Goldilocks.
-pub const FAMILIES: &[&str] = &["Poseidon1", "Poseidon2", "blake3"];
+pub const FAMILIES: &[&str] =
+    &[HashFamily::Poseidon1.as_str(), HashFamily::Poseidon2.as_str(), HashFamily::Blake3.as_str()];
 
 /// The family of the final SNARK wrap's AIR, which plonk2pil sets up over BN128 for pilfflonk. Its
 /// hash gate is circom's `PoseidonT`: the original Poseidon (the C++'s `PoseidonBN128`) over BN128.
@@ -749,5 +784,34 @@ mod tests {
     #[test]
     fn default_hash_id_is_registered() {
         assert!(is_known_family(DEFAULT_HASH_ID));
+    }
+}
+
+#[cfg(test)]
+mod hash_family_enum_tests {
+    use super::HashFamily;
+
+    #[test]
+    fn parses_exact_names_only() {
+        assert_eq!("Poseidon1".parse::<HashFamily>().unwrap(), HashFamily::Poseidon1);
+        assert_eq!("Poseidon2".parse::<HashFamily>().unwrap(), HashFamily::Poseidon2);
+        assert_eq!("blake3".parse::<HashFamily>().unwrap(), HashFamily::Blake3);
+        for bad in ["Blake3", "poseidon1", "POSEIDON2", "", "sha2"] {
+            let e = bad.parse::<HashFamily>().unwrap_err();
+            assert!(e.contains("Poseidon1") && e.contains("blake3"), "error must list valid names: {e}");
+        }
+    }
+
+    #[test]
+    fn is_blake3() {
+        assert!(HashFamily::Blake3.is_blake3());
+        assert!(!HashFamily::Poseidon1.is_blake3());
+        assert!(!HashFamily::Poseidon2.is_blake3());
+        for (f, n) in
+            [(HashFamily::Poseidon1, "Poseidon1"), (HashFamily::Poseidon2, "Poseidon2"), (HashFamily::Blake3, "blake3")]
+        {
+            assert_eq!(f.as_str(), n);
+            assert_eq!(n.parse::<HashFamily>().unwrap(), f);
+        }
     }
 }

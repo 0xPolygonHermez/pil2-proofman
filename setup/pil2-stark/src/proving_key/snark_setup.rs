@@ -14,7 +14,7 @@ use crate::io::recurser::{
     gen_circom, pil2circom, pil2circom_bn128_blake3, GenCircomInput, GenCircomOptions, Pil2CircomOptions,
 };
 use pil2_stark_recurser::stark2circom::templates::{gen_solidity, gen_iverifier, SnarkVerifier};
-use crate::proving_key::{bctree, recursive::compile_pil};
+use crate::proving_key::{bctree, recursive::compile_pil, util::exact_log2};
 use crate::io::fixed_cols;
 use crate::output::witness_gen::WitnessTracker;
 use pil2_pilout::pilout_proxy::PilOutProxy;
@@ -25,7 +25,7 @@ use pil2_stark_recurser::plonk2pil::{self, PlonkResult};
 use pilfflonk_setup::command::{DEFAULT_MAX_Q_DEGREE, PROVING_KEY_DIR};
 use pilfflonk_setup::solidity::VERIFIER_SOL_FILE;
 use pilfflonk_setup::{run_setup_pilfflonk_with_external_fixed, ExternalFixedColumn, SetupPilfflonkOptions};
-use proofman_common::hash_family::{BLAKE3_BN128_WRAP_FAMILY, BN128_WRAP_FAMILY};
+use proofman_common::hash_family::{HashFamily, BLAKE3_BN128_WRAP_FAMILY, BN128_WRAP_FAMILY};
 use proofman_fields::Bn128;
 use proofman_pilfflonk::{CalldataLayout, FrBytes, JsonFile, PilfflonkGlobalInfo, Vkey};
 use crate::types::stark_struct::{generate_stark_struct, StarkSettings};
@@ -440,6 +440,7 @@ pub fn gen_recursivef_setup(
     settings: &StarkSettings,
     blake3_lanes: Option<usize>,
 ) -> Result<String> {
+    let family: HashFamily = config.hash.parse().map_err(anyhow::Error::msg)?;
     let build_dir = PathBuf::from(config.build_dir);
     let circom_dir = build_dir.join("circom");
     let build_path = build_dir.join("build");
@@ -540,7 +541,7 @@ pub fn gen_recursivef_setup(
         // blake3's follows its blowup, as the compressed final's does.
         max_constraint_degree: settings
             .initial_blowup_factor
-            .filter(|_| config.hash == "blake3")
+            .filter(|_| family.is_blake3())
             .map(proofman_common::hash_family::max_constraint_degree_for_blowup),
         hash_id: config.hash.to_string(),
         merge_copies: true,
@@ -580,9 +581,9 @@ pub fn gen_recursivef_setup(
     }
     let air_rf = &pilout_inner.air_groups[0].airs[0];
     let n_bits_rf = {
-        let nr = air_rf.num_rows.unwrap_or(0) as usize;
+        let nr = air_rf.num_rows.unwrap_or(0);
         if nr > 0 {
-            (nr as f64).log2() as usize
+            exact_log2(u64::from(nr)).context("recursivef row count")?
         } else {
             plonk_rf.n_bits
         }

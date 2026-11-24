@@ -1,5 +1,6 @@
 use pil2_stark_setup::output::stark_info::solve_low_degree_test;
 use pil2_stark_setup::proving_key::recursive::{recursive_stark_settings, RecursiveTemplate};
+use proofman_common::hash_family::HashFamily;
 use pil2_stark_setup::types::security::check::exact::{inv_sqrt_rate_upper, sqrt_rate_upper, ExactRegime, Rational};
 use pil2_stark_setup::types::security::check::{check_low_degree_test, report_low_degree_test, SecurityError};
 use pil2_stark_setup::types::security::pcs::{LowDegreeTest as Solved, Pcs};
@@ -33,7 +34,7 @@ fn todays_configs() -> Vec<(String, StarkStruct, u64)> {
         for (t, tn) in [(RecursiveTemplate::Recursive2, "recursive2"), (RecursiveTemplate::Compressor, "compressor")] {
             for n_bits in [17usize, 19] {
                 let user = StarkSettings { low_degree_test: Some(kind), ..Default::default() };
-                let s = recursive_stark_settings(t, "blake3", &user);
+                let s = recursive_stark_settings(t, HashFamily::Blake3, &user);
                 v.push((format!("{name} {tn} 2^{n_bits}"), generate_stark_struct(&s, n_bits, "blake3"), 135));
             }
         }

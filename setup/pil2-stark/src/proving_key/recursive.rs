@@ -16,6 +16,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
+use proofman_common::hash_family::HashFamily;
+
+use crate::proving_key::util::exact_log2;
 
 /// Blowup buys constraint degree: an air whose constraints reach degree d needs
 /// `2^blowup + 1 >= d`. The poseidon aggregator is built at degree 8 and so needs 3; blake3's is
@@ -29,8 +32,8 @@ use anyhow::{bail, Context, Result};
 /// LANES=3 at blowup 1 against the 2^19/LANES=4 the compressor now picks at blowup 2: degree 3
 /// inflated stage2 (252 columns against 114) and doubled the queries (209 against 104), so blowup 2
 /// proved 33% faster in 31% less GPU memory, with half the proof its recursive1 verifies.
-pub fn recursive_blowup(template: RecursiveTemplate, hash: &str) -> usize {
-    if hash == "blake3" || template == RecursiveTemplate::Compressor {
+pub fn recursive_blowup(template: RecursiveTemplate, hash: HashFamily) -> usize {
+    if hash.is_blake3() || template == RecursiveTemplate::Compressor {
         2
     } else {
         3
@@ -48,12 +51,12 @@ pub struct BatchFit {
 }
 
 /// Proofs of `inner_si`'s shape a `2^n_bits` aggregator fits, by hash count; the build loop corrects a band-bound air.
-fn recursion_batch_fit(hash: &str, n_bits: usize, lanes: usize, inner_si: &Value) -> Option<BatchFit> {
-    if hash != "blake3" {
+fn recursion_batch_fit(hash: HashFamily, n_bits: usize, lanes: usize, inner_si: &Value) -> Option<BatchFit> {
+    if !hash.is_blake3() {
         return None;
     }
     let geom = crate::verifier_hashes::geometry_from_starkinfo(inner_si).ok()?;
-    let per_proof = crate::verifier_hashes::verifier_hashes(&geom, hash).total();
+    let per_proof = crate::verifier_hashes::verifier_hashes(&geom, hash.as_str()).total();
     if per_proof == 0 {
         return None;
     }
@@ -71,18 +74,18 @@ fn recursion_batch_fit(hash: &str, n_bits: usize, lanes: usize, inner_si: &Value
 ///
 /// The compressor takes 6, one above blake3's 5: each level trades a recursive1 compression per
 /// opening for twice the SelectValue gates.
-pub fn recursive_last_level_verification(template: RecursiveTemplate, hash: &str) -> Option<usize> {
+pub fn recursive_last_level_verification(template: RecursiveTemplate, hash: HashFamily) -> Option<usize> {
     match template {
-        RecursiveTemplate::Compressor if hash == "blake3" => Some(6),
-        _ => proofman_common::hash_family::recursive_last_level_verification(hash),
+        RecursiveTemplate::Compressor if hash.is_blake3() => Some(6),
+        _ => proofman_common::hash_family::recursive_last_level_verification(hash.as_str()),
     }
 }
 
 /// The compressor grinds 27 so two Keccakf compressor proofs fit one recursive1 (at 25: 2 x 4728 of 9361 blocks).
-pub fn recursive_grinding_bits(template: RecursiveTemplate, hash: &str) -> usize {
+pub fn recursive_grinding_bits(template: RecursiveTemplate, hash: HashFamily) -> usize {
     match template {
-        RecursiveTemplate::Compressor if hash == "blake3" => 27,
-        _ => proofman_common::hash_family::recursive_grinding_bits(hash),
+        RecursiveTemplate::Compressor if hash.is_blake3() => 27,
+        _ => proofman_common::hash_family::recursive_grinding_bits(hash.as_str()),
     }
 }
 
@@ -157,7 +160,7 @@ pub enum RecursiveTemplate {
 /// verifiers, which are FRI builds.
 pub fn recursive_stark_settings(
     template: RecursiveTemplate,
-    hash: &str,
+    hash: HashFamily,
     user: &crate::types::stark_struct::StarkSettings,
 ) -> crate::types::stark_struct::StarkSettings {
     let low_degree_test = user.low_degree_test.unwrap_or(crate::types::stark_struct::LowDegreeTestKind::Fri);
@@ -174,7 +177,7 @@ pub fn recursive_stark_settings(
     // recursion circuit takes — a smaller bound breaks whenever the schedule needs a shortened
     // last fold (e.g. a compressor at 2^19). 32 coefficients in the clear cost nothing.
     let default_final_degree = || {
-        let terminal = proofman_common::hash_family::fri_terminal_degree(hash);
+        let terminal = proofman_common::hash_family::fri_terminal_degree(hash.as_str());
         match low_degree_test {
             crate::types::stark_struct::LowDegreeTestKind::Fri => terminal.saturating_sub(blowup),
             crate::types::stark_struct::LowDegreeTestKind::Stir => terminal,
@@ -292,6 +295,7 @@ pub fn gen_recursive_setup(
     config: &RecursiveSetupConfig<'_>,
     witness_tracker: &WitnessTracker,
 ) -> Result<RecursiveSetupResult> {
+    let family: HashFamily = config.hash.parse().map_err(anyhow::Error::msg)?;
     let template = config.template;
     let template_str = template.as_str();
 
@@ -359,9 +363,8 @@ pub fn gen_recursive_setup(
         min_n_bits: None,
     };
     if template == RecursiveTemplate::Compressor {
-        plonk_opts.max_constraint_degree = Some(proofman_common::hash_family::max_constraint_degree_for_blowup(
-            recursive_blowup(template, config.hash),
-        ));
+        plonk_opts.max_constraint_degree =
+            Some(proofman_common::hash_family::max_constraint_degree_for_blowup(recursive_blowup(template, family)));
     }
     // recursive1 and recursive2 share one starkSetup, so both pad to the domain; the compressor sizes itself.
     if template != RecursiveTemplate::Compressor {
@@ -454,7 +457,7 @@ pub fn gen_recursive_setup(
     // Budgets are affine in k, so the largest k that fits also fills the domain.
     let lanes = pil2_stark_recurser::plonk2pil::setups::blake3::DEFAULT_LANES;
     let fit = (template != RecursiveTemplate::Compressor)
-        .then(|| recursion_batch_fit(config.hash, domain_bits, lanes, config.stark_info))
+        .then(|| recursion_batch_fit(family, domain_bits, lanes, config.stark_info))
         .flatten();
     // Logged before compiling, so a run that bails still shows it.
     if let Some(fit) = fit {
@@ -698,12 +701,16 @@ pub fn gen_recursive_setup(
                 bail!("Compiled pilout has no AIR groups: {}", pilout_path_str);
             }
             let air = &pilout.air_groups[0].airs[0];
-            let num_rows_air = air.num_rows.unwrap_or(0) as usize;
-            let n_bits_air = if num_rows_air > 0 { (num_rows_air as f64).log2() as usize } else { plonk_result.n_bits };
+            let num_rows_air = u64::from(air.num_rows.unwrap_or(0));
+            let n_bits_air = if num_rows_air > 0 {
+                exact_log2(num_rows_air).with_context(|| format!("{airgroup_pil_name} row count"))?
+            } else {
+                plonk_result.n_bits
+            };
 
             // Generate stark struct for this recursive circuit.
             let stark_struct = crate::types::stark_struct::generate_stark_struct(
-                &recursive_stark_settings(template, config.hash, config.recursion_settings),
+                &recursive_stark_settings(template, family, config.recursion_settings),
                 n_bits_air,
                 config.hash,
             );
@@ -1130,14 +1137,18 @@ mod blowup_tests {
     /// The compressor keeps one more Merkle level than the recursion pair, and only the compressor.
     #[test]
     fn only_the_compressor_keeps_the_extra_merkle_level() {
-        assert_eq!(recursive_last_level_verification(RecursiveTemplate::Compressor, "blake3"), Some(6));
+        assert_eq!(recursive_last_level_verification(RecursiveTemplate::Compressor, HashFamily::Blake3), Some(6));
         // The recursion pair keeps the family value; only the compressor departs from it.
         for t in [RecursiveTemplate::Recursive1, RecursiveTemplate::Recursive2] {
-            assert_eq!(recursive_last_level_verification(t, "blake3"), Some(5), "{t:?} takes the family value");
+            assert_eq!(
+                recursive_last_level_verification(t, HashFamily::Blake3),
+                Some(5),
+                "{t:?} takes the family value"
+            );
         }
         for t in [RecursiveTemplate::Compressor, RecursiveTemplate::Recursive1, RecursiveTemplate::Recursive2] {
-            assert_eq!(recursive_last_level_verification(t, "Poseidon1"), None, "{t:?}");
-            assert_eq!(recursive_last_level_verification(t, "Poseidon2"), None, "{t:?}");
+            assert_eq!(recursive_last_level_verification(t, HashFamily::Poseidon1), None, "{t:?}");
+            assert_eq!(recursive_last_level_verification(t, HashFamily::Poseidon2), None, "{t:?}");
         }
     }
 
@@ -1147,13 +1158,17 @@ mod blowup_tests {
     #[test]
     fn blowup_follows_the_family_constraint_degree() {
         for t in [RecursiveTemplate::Recursive1, RecursiveTemplate::Recursive2] {
-            assert_eq!(recursive_blowup(t, "blake3"), 2, "blake3 {t:?} is built at degree 5");
+            assert_eq!(recursive_blowup(t, HashFamily::Blake3), 2, "blake3 {t:?} is built at degree 5");
         }
-        assert_eq!(recursive_blowup(RecursiveTemplate::Compressor, "blake3"), 2, "measured: see recursive_blowup");
-        for h in ["Poseidon1", "Poseidon2"] {
+        assert_eq!(
+            recursive_blowup(RecursiveTemplate::Compressor, HashFamily::Blake3),
+            2,
+            "measured: see recursive_blowup"
+        );
+        for h in [HashFamily::Poseidon1, HashFamily::Poseidon2] {
             assert_eq!(recursive_blowup(RecursiveTemplate::Compressor, h), 2);
-            assert_eq!(recursive_blowup(RecursiveTemplate::Recursive1, h), 3, "{h} aggregator is degree 8");
-            assert_eq!(recursive_blowup(RecursiveTemplate::Recursive2, h), 3, "{h} aggregator is degree 8");
+            assert_eq!(recursive_blowup(RecursiveTemplate::Recursive1, h), 3, "{h:?} aggregator is degree 8");
+            assert_eq!(recursive_blowup(RecursiveTemplate::Recursive2, h), 3, "{h:?} aggregator is degree 8");
         }
     }
 }
@@ -1187,7 +1202,7 @@ mod batch_fit_tests {
 
     #[test]
     fn k_is_the_hashing_budget_divided_by_one_verification() {
-        let fit = recursion_batch_fit("blake3", 19, L, &si(40)).unwrap();
+        let fit = recursion_batch_fit(HashFamily::Blake3, 19, L, &si(40)).unwrap();
         assert_eq!(fit.capacity, capacity(19));
         assert_eq!(fit.n_queries, 40);
         // Floors: a partial slot is a slot that does not fit.
@@ -1199,21 +1214,22 @@ mod batch_fit_tests {
     /// A circuit that does not fit at all is `NeedsCompressorError`'s problem, not this one's.
     #[test]
     fn k_is_at_least_one_even_when_nothing_fits() {
-        let huge = recursion_batch_fit("blake3", 12, L, &si(600)).unwrap();
+        let huge = recursion_batch_fit(HashFamily::Blake3, 12, L, &si(600)).unwrap();
         assert_eq!(huge.k, 1);
     }
 
     /// The poseidon aggregators are laid out differently and need their own budget.
     #[test]
     fn no_estimate_for_a_family_without_a_block_model() {
-        assert!(recursion_batch_fit("Poseidon1", 17, L, &si(40)).is_none());
-        assert!(recursion_batch_fit("Poseidon2", 17, L, &si(40)).is_none());
+        assert!(recursion_batch_fit(HashFamily::Poseidon1, 17, L, &si(40)).is_none());
+        assert!(recursion_batch_fit(HashFamily::Poseidon2, 17, L, &si(40)).is_none());
     }
 }
 
 #[cfg(test)]
 mod tests {
     use crate::types::stark_struct::{LowDegreeTestKind, StarkSettings};
+    use proofman_common::hash_family::HashFamily;
 
     #[test]
     fn recursion_settings_keep_explicit_stir_folds() {
@@ -1222,7 +1238,7 @@ mod tests {
             folding_factors: Some(vec![4, 3, 3]),
             ..Default::default()
         };
-        let s = super::recursive_stark_settings(super::RecursiveTemplate::Recursive2, "blake3", &user);
+        let s = super::recursive_stark_settings(super::RecursiveTemplate::Recursive2, HashFamily::Blake3, &user);
         assert_eq!(s.folding_factors, Some(vec![4, 3, 3]));
     }
 }

@@ -64,8 +64,6 @@ pub fn gen_final_setup(config: &FinalSetupConfig<'_>, witness_tracker: &WitnessT
     let build_dir = PathBuf::from(config.build_dir);
     let global_name = config.global_info.get("name").and_then(|v| v.as_str()).unwrap_or("pilout");
 
-    let _agg_types = config.global_info.get("aggTypes").and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0);
-
     let air_groups: Vec<String> = config
         .global_info
         .get("air_groups")
@@ -425,27 +423,17 @@ pub fn gen_final_setup(config: &FinalSetupConfig<'_>, witness_tracker: &WitnessT
     // Compute constant tree
     tracing::info!("Computing Constant Tree for vadcop_final...");
     let verkey_json_path = files_dir.join("vadcop_final.verkey.json");
-    let const_root = if const_path.exists() {
-        let root = bctree::compute_const_tree(
-            const_path.to_str().unwrap(),
-            starkinfo_path.to_str().unwrap(),
-            verkey_json_path.to_str().unwrap(),
-        )?;
-
-        let mut verkey_bin = Vec::with_capacity(32);
-        for &val in root.iter() {
-            verkey_bin.extend_from_slice(&val.to_le_bytes());
-        }
-        fs::write(files_dir.join("vadcop_final.verkey.bin"), &verkey_bin)?;
-
-        root
-    } else {
-        tracing::warn!("Skipping const tree for vadcop_final: const file not found");
-        [0u64; 4]
-    };
-
-    // Write verifier.rs
-    tracing::info!("Final setup verifier.rs generation pending full starkSetup integration");
+    crate::proving_key::util::require_const_file("vadcop_final", &const_path)?;
+    let const_root = bctree::compute_const_tree(
+        const_path.to_str().unwrap(),
+        starkinfo_path.to_str().unwrap(),
+        verkey_json_path.to_str().unwrap(),
+    )?;
+    let mut verkey_bin = Vec::with_capacity(32);
+    for &val in const_root.iter() {
+        verkey_bin.extend_from_slice(&val.to_le_bytes());
+    }
+    fs::write(files_dir.join("vadcop_final.verkey.bin"), &verkey_bin)?;
 
     // Wait for witness library
     witness_tracker.await_all()?;
@@ -454,4 +442,14 @@ pub fn gen_final_setup(config: &FinalSetupConfig<'_>, witness_tracker: &WitnessT
     let result_verifier_info = serde_json::to_value(verifier_info_ref).unwrap_or(serde_json::Value::Null);
 
     Ok(FinalSetupResult { stark_info: result_stark_info, verifier_info: result_verifier_info, const_root })
+}
+
+#[cfg(test)]
+mod missing_const_tests {
+    /// The const-tree block bails on a missing const file instead of warning and returning a zero root.
+    #[test]
+    fn missing_const_file_is_an_error() {
+        let p = std::path::Path::new("/nonexistent/vadcop_final.const");
+        assert!(crate::proving_key::util::require_const_file("vadcop_final", p).is_err());
+    }
 }
