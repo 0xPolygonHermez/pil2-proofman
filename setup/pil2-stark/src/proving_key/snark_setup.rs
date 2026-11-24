@@ -10,11 +10,8 @@ use serde_json::Value;
 use proofman_starks_lib_c::{generate_fflonk_zkey_c, generate_plonk_zkey_c, get_plonk_circuit_stats_c};
 
 use crate::commands::compile_pil::{run_compile_pil, CompilePilOptions};
-use crate::io::recurser::{
-    gen_circom, pil2circom, pil2circom_bn128_blake3, GenCircomInput, GenCircomOptions, Pil2CircomOptions,
-};
 use pil2_stark_recurser::stark2circom::templates::{gen_solidity, gen_iverifier, SnarkVerifier};
-use pil2_stark_recurser::stark2circom::CircomGenOptions;
+use pil2_stark_recurser::stark2circom::{gen_circom_circuit, CircomGenOptions, GenCircomCircuitInput, StarkVerifierOptions};
 use crate::output::witness_gen::WitnessTracker;
 use pil2_stark_recurser::plonk2pil::r1cs_types::PlonkOptions;
 use pil2_stark_recurser::plonk2pil::setups::blake3_bn128::wrap as blake3_wrap;
@@ -26,6 +23,7 @@ use pilfflonk_setup::{run_setup_pilfflonk_with_external_fixed, ExternalFixedColu
 use proofman_common::hash_family::{HashFamily, BLAKE3_BN128_WRAP_FAMILY, BN128_WRAP_FAMILY};
 use proofman_fields::Bn128;
 use proofman_pilfflonk::{CalldataLayout, FrBytes, JsonFile, PilfflonkGlobalInfo, Vkey};
+use crate::proving_key::pipeline::steps::VerifierGen;
 use crate::proving_key::pipeline::{self, kinds, kinds::RecursivefCfg, CircuitInput, PipelineCtx, Tools, VerifierInput};
 use crate::types::stark_struct::StarkSettings;
 
@@ -306,19 +304,18 @@ fn gen_final_snark(
 
     // pil2circom: generate recursivef.verifier.circom (verkeyInput=false for final).
     let verifier_name_final = "recursivef.verifier.circom";
-    let pil2circom_opts_final = Pil2CircomOptions {
+    let opts_final = StarkVerifierOptions {
         skip_main: true,
         verkey_input: false,
         enable_input: false,
         input_challenges: false,
+        fri_queries_batch_size: None,
         hash: config.hash.to_string(),
     };
-    let verifier_circom_final = if blake3 {
-        pil2circom_bn128_blake3(&rf_const_root_str, &starkinfo_rf_val, &verifierinfo_rf_val, &pil2circom_opts_final)
-    } else {
-        pil2circom(&rf_const_root_str, &starkinfo_rf_val, &verifierinfo_rf_val, &pil2circom_opts_final)
-    }
-    .context("pil2circom failed for final")?;
+    let verifier_gen = if blake3 { VerifierGen::Bn128Blake3(opts_final) } else { VerifierGen::Gl(opts_final) };
+    let verifier_circom_final = verifier_gen
+        .generate(&rf_const_root_str, &starkinfo_rf_val, &verifierinfo_rf_val)
+        .context("pil2circom failed for final")?;
     fs::write(circom_dir.join(verifier_name_final), &verifier_circom_final)?;
 
     // gen_circom: generate final.circom using final.circom.ejs template.
@@ -326,7 +323,7 @@ fn gen_final_snark(
         if let Some(ref pi) = config.publics_info { vec![pi.clone()] } else { vec![Value::Null] };
     // The snark final circuit wraps a single recursivef proof: the template never reads
     // `agg_arity`, and 0 is rejected outright by `gen_recursive2`.
-    let gen_opts_final = GenCircomOptions {
+    let gen_opts_final = CircomGenOptions {
         airgroup_id: None,
         has_compressor: false,
         has_recursion: false,
@@ -334,17 +331,17 @@ fn gen_final_snark(
         agg_arity: 0,
         batch_size: 1,
     };
-    let gen_input_final = GenCircomInput {
+    let gen_input_final = GenCircomCircuitInput {
         template_name: "src/recursion/templates/final.circom.ejs",
         stark_infos: std::slice::from_ref(&starkinfo_rf_val),
         vadcop_info: &Value::Null,
         verifier_filenames: &[verifier_name_final.to_string()],
-        basic_verification_keys: &[],
-        agg_verification_keys: &[],
+        basic_vk: &[],
+        agg_vk: &[],
         publics: &publics_vec,
         options: &gen_opts_final,
     };
-    let circom_final = gen_circom(&gen_input_final).context("gen_circom failed for final")?;
+    let circom_final = gen_circom_circuit(&gen_input_final).context("gen_circom failed for final")?;
     let circom_final_path = circom_dir.join("final.circom");
     fs::write(&circom_final_path, &circom_final)?;
 

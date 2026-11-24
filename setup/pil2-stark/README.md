@@ -256,6 +256,26 @@ alone). Running it on Linux when a `.so` is already present overwrites that
 - You're iterating on circom templates and want to rebuild `.so`s without
   rerunning the full setup.
 
+## Proving-key pipeline (module map)
+
+Every proving-key circuit is a list of steps run by one executor
+(`src/proving_key/pipeline/`): `mod.rs` holds `PipelineCtx` and `run`, `steps.rs` the shared
+steps, `kinds.rs` one pure builder per kind. The `gen_*` entry points fill the context and run
+their kind's list.
+
+| Kind (entry) | Steps |
+|---|---|
+| basic (`commands/setup.rs`) | WriteFixed{UserFixed\|Pilout} -> StarkTail -> ConstTree{optional} |
+| recursive test (`recursive_test.rs`) | CircomPrologue{raw circom, O2} -> WitnessLib -> Plonk2Pil -> WriteFixed{Plonk} -> CompilePil -> StarkTail -> ConstTree -> *witness_wait* -> *global_info* |
+| compressor / recursive1 / recursive2 (`recursive.rs`) | [*batch_fit* (r1) \| *arity_fit* (r2)] -> CircomPrologue{O1} -> Plonk2Pil -> [*batch_retry* (r1)] -> *compressor_check* -> WitnessLib -> WriteFixed -> CompilePil -> StarkTail{reuse; r1: starkinfo only} -> ConstTree -> [*drop_starkinfo* (r1) \| *vks_json* + WriteVerifierRs (r2)] |
+| vadcop_final (`final_setup.rs`) | CircomPrologue{O1} -> WitnessLib -> Plonk2Pil -> *final_pin* -> WriteFixed -> CompilePil -> StarkTail -> ConstTree -> WriteVerifierRs -> *witness_wait* |
+| compressed final (`compressed_final.rs`) | CircomPrologue{O2} -> WitnessLib -> Plonk2Pil -> WriteFixed -> CompilePil -> *compressed_settings* -> StarkTail -> ConstTree -> WriteVerifierRs -> *witness_wait* |
+| recursivef (`snark_setup.rs::gen_recursivef_setup`) | CircomPrologue{O2} -> WitnessLib -> Plonk2Pil -> WriteFixed -> CompilePil -> StarkTail -> ConstTree |
+
+*Italic* steps are `Custom` (kind-specific control flow, named in the list). The final SNARK
+back-end (`snark_setup.rs`: rapidsnark / pilfflonk keys, BN128 final circuit) is not a pipeline
+kind; `gen_snark_setup` calls it after the recursivef.
+
 ## Environment variables
 
 These override the auto-detected tooling paths used by `setup`, `setup-snark`,

@@ -207,14 +207,6 @@ impl RecursiveTemplate {
         }
     }
 
-    pub fn tera_template(&self) -> &'static str {
-        match self {
-            Self::Compressor => "vadcop/compressor.circom.tera",
-            Self::Recursive1 => "vadcop/recursive1.circom.tera",
-            Self::Recursive2 => "vadcop/recursive2.circom.tera",
-        }
-    }
-
     pub fn ejs_template(&self) -> &'static str {
         match self {
             Self::Compressor => "src/vadcop/templates/compressor.circom.ejs",
@@ -269,8 +261,6 @@ pub struct RecursiveSetupConfig<'a> {
 pub struct RecursiveSetupResult {
     /// The 4-element constant root.
     pub const_root: [u64; 4],
-    /// Generated PIL source string.
-    pub pil_str: String,
     /// The starkInfo JSON for this recursive circuit.
     pub stark_info: Option<Value>,
     /// The verifierInfo JSON for this recursive circuit.
@@ -366,7 +356,6 @@ pub fn gen_recursive_setup(
     let (si, vi, ei) = ctx.pil_info.take().context("no starkinfo")?;
     Ok(RecursiveSetupResult {
         const_root: ctx.const_root.context("no const root")?,
-        pil_str: plonk.pil_str,
         stark_info: Some(si),
         verifier_info: Some(vi),
         expressions_info: Some(ei),
