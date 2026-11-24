@@ -1,5 +1,6 @@
 //! Global constraints.
-//! TODO(piece 3): wire into globalConstraints.json and read `PiloutCore`, not `pb`.
+//! TODO: `output::global_constraints` still formats globalConstraints.json from `pb` (format_global_*); moving it
+//! here needs the global hints typed (not in `GlobalSystem`) and the JSON kept byte-identical. Tests call this only.
 
 use pil2_pilout::pilout::{self as pb, global_expression as gx, global_operand as go};
 

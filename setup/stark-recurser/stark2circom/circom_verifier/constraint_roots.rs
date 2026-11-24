@@ -126,7 +126,7 @@ struct Bn128Code {
     lines: Vec<String>,
     consts: std::collections::HashMap<(u128, usize), String>,
     n_values: usize,
-    /// Temporaries that are another signal: `x + 0`, which qVerifier's CSE folded and the DAG keeps.
+    /// Temporaries that are another signal: `x + 0`, which the DAG keeps.
     alias: std::collections::HashMap<u32, String>,
 }
 

@@ -7,10 +7,10 @@ use pil2_pilout::pilout::{self as pb, expression as px, global_operand, hint_fie
 use crate::cfg::{FieldCfg, Opening};
 use crate::core::fold::fold_roots;
 use crate::core::from_pilout::stage_base;
-use crate::core::im::{im_column_id, Checked, ImChoice};
+use crate::core::im::{im_column_id, ImChoice};
 use crate::core::ir::{Boundary, ColType, ConstraintSystem, Expr, HintField, HintValue, NamedValue};
 use crate::core::layout::{Layout, PolMap};
-use crate::core::openings::{EvEntry, Openings};
+use crate::core::openings::Openings;
 use crate::error::{PilInfoError, Result};
 use crate::expr::expression::{ExprChild, Expression};
 use crate::expr::helpers::{add_info_expression_inline, add_info_expressions, get_exp_dim};
@@ -60,13 +60,12 @@ pub struct ProverCode {
     pub hints: Vec<HintInfo>,
 }
 
-/// Expressionsinfo, hints and qVerifier through the existing generator, from `to_arena`'s output.
+/// Expressionsinfo and hints through the existing generator from `to_arena`'s output; pilfflonk's qVerifier from the DAG.
 pub fn emit_prover(
     cs: &ConstraintSystem,
     im: &ImChoice,
     lay: &Layout,
     ops: &Openings,
-    chk: &Checked,
     exprs: ProverExprs,
     p: &EmitParams,
 ) -> Result<ProverCode> {
@@ -88,38 +87,16 @@ pub fn emit_prover(
         airgroup_id: p.airgroup_id,
         n_stages: cs.n_stages as usize,
         c_exp_id: roles.c_exp,
-        q_deg: chk.q_deg as usize,
         q_dim: lay.q_dim as usize,
         opening_points: ops.opening_points.clone(),
-        cm_pols_map: maps.cm.clone(),
-        custom_commits_count: cs.custom_commits.len(),
         field: cs.field.clone(),
-        opening: cs.opening,
     };
     let mut code = generate_pil_code(&params, &maps.symbols(), &constraints, &mut arena, &hints, Some(&ctx))?;
-    same_ev_map(&code, ops)?;
     if cs.opening == Opening::Shplonk {
         let q = shplonk_q_verifier(cs, im, lay, ops).map_err(|e| PilInfoError::ConstraintDag(format!("{e:?}")))?;
-        code.verifier_info.q_verifier = ExpressionCodeEntry { exp_id: roles.c_exp, ..q };
+        code.verifier_info.q_verifier = Some(ExpressionCodeEntry { exp_id: roles.c_exp, ..q });
     }
     Ok(ProverCode { code, im_pols_info, maps, arena, constraints, hints })
-}
-
-/// TEMPORARY (piece 3): the generator's evMap indexes the qVerifier, so it must be the core's.
-fn same_ev_map(code: &PilCodeResult, ops: &Openings) -> Result<()> {
-    let ev = |e: &EvEntry| {
-        let t = match e.pol.col {
-            ColType::Witness => "cm",
-            ColType::Fixed => "const",
-            ColType::Custom => "custom",
-        };
-        (t.to_string(), e.pol.id as usize, e.pol.offset, e.opening_pos as usize, e.pol.commit_id.map(|c| c as usize))
-    };
-    let old_ev = code.ev_map.iter().map(|e| (e.entry_type.clone(), e.id, e.prime, e.opening_pos, e.commit_id));
-    if !ops.ev_map.iter().map(ev).eq(old_ev) {
-        return Err(PilInfoError::InvalidPilout("the generator's evMap differs from the core's".into()));
-    }
-    Ok(())
 }
 
 type Formatted = (Vec<Expression>, Vec<HintInfo>, Vec<ConstraintInfo>);
@@ -377,7 +354,8 @@ fn fold_bug() -> PilInfoError {
     PilInfoError::InvalidPilout("the quotient fold met an unexpected operand".into())
 }
 
-/// The old formatter's inputs, rebuilt from the typed IR. TODO(piece 3): emit from the IR, drop this pb round-trip.
+/// The old formatter's inputs, rebuilt from the typed IR. TODO: build the arena and hints straight from the IR
+/// (expressionsinfo/.bin byte-identical), then drop this and pilout_info's format_expressions/format_hints.
 struct Tables {
     exprs: Vec<pb::Expression>,
     stage_widths: Vec<u32>,
@@ -436,7 +414,7 @@ impl Tables {
         Ok(t)
     }
 
-    /// The typed hint fields back in the pilout form the old formatter reads. TODO(piece 3): type format_hints.
+    /// The typed hint fields back in the pilout form the old formatter reads (see the TODO on `Tables`).
     fn hint_fields(&self, cs: &ConstraintSystem, fields: &[HintField]) -> Result<Vec<pb::HintField>> {
         let field = |f: &HintField| {
             let value = match &f.value {

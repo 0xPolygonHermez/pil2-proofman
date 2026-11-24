@@ -34,7 +34,7 @@ fn for_each_run(min: usize, mut f: impl FnMut(&Run, &str)) {
 
 fn emitted(run: &Run) -> ProverCode {
     let c = core_out(run);
-    emit_prover(&run.cs, &run.im, &c.lay, &c.ops, &run.chk, c.exprs, &EmitParams { air_id: 0, airgroup_id: 0 }).unwrap()
+    emit_prover(&run.cs, &run.im, &c.lay, &c.ops, c.exprs, &EmitParams { air_id: 0, airgroup_id: 0 }).unwrap()
 }
 
 #[test]

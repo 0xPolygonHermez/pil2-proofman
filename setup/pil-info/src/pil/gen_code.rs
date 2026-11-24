@@ -3,20 +3,17 @@
 //! Produces code blocks for:
 //! - Expression computations (witness polynomials, intermediate polynomials)
 //! - Constraint polynomial (Q stage)
-//! - Verifier evaluations
 //! - Hint computations
 
 use crate::core::dag::format::ConstraintDag;
-use crate::cfg::{FieldCfg, Opening};
+use crate::cfg::FieldCfg;
 use crate::error::{PilInfoError, Result};
-use crate::pil::cse;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::pil::codegen::{build_code, pil_code_gen, rebuild_ev_map_index, CalcEntry, CodeGenCtx, EvMapRef};
+use crate::pil::codegen::{build_code, pil_code_gen, CalcEntry, CodeGenCtx};
 use crate::expr::expression::Expression;
-use crate::expr::helpers::{add_info_expressions_symbols, EvMapItem};
 use crate::types::pilout_info::{ConstraintInfo, HintFieldValue, HintInfo, SymbolInfo};
 use crate::expr::print::PrintCtx;
 
@@ -224,19 +221,23 @@ pub struct ProcessedHint {
     pub fields: Vec<ProcessedHintFieldEntry>,
 }
 
-/// Verifier code blocks: the quotient's, evaluated at xi. The DEEP polynomial is computed natively.
-#[derive(Debug, Clone)]
+/// The verifierinfo: the STARK's constraint DAG, or pilfflonk's qVerifier code (exactly one of them).
+#[derive(Debug, Clone, Default)]
 pub struct VerifierInfo {
-    pub q_verifier: ExpressionCodeEntry,
-    /// The constraint DAG `stark_setup` attaches; None from the generator.
+    /// pilfflonk only (`Opening::Shplonk`): the lowered DAG `emit_prover` sets.
+    pub q_verifier: Option<ExpressionCodeEntry>,
+    /// STARK only: the DAG `stark_setup` attaches.
     pub constraint_dag: Option<ConstraintDag>,
 }
 
 impl Serialize for VerifierInfo {
     fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         use serde::ser::SerializeMap;
-        let mut map = s.serialize_map(Some(1 + self.constraint_dag.is_some() as usize))?;
-        map.serialize_entry("qVerifier", &QVerifierView(&self.q_verifier))?;
+        let n = self.q_verifier.is_some() as usize + self.constraint_dag.is_some() as usize;
+        let mut map = s.serialize_map(Some(n))?;
+        if let Some(q) = &self.q_verifier {
+            map.serialize_entry("qVerifier", &QVerifierView(q))?;
+        }
         if let Some(dag) = &self.constraint_dag {
             map.serialize_entry("constraintDag", dag)?;
         }
@@ -271,8 +272,6 @@ pub struct ExpressionsInfo {
 pub struct PilCodeResult {
     pub expressions_info: ExpressionsInfo,
     pub verifier_info: VerifierInfo,
-    /// The evaluation map built during verifier code generation.
-    pub ev_map: Vec<EvMapRef>,
 }
 
 // ---------------------------------------------------------------------------
@@ -286,16 +285,10 @@ pub struct CodeGenParams {
     pub airgroup_id: usize,
     pub n_stages: usize,
     pub c_exp_id: usize,
-    pub q_deg: usize,
     pub q_dim: usize,
     pub opening_points: Vec<i64>,
-    pub cm_pols_map: Vec<SymbolInfo>,
-    pub custom_commits_count: usize,
     /// The field the code computes over.
     pub field: FieldCfg,
-    /// How the committed polynomials are opened: the DEEP opening adds the DEEP challenges and the
-    /// quotient's evaluations.
-    pub opening: Opening,
 }
 
 // ---------------------------------------------------------------------------
@@ -306,7 +299,7 @@ pub struct CodeGenParams {
 ///
 /// Mirrors JS `generatePilCode(res, symbols, constraints, expressions, hints)`. The DEEP challenges and
 /// the batching size are not the generator's: the STARK takes them from the core's layout and openings.
-/// For `Opening::Shplonk` the qVerifier is the caller's (`emit_prover` lowers the DAG).
+/// The verifierinfo is the caller's: `stark_setup` attaches the DAG, `emit_prover` pilfflonk's qVerifier.
 pub fn generate_pil_code(
     params: &CodeGenParams,
     symbols: &[SymbolInfo],
@@ -315,14 +308,8 @@ pub fn generate_pil_code(
     hints: &[HintInfo],
     print_ctx: Option<&PrintCtx>,
 ) -> Result<PilCodeResult> {
-    let mut ev_map_items: Vec<EvMapRef> = Vec::new();
-
     // Pre-compute witness symbol index for O(1) lookups in fix_commit_pol
     let witness_index = build_witness_index(symbols, params.air_id, params.airgroup_id);
-
-    // TODO(piece 3 G2: after circom E): keep only its evMap (`build_ev_map`); the STARK qVerifier feeds circom until then
-    let mut q_verifier =
-        generate_constraint_polynomial_verifier_code(params, symbols, expressions, &mut ev_map_items, &witness_index)?;
 
     let hints_info = add_hints_info(params, expressions, hints, false, print_ctx)?;
 
@@ -330,18 +317,9 @@ pub fn generate_pil_code(
 
     let constraints_code = generate_constraints_debug_code(params, symbols, constraints, expressions, &witness_index)?;
 
-    // TODO(piece 3 G2: after circom E): the STARK qVerifier and its CSE go once circom reads the DAG
-    if params.opening == Opening::Deep {
-        // the verifier entry only: it feeds the Rust/C++ verifiers and the circom recursion circuit
-        let result = cse::cse_code(&q_verifier.code);
-        tracing::debug!("CSE qVerifier: {} -> {} ops", q_verifier.code.len(), result.code.len());
-        q_verifier.code = result.code;
-    }
-
     Ok(PilCodeResult {
         expressions_info: ExpressionsInfo { hints_info, expressions_code, constraints: constraints_code },
-        verifier_info: VerifierInfo { q_verifier, constraint_dag: None },
-        ev_map: ev_map_items,
+        verifier_info: VerifierInfo::default(),
     })
 }
 
@@ -369,8 +347,7 @@ fn generate_expressions_code(
 
         let dom = if j == params.c_exp_id { "ext" } else { "n" };
 
-        let mut ctx =
-            CodeGenCtx::new(params.air_id, params.airgroup_id, exp.stage, dom, false, Vec::new(), &params.field);
+        let mut ctx = CodeGenCtx::new(params.air_id, params.airgroup_id, exp.stage, dom);
         ctx.witness_by_exp_id = Arc::clone(witness_index);
 
         if j == params.c_exp_id {
@@ -459,8 +436,7 @@ fn generate_constraints_debug_code(
     let mut result = Vec::new();
 
     for constraint in constraints {
-        let mut ctx =
-            CodeGenCtx::new(params.air_id, params.airgroup_id, params.n_stages, "n", false, Vec::new(), &params.field);
+        let mut ctx = CodeGenCtx::new(params.air_id, params.airgroup_id, params.n_stages, "n");
         ctx.witness_by_exp_id = Arc::clone(witness_index);
 
         // Pre-mark imPol expressions as calculated
@@ -502,131 +478,6 @@ fn generate_constraints_debug_code(
     }
 
     Ok(result)
-}
-
-// ---------------------------------------------------------------------------
-// generateConstraintPolynomialVerifierCode
-// ---------------------------------------------------------------------------
-
-/// Generate verifier code for the constraint polynomial.
-///
-/// Mirrors JS `generateConstraintPolynomialVerifierCode(res, verifierInfo, symbols, expressions)`.
-/// TODO(piece 3 G2: after circom E): only its evMap survives (`build_ev_map`).
-fn generate_constraint_polynomial_verifier_code(
-    params: &CodeGenParams,
-    symbols: &[SymbolInfo],
-    expressions: &[Expression],
-    ev_map_out: &mut Vec<EvMapRef>,
-    witness_index: &Arc<HashMap<(usize, usize, usize), usize>>,
-) -> Result<ExpressionCodeEntry> {
-    let mut ctx = CodeGenCtx::new(
-        params.air_id,
-        params.airgroup_id,
-        params.n_stages + 1,
-        "n",
-        true,
-        params.opening_points.clone(),
-        &params.field,
-    );
-    ctx.witness_by_exp_id = Arc::clone(witness_index);
-
-    // Pre-mark imPol expressions as calculated
-    for sym in symbols.iter() {
-        if !sym.im_pol {
-            continue;
-        }
-        if let Some(exp_id) = sym.exp_id {
-            let inner = ctx.calculated.entry(exp_id).or_default();
-            for &op in &params.opening_points {
-                inner.insert(op, CalcEntry { cm: true, tmp_id: None });
-            }
-        }
-    }
-
-    // Build the evaluation map from expression symbols
-    let mut evals: Vec<EvMapItem> = Vec::new();
-    let mut explored = vec![false; expressions.len()];
-    add_info_expressions_symbols(&mut evals, expressions, params.c_exp_id, &mut explored);
-
-    for eval_item in &evals {
-        let prime = eval_item.prime;
-        let opening_pos = params.opening_points.iter().position(|&p| p == prime).unwrap_or(0);
-        let mut rf = EvMapRef {
-            entry_type: eval_item.entry_type.clone(),
-            id: eval_item.id,
-            prime,
-            opening_pos,
-            commit_id: None,
-        };
-        if eval_item.entry_type == "custom" {
-            rf.commit_id = eval_item.commit_id;
-        }
-        ctx.ev_map.push(rf);
-    }
-
-    // Add Q polynomial columns to ev_map. The DEEP opening opens the quotient's pieces and the
-    // verifier checks their evaluations against Q(xi); with SHPLONK the verifier computes Q(xi)
-    // itself (pilfflonk/docs/protocol.md#constraint-polynomial).
-    if params.opening == Opening::Deep {
-        let q_index = params
-            .cm_pols_map
-            .iter()
-            .position(|p| p.stage == Some(params.n_stages + 1) && p.stage_id == Some(0))
-            .unwrap_or(0);
-        let opening_pos = params.opening_points.iter().position(|&p| p == 0).unwrap_or(0);
-        for i in 0..params.q_deg {
-            ctx.ev_map.push(EvMapRef {
-                entry_type: "cm".to_string(),
-                id: q_index + i,
-                prime: 0,
-                opening_pos,
-                commit_id: None,
-            });
-        }
-    }
-
-    // Sort ev_map by (openingPos, reverse type order, id, prime)
-    let custom_commits_count = params.custom_commits_count;
-    ctx.ev_map.sort_by(|a, b| {
-        let a_type_key = type_sort_key(&a.entry_type, a.commit_id, custom_commits_count);
-        let b_type_key = type_sort_key(&b.entry_type, b.commit_id, custom_commits_count);
-
-        a.opening_pos
-            .cmp(&b.opening_pos)
-            .then(b_type_key.cmp(&a_type_key))
-            .then(a.id.cmp(&b.id))
-            .then(a.prime.cmp(&b.prime))
-    });
-
-    // Build the hash index after sorting so fix_eval can do O(1) lookups
-    rebuild_ev_map_index(&mut ctx);
-
-    pil_code_gen(&mut ctx, symbols, expressions, params.c_exp_id, 0)?;
-    let block = build_code(&mut ctx)?;
-
-    *ev_map_out = ctx.ev_map;
-
-    Ok(ExpressionCodeEntry {
-        tmp_used: block.tmp_used,
-        code: block.code,
-        exp_id: params.c_exp_id,
-        stage: 0,
-        dest: None,
-        line: String::new(),
-    })
-}
-
-/// Compute a sort key for ev_map type ordering.
-/// cm=0, const=1, custom{i}=i+2
-fn type_sort_key(entry_type: &str, commit_id: Option<usize>, _custom_count: usize) -> usize {
-    match entry_type {
-        "cm" => 0,
-        "const" => 1,
-        _ => {
-            // custom type: key is commit_id + 2
-            commit_id.unwrap_or(0) + 2
-        }
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -805,13 +656,9 @@ mod tests {
             airgroup_id: 0,
             n_stages: 1,
             c_exp_id: 2,
-            q_deg: 1,
             q_dim: 1,
             opening_points: vec![0],
-            cm_pols_map: vec![SymbolInfo { stage: Some(2), stage_id: Some(0), ..Default::default() }],
-            custom_commits_count: 0,
             field: FieldCfg::goldilocks(),
-            opening: Opening::Deep,
         }
     }
 
@@ -832,13 +679,9 @@ mod tests {
             airgroup_id: 0,
             n_stages: 1,
             c_exp_id: 999, // not matching any expr
-            q_deg: 1,
             q_dim: 1,
             opening_points: vec![0],
-            cm_pols_map: Vec::new(),
-            custom_commits_count: 0,
             field: FieldCfg::goldilocks(),
-            opening: Opening::Deep,
         };
 
         let wi = build_witness_index(&symbols, 0, 0);
@@ -895,13 +738,9 @@ mod tests {
             airgroup_id: 0,
             n_stages: 1,
             c_exp_id: 2,
-            q_deg: 1,
             q_dim: 1,
             opening_points: vec![0],
-            cm_pols_map: Vec::new(),
-            custom_commits_count: 0,
             field: FieldCfg::goldilocks(),
-            opening: Opening::Deep,
         };
 
         let wi2 = build_witness_index(&symbols, 0, 0);

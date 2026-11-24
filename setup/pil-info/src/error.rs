@@ -40,13 +40,6 @@ pub enum PilInfoError {
     #[error("a hint field of op `{0}`, which no hint holds")]
     UnknownHintOp(String),
 
-    /// Verifier code whose ops all write temporaries, as `fix_dimensions_verifier` requires.
-    #[error(
-        "verifier code: op {index} is a `{op}` into a `{dest}`, and verifier code only adds, subtracts, multiplies \
-         or copies into temporaries"
-    )]
-    VerifierCode { index: usize, op: String, dest: String },
-
     #[error("op {op} uses temporary {id}, and the code has {max_id}")]
     TmpOutOfRange { op: usize, id: u64, max_id: usize },
 

@@ -1,28 +1,10 @@
-//! Goldilocks-cubic evaluator of a constraint DAG and of lowered verifier code (the DAG's parity oracle).
+//! The resolver context of a loaded starkinfo, and (tests only) a Goldilocks-cubic DAG evaluator.
 
-use anyhow::{anyhow, bail, Result};
-use proofman_fields::{CubicExtensionField, Goldilocks};
+use anyhow::{anyhow, Result};
 
-use pil_info::core::dag::format::{ConstraintDag, DagNode};
-use pil_info::core::dag::lower_code::{ev_col_ref, stark_roots, std_vc_index, LowerCtx, LowerTables, Operand};
-use pil_info::core::fold::fold_roots;
+use pil_info::core::dag::lower_code::{ev_col_ref, std_vc_index, LowerCtx, LowerTables};
 
-use crate::types::stark_info::{CodeOperation, OpType, PolMap, StarkInfo, VerifierInfo};
-use crate::types::{goldilocks_u64, GOLDILOCKS_MODULUS};
-
-pub type E3 = CubicExtensionField<Goldilocks>;
-
-/// Everything a DAG or its lowered code reads, in the order of the starkinfo maps.
-#[derive(Clone, Debug)]
-pub struct GlInputs {
-    pub evals: Vec<E3>,
-    pub challenges: Vec<E3>,
-    pub publics: Vec<Goldilocks>,
-    pub proof_values: Vec<Goldilocks>,
-    pub air_values: Vec<Goldilocks>,
-    pub airgroup_values: Vec<Goldilocks>,
-    pub zi: E3,
-}
+use crate::types::stark_info::{PolMap, StarkInfo};
 
 /// The resolver context of `si`: its evMap, challengesMap (`std_vc` by name) and value stages.
 pub fn lower_ctx(si: &StarkInfo) -> Result<LowerCtx> {
@@ -51,167 +33,164 @@ pub fn lower_ctx(si: &StarkInfo) -> Result<LowerCtx> {
     LowerCtx::new(t).map_err(|e| anyhow!("{e:?}"))
 }
 
-/// splitmix64.
-struct Rng(u64);
-impl Rng {
-    fn gl(&mut self) -> Goldilocks {
-        self.0 = self.0.wrapping_add(0x9E37_79B9_7F4A_7C15);
-        let mut z = self.0;
-        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
-        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
-        Goldilocks::new((z ^ (z >> 31)) % GOLDILOCKS_MODULUS)
+/// The lowering's value oracle.
+#[cfg(test)]
+pub(crate) mod eval {
+    use std::collections::HashMap;
+
+    use anyhow::{anyhow, bail, Result};
+    use proofman_fields::{CubicExtensionField, Goldilocks};
+
+    use pil_info::core::dag::format::{ConstraintDag, DagNode};
+    use pil_info::core::dag::lower_code::{stark_roots, CodeOp, LowerCtx, Operand, VerifierCode};
+    use pil_info::core::fold::fold_roots;
+
+    use crate::types::stark_info::{PolMap, StarkInfo};
+    use crate::types::{goldilocks_u64, GOLDILOCKS_MODULUS};
+
+    pub type E3 = CubicExtensionField<Goldilocks>;
+
+    /// Everything a DAG or its lowered code reads, in the order of the starkinfo maps.
+    #[derive(Clone, Debug)]
+    pub struct GlInputs {
+        pub evals: Vec<E3>,
+        pub challenges: Vec<E3>,
+        pub publics: Vec<Goldilocks>,
+        pub proof_values: Vec<Goldilocks>,
+        pub air_values: Vec<Goldilocks>,
+        pub airgroup_values: Vec<Goldilocks>,
+        pub zi: E3,
     }
-    fn e3(&mut self) -> E3 {
-        E3::from_array(&[self.gl(), self.gl(), self.gl()])
-    }
-}
 
-/// Flat length of a value map: 1 per stage-1 entry, 3 per other.
-fn flat_len(m: &[PolMap]) -> usize {
-    m.iter().map(|p| if p.stage == 1 { 1 } else { 3 }).sum()
-}
-
-/// Seeded inputs sized by `si`'s maps.
-pub fn random_inputs(si: &StarkInfo, seed: u64) -> GlInputs {
-    let mut r = Rng(seed);
-    let mut base = |n: usize| (0..n).map(|_| r.gl()).collect::<Vec<_>>();
-    let publics = base(si.n_publics as usize);
-    let proof_values = base(flat_len(&si.proof_values_map));
-    let air_values = base(flat_len(&si.air_values_map));
-    let airgroup_values = base(flat_len(&si.airgroup_values_map));
-    GlInputs {
-        evals: (0..si.ev_map.len()).map(|_| r.e3()).collect(),
-        challenges: (0..si.challenges_map.len()).map(|_| r.e3()).collect(),
-        publics,
-        proof_values,
-        air_values,
-        airgroup_values,
-        zi: r.e3(),
-    }
-}
-
-fn embed(g: Goldilocks) -> E3 {
-    E3::from_array(&[g, Goldilocks::new(0), Goldilocks::new(0)])
-}
-
-/// Value `id` of a flat value buffer laid out by `stages` (stage 1 takes 1 element, others 3).
-fn value(stages: &[u32], flat: &[Goldilocks], id: u32, what: &str) -> Result<E3> {
-    let id = id as usize;
-    let at: usize = stages.iter().take(id).map(|&s| if s == 1 { 1 } else { 3 }).sum();
-    let stage = *stages.get(id).ok_or_else(|| anyhow!("{what} {id} is not in its map"))?;
-    let n = if stage == 1 { 1 } else { 3 };
-    let v = flat.get(at..at + n).ok_or_else(|| anyhow!("{what} {id} is outside its inputs"))?;
-    Ok(if n == 1 { embed(v[0]) } else { E3::from_array(v) })
-}
-
-fn number(s: &str) -> Result<E3> {
-    Ok(embed(Goldilocks::new(goldilocks_u64(s)?)))
-}
-
-fn at<T: Copy>(v: &[T], id: u64, what: &str) -> Result<T> {
-    v.get(id as usize).copied().ok_or_else(|| anyhow!("{what} {id} is outside its inputs"))
-}
-
-/// The value of an operand the DAG and its code share.
-fn operand(o: &Operand, ctx: &LowerCtx, inp: &GlInputs) -> Result<E3> {
-    let t = ctx.tables();
-    Ok(match *o {
-        Operand::Tmp(_) => bail!("a temporary is not a DAG leaf"),
-        Operand::Eval(id) => at(&inp.evals, id.into(), "evaluation")?,
-        Operand::Challenge { id, .. } => at(&inp.challenges, id.into(), "challenge")?,
-        Operand::Number(ref v) => number(v)?,
-        Operand::Public(id) => embed(at(&inp.publics, id.into(), "public")?),
-        Operand::ProofValue { id, .. } => value(&t.proof_values_stage, &inp.proof_values, id, "proof value")?,
-        Operand::AirValue { id, .. } => value(&t.air_values_stage, &inp.air_values, id, "air value")?,
-        Operand::AirgroupValue { id, .. } => {
-            value(&t.airgroup_values_stage, &inp.airgroup_values, id, "airgroup value")?
+    /// splitmix64.
+    struct Rng(u64);
+    impl Rng {
+        fn gl(&mut self) -> Goldilocks {
+            self.0 = self.0.wrapping_add(0x9E37_79B9_7F4A_7C15);
+            let mut z = self.0;
+            z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+            z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+            Goldilocks::new((z ^ (z >> 31)) % GOLDILOCKS_MODULUS)
         }
-        Operand::Zi { .. } => inp.zi,
-    })
-}
-
-/// `fold_roots` of the roots' values times `inp.zi`.
-pub fn eval_dag(dag: &ConstraintDag, ctx: &LowerCtx, inp: &GlInputs) -> Result<E3> {
-    let mut v: Vec<E3> = Vec::with_capacity(dag.nodes.len());
-    for (i, n) in dag.nodes.iter().enumerate() {
-        let get = |c: u32| v.get(c as usize).copied().ok_or_else(|| anyhow!("node {i} reads node {c} ahead of it"));
-        let x = match *n {
-            DagNode::Add { a, b } => get(a)? + get(b)?,
-            DagNode::Sub { a, b } => get(a)? - get(b)?,
-            DagNode::Mul { a, b } => get(a)? * get(b)?,
-            DagNode::Neg { a } => -get(a)?,
-            _ => match ctx.resolve(i as u32, n).map_err(|e| anyhow!("{e:?}"))? {
-                Some(o) => operand(&o, ctx, inp)?,
-                None => bail!("node {i} is neither an operation nor a leaf"),
-            },
-        };
-        v.push(x);
-    }
-    let vc = operand(&ctx.vc_operand().map_err(|e| anyhow!("{e:?}"))?, ctx, inp)?;
-    let roots = stark_roots(dag)
-        .map_err(|e| anyhow!("{e:?}"))?
-        .into_iter()
-        .map(|r| v.get(r as usize).copied().ok_or_else(|| anyhow!("root {r} is not a node")))
-        .collect::<Result<Vec<_>>>()?;
-    let c = fold_roots(roots, |acc| vc * acc, |acc, c| acc + c).ok_or_else(|| anyhow!("the DAG has no roots"))?;
-    Ok(c * inp.zi)
-}
-
-/// The value of the last instruction of `code`. TODO(piece 3 G2: after circom E): delete with `check_dag_parity`.
-pub fn eval_code(code: &[CodeOperation], ctx: &LowerCtx, inp: &GlInputs) -> Result<E3> {
-    let mut tmp: Vec<E3> = Vec::new();
-    for (k, c) in code.iter().enumerate() {
-        let src = c
-            .src
-            .iter()
-            .map(|s| {
-                let o = match s.op_type {
-                    OpType::Tmp => return at(&tmp, s.id, "temporary"),
-                    OpType::Number => return Ok(embed(Goldilocks::new(s.value))),
-                    OpType::Eval => Operand::Eval(s.id as u32),
-                    OpType::Challenge => Operand::Challenge { id: s.id as u32, stage: 0, stage_id: 0 },
-                    OpType::Public => Operand::Public(s.id as u32),
-                    OpType::Proofvalue => Operand::ProofValue { id: s.id as u32, stage: 0 },
-                    OpType::Airvalue => Operand::AirValue { id: s.id as u32, stage: 0 },
-                    OpType::Airgroupvalue => Operand::AirgroupValue { id: s.id as u32, stage: 0 },
-                    OpType::Zi => Operand::Zi { boundary: 0 },
-                    t => bail!("instruction {k} reads a {}", t.to_str()),
-                };
-                operand(&o, ctx, inp)
-            })
-            .collect::<Result<Vec<E3>>>()?;
-        let x = match (c.op.as_str(), src.as_slice()) {
-            ("add", [a, b]) => *a + *b,
-            ("sub", [a, b]) => *a - *b,
-            ("mul", [a, b]) => *a * *b,
-            ("copy", [a]) => *a,
-            (op, s) => bail!("instruction {k}: {op} of {} operands", s.len()),
-        };
-        if c.dest.op_type != OpType::Tmp {
-            bail!("instruction {k} does not write a temporary");
-        }
-        let d = c.dest.id as usize;
-        if tmp.len() <= d {
-            tmp.resize(d + 1, E3::zero());
-        }
-        tmp[d] = x;
-    }
-    let last = code.last().ok_or_else(|| anyhow!("the code is empty"))?;
-    at(&tmp, last.dest.id, "temporary")
-}
-
-/// TODO(piece 3 G2: after circom E): delete with the STARK qVerifier, and `eval_code`. `dag` against `vi`'s qVerifier code on three seeds; the error says "differs" on a mismatch.
-/// (`dag` is an added parameter: `si` and `vi` alone carry no DAG.)
-pub fn check_dag_parity(dag: &ConstraintDag, si: &StarkInfo, vi: &VerifierInfo) -> Result<()> {
-    let ctx = lower_ctx(si)?;
-    for seed in 0..3 {
-        let inp = random_inputs(si, seed);
-        let (d, c) = (eval_dag(dag, &ctx, &inp)?, eval_code(&vi.q_verifier.code, &ctx, &inp)?);
-        if d != c {
-            bail!("the constraint DAG differs from the qVerifier code at seed {seed}: {d} vs {c}");
+        fn e3(&mut self) -> E3 {
+            E3::from_array(&[self.gl(), self.gl(), self.gl()])
         }
     }
-    Ok(())
+
+    /// Flat length of a value map: 1 per stage-1 entry, 3 per other.
+    fn flat_len(m: &[PolMap]) -> usize {
+        m.iter().map(|p| if p.stage == 1 { 1 } else { 3 }).sum()
+    }
+
+    /// Seeded inputs sized by `si`'s maps.
+    pub fn random_inputs(si: &StarkInfo, seed: u64) -> GlInputs {
+        let mut r = Rng(seed);
+        let mut base = |n: usize| (0..n).map(|_| r.gl()).collect::<Vec<_>>();
+        let publics = base(si.n_publics as usize);
+        let proof_values = base(flat_len(&si.proof_values_map));
+        let air_values = base(flat_len(&si.air_values_map));
+        let airgroup_values = base(flat_len(&si.airgroup_values_map));
+        GlInputs {
+            evals: (0..si.ev_map.len()).map(|_| r.e3()).collect(),
+            challenges: (0..si.challenges_map.len()).map(|_| r.e3()).collect(),
+            publics,
+            proof_values,
+            air_values,
+            airgroup_values,
+            zi: r.e3(),
+        }
+    }
+
+    fn embed(g: Goldilocks) -> E3 {
+        E3::from_array(&[g, Goldilocks::new(0), Goldilocks::new(0)])
+    }
+
+    /// Value `id` of a flat value buffer laid out by `stages` (stage 1 takes 1 element, others 3).
+    fn value(stages: &[u32], flat: &[Goldilocks], id: u32, what: &str) -> Result<E3> {
+        let id = id as usize;
+        let at: usize = stages.iter().take(id).map(|&s| if s == 1 { 1 } else { 3 }).sum();
+        let stage = *stages.get(id).ok_or_else(|| anyhow!("{what} {id} is not in its map"))?;
+        let n = if stage == 1 { 1 } else { 3 };
+        let v = flat.get(at..at + n).ok_or_else(|| anyhow!("{what} {id} is outside its inputs"))?;
+        Ok(if n == 1 { embed(v[0]) } else { E3::from_array(v) })
+    }
+
+    fn number(s: &str) -> Result<E3> {
+        Ok(embed(Goldilocks::new(goldilocks_u64(s)?)))
+    }
+
+    fn at<T: Copy>(v: &[T], id: u64, what: &str) -> Result<T> {
+        v.get(id as usize).copied().ok_or_else(|| anyhow!("{what} {id} is outside its inputs"))
+    }
+
+    /// The value of an operand the DAG and its code share.
+    fn operand(o: &Operand, ctx: &LowerCtx, inp: &GlInputs) -> Result<E3> {
+        let t = ctx.tables();
+        Ok(match *o {
+            Operand::Tmp(_) => bail!("a temporary is not a DAG leaf"),
+            Operand::Eval(id) => at(&inp.evals, id.into(), "evaluation")?,
+            Operand::Challenge { id, .. } => at(&inp.challenges, id.into(), "challenge")?,
+            Operand::Number(ref v) => number(v)?,
+            Operand::Public(id) => embed(at(&inp.publics, id.into(), "public")?),
+            Operand::ProofValue { id, .. } => value(&t.proof_values_stage, &inp.proof_values, id, "proof value")?,
+            Operand::AirValue { id, .. } => value(&t.air_values_stage, &inp.air_values, id, "air value")?,
+            Operand::AirgroupValue { id, .. } => {
+                value(&t.airgroup_values_stage, &inp.airgroup_values, id, "airgroup value")?
+            }
+            Operand::Zi { .. } => inp.zi,
+        })
+    }
+
+    /// `fold_roots` of the roots' values times `inp.zi`.
+    pub fn eval_dag(dag: &ConstraintDag, ctx: &LowerCtx, inp: &GlInputs) -> Result<E3> {
+        let mut v: Vec<E3> = Vec::with_capacity(dag.nodes.len());
+        for (i, n) in dag.nodes.iter().enumerate() {
+            let get = |c: u32| v.get(c as usize).copied().ok_or_else(|| anyhow!("node {i} reads node {c} ahead of it"));
+            let x = match *n {
+                DagNode::Add { a, b } => get(a)? + get(b)?,
+                DagNode::Sub { a, b } => get(a)? - get(b)?,
+                DagNode::Mul { a, b } => get(a)? * get(b)?,
+                DagNode::Neg { a } => -get(a)?,
+                _ => match ctx.resolve(i as u32, n).map_err(|e| anyhow!("{e:?}"))? {
+                    Some(o) => operand(&o, ctx, inp)?,
+                    None => bail!("node {i} is neither an operation nor a leaf"),
+                },
+            };
+            v.push(x);
+        }
+        let vc = operand(&ctx.vc_operand().map_err(|e| anyhow!("{e:?}"))?, ctx, inp)?;
+        let roots = stark_roots(dag)
+            .map_err(|e| anyhow!("{e:?}"))?
+            .into_iter()
+            .map(|r| v.get(r as usize).copied().ok_or_else(|| anyhow!("root {r} is not a node")))
+            .collect::<Result<Vec<_>>>()?;
+        let c = fold_roots(roots, |acc| vc * acc, |acc, c| acc + c).ok_or_else(|| anyhow!("the DAG has no roots"))?;
+        Ok(c * inp.zi)
+    }
+
+    /// The value of the last instruction of lowered `code`.
+    pub fn eval_code(code: &VerifierCode, ctx: &LowerCtx, inp: &GlInputs) -> Result<E3> {
+        let mut tmp: HashMap<u32, E3> = HashMap::new();
+        let mut last = None;
+        for ins in &code.code {
+            let src = (ins.src.iter())
+                .map(|s| match s.operand {
+                    Operand::Tmp(k) => tmp.get(&k).copied().ok_or_else(|| anyhow!("tmp {k} read before written")),
+                    ref o => operand(o, ctx, inp),
+                })
+                .collect::<Result<Vec<E3>>>()?;
+            let x = match (ins.op, src.as_slice()) {
+                (CodeOp::Add, [a, b]) => *a + *b,
+                (CodeOp::Sub, [a, b]) => *a - *b,
+                (CodeOp::Mul, [a, b]) => *a * *b,
+                (CodeOp::Copy, [a]) => *a,
+                (op, s) => bail!("{op:?} of {} operands", s.len()),
+            };
+            tmp.insert(ins.dest, x);
+            last = Some(x);
+        }
+        last.ok_or_else(|| anyhow!("the code is empty"))
+    }
 }
 
 #[cfg(test)]
@@ -221,16 +200,17 @@ mod tests {
     use num_bigint::BigUint;
     use pil_info::core::dag::build::build_dag;
     use pil_info::core::dag::format::{DagBoundary, DagNode, DagRoot};
+    use pil_info::core::dag::format::ConstraintDag;
     use pil_info::core::dag::lower_code::{lower_to_code, Fold};
+    use proofman_fields::Goldilocks;
     use pil_info::core::im::im_column_id;
     use pil_info::core::ir::{eval_expr, ColRef, ColType, Env, Expr};
-    use pil_info::emit::verifier::expression_code;
-    use pil_info::pil::gen_code;
     use proofman_fields::{Field, PrimeField64};
 
+    use super::eval::*;
     use super::*;
-    use crate::output::test_support::{common, full, full_random};
-    use crate::types::stark_info::{CustomCommit, EvMap, OpType, PolMap};
+    use crate::output::test_support::{common, full_random};
+    use crate::types::stark_info::{CustomCommit, EvMap, PolMap};
 
     const P: u64 = 0xFFFF_FFFF_0000_0001;
 
@@ -328,22 +308,14 @@ mod tests {
         ConstraintDag { version: 1, field: "gl".into(), ext_dim: 3, nodes, roots }
     }
 
-    fn code_of(dag: &ConstraintDag, si: &StarkInfo) -> Vec<CodeOperation> {
-        let entry = expression_code(&lower_to_code(dag, &lower_ctx(si).unwrap(), Fold::Stark).unwrap());
-        VerifierInfo::try_from(&gen_code::VerifierInfo { q_verifier: entry, constraint_dag: None })
-            .unwrap()
-            .q_verifier
-            .code
-    }
-
     #[test]
     fn lowered_code_matches_dag() {
         let si = tiny_si();
         for seed in 0..50 {
             let dag = random_dag(seed);
             dag.validate(&pil_info::FieldCfg::goldilocks()).unwrap();
-            let ops = code_of(&dag, &si);
             let (inp, ctx) = (random_inputs(&si, seed), lower_ctx(&si).unwrap());
+            let ops = lower_to_code(&dag, &ctx, Fold::Stark).unwrap();
             let (got, want) = (eval_code(&ops, &ctx, &inp).unwrap(), eval_dag(&dag, &ctx, &inp).unwrap());
             assert_eq!(got, want, "seed {seed}");
         }
@@ -360,40 +332,6 @@ mod tests {
         let mut si = tiny_si();
         si.challenges_map.push(si.challenges_map[0].clone());
         assert!(lower_ctx(&si).is_err(), "a repeated challenge");
-    }
-
-    fn const_pilout() -> pil2_pilout::pilout::PilOut {
-        use common::*;
-        let e = vec![mul(witness(0, 0), witness(1, 0)), sub(exp(0), constant("7")), mul(exp(1), witness(2, 0))];
-        pilout(&["a", "b", "c", "d"], &[], e, vec![every_row(2), every_row(1)])
-    }
-
-    #[test]
-    fn parity_accepts_matching_code() {
-        let f = full(const_pilout()).expect("feasible");
-        let dag = build_dag(&f.run.cs, &f.run.im).unwrap();
-        check_dag_parity(&dag, &f.si, &f.vi).unwrap();
-    }
-
-    #[test]
-    fn parity_rejects_changed_constant() {
-        let f = full(const_pilout()).expect("feasible");
-        let dag = build_dag(&f.run.cs, &f.run.im).unwrap();
-        let mut vi = f.vi.clone();
-        let n = vi.q_verifier.code.iter_mut().flat_map(|o| o.src.iter_mut()).find(|s| s.op_type == OpType::Number);
-        n.expect("the qVerifier reads the constant 7").value += 1;
-        let err = check_dag_parity(&dag, &f.si, &vi).unwrap_err();
-        assert!(err.to_string().contains("differs"), "{err}");
-    }
-
-    #[test]
-    fn parity_rejects_reordered_roots() {
-        let f = full(const_pilout()).expect("feasible");
-        let mut dag = build_dag(&f.run.cs, &f.run.im).unwrap();
-        assert!(dag.roots.len() >= 2, "two constraint roots");
-        dag.roots.swap(0, 1);
-        let err = check_dag_parity(&dag, &f.si, &f.vi).unwrap_err();
-        assert!(err.to_string().contains("differs"), "{err}");
     }
 
     fn fe(g: Goldilocks) -> BigUint {

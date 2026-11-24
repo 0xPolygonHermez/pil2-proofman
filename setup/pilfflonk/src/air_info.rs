@@ -46,7 +46,7 @@ use std::collections::btree_map::Entry;
 use std::collections::BTreeMap;
 
 use pil2_pilout::pilout as pb;
-use pil_info::core::ir::Boundary as PassesBoundary;
+use pil_info::core::ir::{Boundary as PassesBoundary, ColType};
 use pil_info::types::pilout_info::SymbolInfo;
 use pil_info::PilInfoResult;
 use proofman_pilfflonk::layout::{q_pieces, split_max_q_degree};
@@ -291,18 +291,14 @@ fn boundary(b: &PassesBoundary) -> Boundary {
 }
 
 fn ev_map(result: &PilInfoResult) -> Result<Vec<EvMapEntry>, SetupError> {
-    result
-        .pil_code
-        .ev_map
-        .iter()
-        .enumerate()
+    (result.ev_map.iter().enumerate())
         .map(|(i, e)| {
-            let pol_type = match (e.entry_type.as_str(), e.commit_id) {
-                ("cm", None) => PolType::Cm,
-                ("const", None) => PolType::Const,
-                (other, _) => return passes_output(format!("evMap[{i}] is of type {other}")),
+            let pol_type = match (e.pol.col, e.pol.commit_id) {
+                (ColType::Witness, None) => PolType::Cm,
+                (ColType::Fixed, None) => PolType::Const,
+                (other, _) => return passes_output(format!("evMap[{i}] is of type {other:?}")),
             };
-            Ok(EvMapEntry { pol_type, id: e.id as u64, prime: e.prime, opening_pos: e.opening_pos as u64 })
+            Ok(EvMapEntry { pol_type, id: e.pol.id.into(), prime: e.pol.offset, opening_pos: e.opening_pos.into() })
         })
         .collect()
 }

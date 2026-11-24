@@ -1,4 +1,5 @@
-// TODO(piece 3): pb readers still used: format_expressions/format_hints (emit's IR->pb round trip), format_global_* (globals), format_symbols (pilfflonk fixed.rs).
+// pb readers still used: format_expressions/format_hints (emit's IR->pb round trip, TODO on emit::prover::Tables),
+// format_global_* (globals, TODO in core::global), format_symbols (pilfflonk fixed.rs).
 use indexmap::IndexMap;
 use num_bigint::BigUint;
 

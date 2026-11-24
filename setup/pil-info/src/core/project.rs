@@ -46,7 +46,7 @@ pub struct VerifierView {
     /// Pilout constraints plus one `im_e - e` per promoted expression.
     pub n_constraints: u32,
     pub fri_batch_size: u32,
-    /// Tags the qVerifier code; the verifier reads it.
+    /// The quotient expression's id; only the prover reads it.
     pub c_exp_id: u32,
     pub custom_commits: Vec<CustomCommit>,
     /// `(aggType, stage)` of each of the airgroup's values.

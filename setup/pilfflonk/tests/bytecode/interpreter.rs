@@ -427,7 +427,8 @@ fn the_fibonacci_fixtures_are_the_setups_and_the_oracles() {
     let result = pil_info::shplonk_info(&pilout, 0, 0, &cfg, &Default::default()).unwrap();
     assert_eq!(Bytecode::from_bytes(&bin).unwrap(), Bytecode::from_pil_info(&result).unwrap());
     let context = CodeContext::from_pil_info(&result).unwrap();
-    let q_verifier = Code::from_entries(&result.pil_code.verifier_info.q_verifier.code, &context, None).unwrap();
+    let q_verifier =
+        Code::from_entries(&result.pil_code.verifier_info.q_verifier.as_ref().unwrap().code, &context, None).unwrap();
     let q_verifier_bin = Bytecode {
         n_stages: context.n_stages,
         expressions: vec![ExpressionBin {

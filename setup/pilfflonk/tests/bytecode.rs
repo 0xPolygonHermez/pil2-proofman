@@ -1494,32 +1494,3 @@ fn the_cpp_fixture_is_what_the_encoder_writes() {
     assert!(fixture == written, "{BYTECODE_FIXTURE} is not what the encoder writes: regenerate it (see above)");
     assert_eq!(Bytecode::read(path).unwrap(), sample());
 }
-
-/// signed's qVerifier (3 im pols at degree 3) equals in value the frozen one in
-/// `fixtures/bytecode/signed/q_verifier_before.json` (rewrite with `PILFFLONK_UPDATE_FIXTURES=1`).
-#[test]
-#[ignore = "needs PIL2C_EXEC"]
-fn the_q_verifier_of_signed_keeps_its_value() {
-    let pilout = compile_bn128("pilfflonk/tests/fixtures/signed/signed.pil");
-    let cfg = pilfflonk_setup::passes::cfg(3).unwrap();
-    let result = pil_info::shplonk_info(&pilout, 0, 0, &cfg, &Default::default()).unwrap();
-    let got = &result.pil_code.verifier_info.q_verifier;
-    assert_eq!(result.setup.cm_pols_map.iter().filter(|s| s.im_pol).count(), 3);
-    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/bytecode/signed/q_verifier_before.json");
-    if std::env::var_os("PILFFLONK_UPDATE_FIXTURES").is_some() {
-        fs::create_dir_all(path.parent().unwrap()).unwrap();
-        fs::write(&path, serde_json::to_string_pretty(&got.code).unwrap()).unwrap();
-    }
-    // both through the same JSON round trip (a number's ref is written without an id)
-    let entries = |mut v: serde_json::Value| -> Vec<CodeEntry> {
-        for c in v.as_array_mut().unwrap() {
-            for r in c["src"].as_array_mut().unwrap() {
-                r.as_object_mut().unwrap().entry("id").or_insert(0.into());
-            }
-        }
-        serde_json::from_value(v).unwrap()
-    };
-    let old = entries(serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap());
-    let new = entries(serde_json::to_value(&got.code).unwrap());
-    assert_eq!(evaluate(&new).last(), evaluate(&old).last(), "signed: Q(xi) differs from the frozen one");
-}

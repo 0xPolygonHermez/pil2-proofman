@@ -15,7 +15,6 @@ use pil_info::PilInfoCfg;
 use crate::output::stark_info::{build_starkinfo_output_from_core, solve_low_degree_test};
 use crate::pil::info::{report, validate_stark_struct, PilInfoResult};
 use pil_info::PrepareOptions;
-use crate::types::stark_info::{StarkInfo, VerifierInfo};
 use crate::types::stark_struct::StarkStruct;
 
 /// What names a key beside its pilout air; each `None` takes the pilout's.
@@ -32,9 +31,8 @@ pub struct KeyIdentity {
 
 /// Assemble the pil info of one air through the thin core.
 ///
-/// Fails on a pilout the core rejects, a starkStruct that does not fit the air, and a constraint
-/// DAG that disagrees with the qVerifier code; panics (the 128-bit gate) on a low-degree test that
-/// fails the exact security check.
+/// Fails on a pilout the core rejects and a starkStruct that does not fit the air; panics (the
+/// 128-bit gate) on a low-degree test that fails the exact security check.
 pub fn stark_setup(
     pilout: &pb::PilOut,
     airgroup_id: usize,
@@ -74,8 +72,7 @@ pub fn stark_setup(
         circuit_type: key.circuit_type,
         multiproof: key.multiproof,
     };
-    let emitted =
-        emit_prover(&cs, &im, &lay, &ops, &chk, exprs, &EmitParams { air_id, airgroup_id }).with_context(at)?;
+    let emitted = emit_prover(&cs, &im, &lay, &ops, exprs, &EmitParams { air_id, airgroup_id }).with_context(at)?;
     let core = stark_info(&cs, &im, &chk, &lay, &ops, &p).map_err(|e| failed("starkinfo", &e))?;
 
     // the 128-bit gate sits inside the solve
@@ -84,10 +81,6 @@ pub fn stark_setup(
     let (key_airgroup, key_air) = key.ids.unwrap_or((airgroup_id, air_id));
     let starkinfo = build_starkinfo_output_from_core(&core, stark_struct, &ldt, key_airgroup, key_air, name)?;
     let mut pil_code = emitted.code;
-    let si = StarkInfo::from_json(&serde_json::to_value(&starkinfo)?)?;
-    let vi = VerifierInfo::try_from(&pil_code.verifier_info)?;
-    // TODO(piece 3 G2: after circom E): goes with the STARK qVerifier
-    crate::output::dag_eval::check_dag_parity(&dag, &si, &vi).with_context(at)?;
     pil_code.verifier_info.constraint_dag = Some(dag);
 
     let stages: Vec<usize> = emitted.constraints.iter().map(|c| c.stage.unwrap_or(0)).collect();
@@ -141,20 +134,19 @@ mod tests {
     }
 
     #[test]
-    fn verifier_info_has_dag_and_qverifier() {
-        use pil_info::core::dag::format::ConstraintDag;
+    fn deep_verifierinfo_has_only_the_dag() {
+        use crate::types::stark_info::VerifierInfo;
         let (_, r) = feasible(1).remove(0);
-        let vi_json = to_json_string(&r.pil_code.verifier_info).unwrap();
-        let (q, d) = (vi_json.find("\"qVerifier\""), vi_json.find("\"constraintDag\""));
-        assert!(matches!((q, d), (Some(q), Some(d)) if q < d), "qVerifier then constraintDag: {q:?} {d:?}");
-        let v: serde_json::Value = serde_json::from_str(&vi_json).unwrap();
-        let mut keys: Vec<_> = v.as_object().unwrap().keys().cloned().collect();
-        keys.sort();
-        assert_eq!(keys, ["constraintDag", "qVerifier"]);
-        let dag: ConstraintDag = serde_json::from_value(v["constraintDag"].clone()).unwrap();
-        let si = StarkInfo::from_json(&serde_json::to_value(&r.starkinfo).unwrap()).unwrap();
-        let vi = VerifierInfo::try_from(&r.pil_code.verifier_info).unwrap();
-        crate::output::dag_eval::check_dag_parity(&dag, &si, &vi).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&to_json_string(&r.pil_code.verifier_info).unwrap()).unwrap();
+        let keys: Vec<_> = v.as_object().unwrap().keys().cloned().collect();
+        assert_eq!(keys, ["constraintDag"]);
+        assert!(VerifierInfo::from_json(&v).is_ok());
+        // a stale key's qVerifier is ignored; a key without the DAG is refused
+        let mut stale = v.clone();
+        stale["qVerifier"] = serde_json::json!({"tmpUsed": 0, "code": []});
+        assert!(VerifierInfo::from_json(&stale).is_ok());
+        let err = VerifierInfo::from_json(&serde_json::json!({"qVerifier": stale["qVerifier"]})).unwrap_err();
+        assert!(err.to_string().contains("regenerate the setup"), "{err}");
     }
 
     #[test]

@@ -9,7 +9,7 @@ use crate::core::from_pilout::{from_pilout, PiloutError};
 use crate::core::im::{check_im, im_order, ImChoice};
 use crate::core::ir::Boundary;
 use crate::core::layout::{layout, quotient_dim, LayoutParams};
-use crate::core::openings::openings;
+use crate::core::openings::{openings, EvEntry};
 use crate::emit::prover::{emit_prover, to_arena, EmitParams};
 use crate::error::{PilInfoError, Result};
 use crate::pil::gen_code::PilCodeResult;
@@ -28,6 +28,8 @@ pub struct PilInfoResult {
     pub q_deg: i64,
     /// In `boundaryId` order.
     pub boundaries: Vec<Boundary>,
+    /// The core's evMap, which the qVerifier's `eval` operands index.
+    pub ev_map: Vec<EvEntry>,
 }
 
 /// The setup of air (`airgroup_id`, `air_id`) of `pilout` for `cfg`, which must open with SHPLONK.
@@ -63,7 +65,7 @@ pub fn shplonk_info(
     let exprs = to_arena(&cs, &im, &lay)?;
     let c_exp_id = exprs.roles.c_exp;
     let ops = openings(&cs, &im, &lay).map_err(|e| failed("openings", &e))?;
-    let e = emit_prover(&cs, &im, &lay, &ops, &chk, exprs, &EmitParams { air_id, airgroup_id })?;
+    let e = emit_prover(&cs, &im, &lay, &ops, exprs, &EmitParams { air_id, airgroup_id })?;
 
     // no root reads a column: qDeg −1, which pilfflonk refuses
     let top = chk.root_degrees.iter().chain(&chk.im_degrees).max().copied().unwrap_or(0);
@@ -105,7 +107,7 @@ pub fn shplonk_info(
         hints: e.hints,
         n_commitments_stage1,
         im_pols_info: e.im_pols_info.clone(),
-        opening_points: ops.opening_points,
+        opening_points: ops.opening_points.clone(),
     };
     Ok(PilInfoResult {
         setup,
@@ -114,5 +116,6 @@ pub fn shplonk_info(
         c_exp_id,
         q_deg,
         boundaries: cs.boundaries(),
+        ev_map: ops.ev_map,
     })
 }

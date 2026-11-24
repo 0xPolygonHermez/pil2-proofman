@@ -174,7 +174,7 @@ pub fn build_global_constraints_json(pilout: &pb::PilOut, field: &FieldCfg) -> R
 
     let n_stages = if !pilout.num_challenges.is_empty() { pilout.num_challenges.len() } else { 1 };
 
-    let mut ctx = CodeGenCtx::new(0, 0, n_stages, "n", false, Vec::new(), field);
+    let mut ctx = CodeGenCtx::new(0, 0, n_stages, "n");
 
     let mut constraints_json = Vec::new();
 

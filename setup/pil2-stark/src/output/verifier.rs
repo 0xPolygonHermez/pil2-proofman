@@ -70,11 +70,8 @@ fn prepare_verifier_rust(
     // The transcript CONSTRUCTION, not a hash to wrap in a sponge: BLAKE3's is not a sponge.
     let transcript_type = hash_family::rust_transcript_type(hash_id, transcript_arity as u64);
     let grinding_type = hash_family::rust_grinding_type(hash_id);
-    let dag = verifier_info
-        .constraint_dag
-        .as_ref()
-        .ok_or_else(|| anyhow!("verifierinfo has no constraintDag: regenerate the setup"))?;
-    let code = lower_to_code(dag, &lower_ctx(stark_info)?, Fold::Stark).map_err(|e| anyhow!("{e:?}"))?;
+    let code = lower_to_code(&verifier_info.constraint_dag, &lower_ctx(stark_info)?, Fold::Stark)
+        .map_err(|e| anyhow!("{e:?}"))?;
     let q = rust_verify_lines(stark_info, &code, "q_verify", false)?;
     let (verify_q_rust, verify_q_helpers) = (q.verify_rust, q.verify_rust_helpers);
 
@@ -307,7 +304,7 @@ mod tests {
     #[test]
     fn q_verify_one_assignment_per_op_node() {
         for f in full_random(3) {
-            let dag = f.vi.constraint_dag.as_ref().expect("stark_setup attaches the DAG");
+            let dag = &f.vi.constraint_dag;
             let code = lower_to_code(dag, &lower_ctx(&f.si).unwrap(), Fold::Stark).unwrap();
             // op nodes + fold instructions (copy of leaf roots, mul/add per root, final mul by Zi)
             assert_eq!(code.code.len(), code.tmp_used);
@@ -360,7 +357,7 @@ mod tests {
         if si.air_values_map.is_empty() {
             si.air_values_map = vec![PolMap { stage: 2, dim: 3, ..Default::default() }];
         }
-        let dag = vi.constraint_dag.as_mut().expect("the key carries constraintDag");
+        let dag = &mut vi.constraint_dag;
         dag.nodes.push(DagNode::AirValue { id: 0 });
         dag.roots.push(DagRoot {
             node: dag.nodes.len() as u32 - 1,
@@ -374,7 +371,7 @@ mod tests {
     #[test]
     fn q_verify_refuses_non_every_row_root() {
         let Some((si, mut vi)) = shared_key() else { return };
-        vi.constraint_dag.as_mut().expect("the key carries constraintDag").roots[0].boundary = DagBoundary::FirstRow;
+        vi.constraint_dag.roots[0].boundary = DagBoundary::FirstRow;
         let e = write(&si, &vi).expect_err("a STARK root is everyRow");
         assert!(format!("{e:#}").contains("everyRow"), "{e:#}");
     }
@@ -387,7 +384,7 @@ mod tests {
     fn writes_a_verifier_from_a_changed_dag() {
         let Some((si, mut vi)) = shared_key() else { return };
         let out = std::env::var("PIL2_CHANGED_VERIFIER").expect("set PIL2_CHANGED_VERIFIER");
-        let dag = vi.constraint_dag.as_mut().expect("the key carries constraintDag");
+        let dag = &mut vi.constraint_dag;
         let c = dag.nodes.iter_mut().find_map(|n| match n {
             DagNode::Const { value } if value != "0" => Some(value),
             _ => None,

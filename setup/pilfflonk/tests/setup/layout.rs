@@ -563,6 +563,8 @@ fn the_grouped_layout_fuses_the_offsets_pilout() {
         .pil_code
         .verifier_info
         .q_verifier
+        .as_ref()
+        .unwrap()
         .code
         .iter()
         .flat_map(|c| &c.src)

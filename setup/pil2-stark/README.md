@@ -69,9 +69,9 @@ goes through one entry, `pil::stark_setup::stark_setup`, over the thin core in `
 | `search/im` (untrusted) -> `core/im` | picks the im columns; `check_im` derives `qDeg` |
 | `core/dag` | the constraint DAG (`constraintDag`) and its code lowering |
 | `core/layout`, `core/openings`, `core/project` | columns, evMap, the starkinfo projection |
-| `emit/prover` | today's arena and generator: expressionsinfo, hints, `qVerifier` |
+| `emit/prover` | today's arena and generator: expressionsinfo, hints (pilfflonk's `qVerifier` from the DAG) |
 | `output/stark_info` | starkinfo JSON from the projection and the solved low-degree test |
-| `output/dag_eval` | setup-time parity of the DAG against `qVerifier` |
+| `output/dag_eval` | the DAG's resolver context (`lower_ctx`) and a Goldilocks evaluator for tests |
 
 pilfflonk runs the same core (`pil_info::shplonk_info`, SHPLONK).
 

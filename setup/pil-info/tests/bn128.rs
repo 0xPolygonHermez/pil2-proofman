@@ -15,7 +15,7 @@ use std::process::Command;
 
 use pil2_pilout::pilout as pb;
 use pil2_pilout::pilout_proxy::PilOutProxy;
-use pil_info::output::expressions_info::build_verifier_info_json;
+use pil_info::core::ir::ColType;
 use pil_info::types::output::CodeEntry;
 use pil_info::{DegreePolicy, PilInfoCfg, PilInfoResult};
 
@@ -87,7 +87,7 @@ fn all_code(result: &PilInfoResult) -> Vec<&CodeEntry> {
         .iter()
         .flat_map(|e| &e.code)
         .chain(info.constraints.iter().flat_map(|c| &c.code))
-        .chain(&verifier.q_verifier.code)
+        .chain(&verifier.q_verifier.as_ref().expect("a qVerifier").code)
         .collect()
 }
 
@@ -152,14 +152,13 @@ fn assert_bn128_shape(result: &PilInfoResult) {
     for e in &setup.expressions {
         assert_ne!(e.op, "eval", "a DEEP polynomial node");
     }
-    for ev in &result.pil_code.ev_map {
-        let stage = setup.cm_pols_map.get(ev.id).and_then(|p| p.stage);
-        assert!(ev.entry_type != "cm" || stage != Some(q_stage), "quotient piece {} in the evMap", ev.id);
+    for ev in &result.ev_map {
+        let stage = setup.cm_pols_map.get(ev.pol.id as usize).and_then(|p| p.stage);
+        assert!(ev.pol.col != ColType::Witness || stage != Some(q_stage), "quotient piece {} in the evMap", ev.pol.id);
     }
     let verifier_info = serde_json::to_value(&result.pil_code.verifier_info).expect("serializable");
     let keys: Vec<&String> = verifier_info.as_object().expect("an object").keys().collect();
     assert_eq!(keys, ["qVerifier"]);
-    assert_eq!(build_verifier_info_json(&result.pil_code.verifier_info), verifier_info);
 }
 
 // ---------------------------------------------------------------------------
@@ -277,8 +276,8 @@ fn fibonacci_fixture_over_bn128() {
         im_pols(&result),
         result.q_deg,
         result.setup.cm_pols_map.iter().map(|p| (&p.name, p.stage, p.dim)).collect::<Vec<_>>(),
-        result.pil_code.ev_map.iter().map(|e| (&e.entry_type, e.id, e.prime)).collect::<Vec<_>>(),
-        result.pil_code.verifier_info.q_verifier.code.len(),
+        result.ev_map.iter().map(|e| (e.pol.col, e.pol.id, e.pol.offset)).collect::<Vec<_>>(),
+        result.pil_code.verifier_info.q_verifier.as_ref().map_or(0, |q| q.code.len()),
     );
 }
 

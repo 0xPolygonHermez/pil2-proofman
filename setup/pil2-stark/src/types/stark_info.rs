@@ -118,12 +118,10 @@ pub struct ExpressionsInfo {
     pub hints_info: Vec<Hint>,
 }
 
-/// Verifier info loaded from the JSON file.
+/// A STARK verifierinfo: the constraint DAG (a stale `qVerifier` beside it is ignored).
 #[derive(Debug, Clone)]
 pub struct VerifierInfo {
-    pub q_verifier: ExpCode,
-    /// Absent from keys set up before the thin core.
-    pub constraint_dag: Option<ConstraintDag>,
+    pub constraint_dag: ConstraintDag,
 }
 
 /// Global constraints info loaded from JSON.
@@ -371,15 +369,11 @@ impl ExpressionsInfo {
 }
 
 impl VerifierInfo {
-    /// Parse from the verifierInfo JSON.
+    /// Parse from the verifierInfo JSON; fails without a `constraintDag`.
     pub fn from_json(j: &Value) -> Result<Self> {
-        let q_verifier = parse_exp_code(j.get("qVerifier").unwrap_or(&Value::Null))?;
-        let constraint_dag = j
-            .get("constraintDag")
-            .map(|d| serde_json::from_value(d.clone()))
-            .transpose()
-            .context("the constraintDag")?;
-        Ok(VerifierInfo { q_verifier, constraint_dag })
+        let dag =
+            j.get("constraintDag").ok_or_else(|| anyhow!("verifierinfo has no constraintDag: regenerate the setup"))?;
+        Ok(VerifierInfo { constraint_dag: serde_json::from_value(dag.clone()).context("the constraintDag")? })
     }
 }
 
@@ -506,15 +500,13 @@ impl TryFrom<&crate::pil::gen_code::ExpressionsInfo> for ExpressionsInfo {
     }
 }
 
-/// Fails on a number that is not a Goldilocks element and on an operand of an unknown type.
+/// Fails without a constraint DAG (`stark_setup` attaches it).
 impl TryFrom<&crate::pil::gen_code::VerifierInfo> for VerifierInfo {
     type Error = anyhow::Error;
 
     fn try_from(vi: &crate::pil::gen_code::VerifierInfo) -> Result<Self> {
-        Ok(VerifierInfo {
-            q_verifier: expression_entry_to_exp_code(&vi.q_verifier).context("the qVerifier")?,
-            constraint_dag: vi.constraint_dag.clone(),
-        })
+        let dag = vi.constraint_dag.clone();
+        Ok(VerifierInfo { constraint_dag: dag.ok_or_else(|| anyhow!("the verifierinfo has no constraint DAG"))? })
     }
 }
 

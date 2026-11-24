@@ -82,23 +82,6 @@ pub fn build_expressions_info_json(info: &crate::pil::gen_code::ExpressionsInfo)
     serde_json::Value::Object(result)
 }
 
-/// Build the verifierinfo JSON structure.
-pub fn build_verifier_info_json(info: &crate::pil::gen_code::VerifierInfo) -> serde_json::Value {
-    // qVerifier: {tmpUsed, code, line: ""}
-    let mut qv = serde_json::Map::new();
-    qv.insert("tmpUsed".to_string(), json!(info.q_verifier.tmp_used));
-    qv.insert("code".to_string(), code_entries_to_json(&info.q_verifier.code));
-    qv.insert("line".to_string(), json!(""));
-
-    let mut result = serde_json::Map::new();
-    result.insert("qVerifier".to_string(), serde_json::Value::Object(qv));
-    if let Some(dag) = &info.constraint_dag {
-        result.insert("constraintDag".to_string(), json!(dag));
-    }
-
-    serde_json::Value::Object(result)
-}
-
 /// Serialize a hint field value to JSON matching golden field order per op type.
 ///
 /// Field order per op type (matching JS object spread behavior):
