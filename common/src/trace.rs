@@ -17,6 +17,16 @@ pub trait Values<F>: Send {
 
 use rayon::prelude::*;
 
+/// `*word = (*word & keep) | bits`, for one word of a packed field straddling two. Volatile so LLVM
+/// can't merge the two words into a 16-byte access: partially overlapping a neighbouring field's
+/// store, that load can't be forwarded and stalls until the store retires.
+#[inline(always)]
+pub fn straddle_store(word: &mut u64, keep: u64, bits: u64) {
+    let ptr: *mut u64 = word;
+    // SAFETY: `ptr` comes from a live `&mut u64`.
+    unsafe { ptr.write_volatile((ptr.read_volatile() & keep) | bits) }
+}
+
 pub trait TraceRow: Copy + Default + Send {
     const ROW_SIZE: usize;
     const IS_PACKED: bool;

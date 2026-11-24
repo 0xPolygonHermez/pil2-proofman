@@ -28,6 +28,15 @@ mod tests {
         }
     );
 
+    // `b` straddles packed words 0 and 1 (bits 60..76).
+    trace_row!(
+        StraddleRow<F> {
+            a: ubit(60),
+            b: u16,
+            c: ubit(52),
+        }
+    );
+
     // --- Compile-time constant assertions -----------------------------------------
     // These are evaluated by the compiler at build time; a mismatch is a compile error.
 
@@ -490,6 +499,46 @@ mod tests {
                     );
                 }
             }
+        }
+    }
+
+    /// Elements straddling two packed words (field3[0][0][3] at bits 56..72, odd field2 elements)
+    /// are written one word at a time; rewriting every element must leave its neighbours intact.
+    #[test]
+    fn rewriting_each_element_keeps_its_neighbours() {
+        let mut row = MainRowPacked::<Goldilocks>::default();
+        let v3 = |i: usize, j: usize, k: usize, round: u16| (0xA5A5u16 ^ ((i * 8 + j * 4 + k) as u16)).wrapping_add(round);
+        let v2 = |i: usize, j: usize, round: u32| (0xDEAD_BEEFu32 ^ ((i * 2 + j) as u32)).wrapping_add(round);
+        row.set_field1(0xFF);
+        for round in 0..2 {
+            for i in 0..3 {
+                for j in 0..2 {
+                    for k in 0..4 {
+                        row.set_field3(i, j, k, v3(i, j, k, round));
+                    }
+                    row.set_field2(i, j, v2(i, j, round as u32));
+                }
+            }
+            for i in 0..3 {
+                for j in 0..2 {
+                    for k in 0..4 {
+                        assert_eq!(row.get_field3(i, j, k), v3(i, j, k, round), "field3[{i}][{j}][{k}]");
+                    }
+                    assert_eq!(row.get_field2(i, j), v2(i, j, round as u32), "field2[{i}][{j}]");
+                }
+            }
+            assert_eq!(row.get_field1(), 0xFF);
+        }
+    }
+
+    #[test]
+    fn a_scalar_straddling_two_words_keeps_its_neighbours() {
+        let mut row = StraddleRowPacked::<Goldilocks>::default();
+        row.set_a((1u64 << 60) - 1);
+        row.set_c((1u64 << 52) - 1);
+        for b in [0u16, 0xFFFF, 0x1234, 0xA5A5] {
+            row.set_b(b);
+            assert_eq!((row.get_a(), row.get_b(), row.get_c()), ((1u64 << 60) - 1, b, (1u64 << 52) - 1));
         }
     }
 }

@@ -343,10 +343,11 @@ fn add_packed_array_setter_getter(
                 let high_bits: usize = #bit_width - low_bits;
                 let low_mask: u64 = ((1u128 << low_bits) - 1) as u64;
                 let high_mask: u64 = ((1u128 << high_bits) - 1) as u64;
-                self.packed[word] &= !(low_mask << bit_start);
-                self.packed[word] |= ((value as u64) & low_mask) << bit_start;
-                self.packed[word + 1] &= !high_mask;
-                self.packed[word + 1] |= ((value as u64) >> low_bits) & high_mask;
+                // One 8-byte access per word (see straddle_store).
+                let low = (value as u64) & low_mask;
+                let high = ((value as u64) >> low_bits) & high_mask;
+                proofman_common::trace::straddle_store(&mut self.packed[word], !(low_mask << bit_start), low << bit_start);
+                proofman_common::trace::straddle_store(&mut self.packed[word + 1], !high_mask, high);
             }
         }
 
@@ -484,10 +485,11 @@ fn emit_split_packed_accessor(
             );
             const LOW_MASK: u64 = #low_mask;
             const HIGH_MASK: u64 = #high_mask;
-            self.packed[#word_start] &= !(LOW_MASK << #bit_start);
-            self.packed[#word_start] |= ((value as u64) & LOW_MASK) << #bit_start;
-            self.packed[#word_end] &= !HIGH_MASK;
-            self.packed[#word_end] |= ((value as u64) >> #low_bits) & HIGH_MASK;
+            // One 8-byte access per word (see straddle_store).
+            let low = ((value as u64) & LOW_MASK) << #bit_start;
+            let high = ((value as u64) >> #low_bits) & HIGH_MASK;
+            proofman_common::trace::straddle_store(&mut self.packed[#word_start], !(LOW_MASK << #bit_start), low);
+            proofman_common::trace::straddle_store(&mut self.packed[#word_end], !HIGH_MASK, high);
         }
 
         #[inline(always)]
