@@ -40,6 +40,12 @@ public:
     static void grinding(uint64_t *d_nonce, uint64_t *d_nonceBlock,
                          const uint64_t *d_in, const uint32_t n_bits,
                          cudaStream_t stream);
+
+    // No-leaf-level tree whose levels >= upperLevel are already in place: rebuilds levels below that
+    // only in the subtrees the queries open.
+    static void rebuildQueriedSubtreesNoLeaves(uint64_t *d_tree, const uint64_t *d_trace, uint64_t num_cols,
+                                               uint64_t num_rows, Layout layout, const uint64_t *d_queries,
+                                               uint64_t n_queries, uint32_t upperLevel, cudaStream_t stream);
 };
 
 #endif  // BLAKE3_GOLDILOCKS_CUH

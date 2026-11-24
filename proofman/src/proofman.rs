@@ -2265,6 +2265,7 @@ where
                 &self.const_tree,
                 None,
                 true,
+                std::ptr::null_mut(),
             )?;
             if self.pctx.gpu {
                 // gen_proof is async on GPU: the proof buffer is only filled once the stream drains.
@@ -4242,6 +4243,7 @@ where
             let const_pols_clone = self.const_pols.clone();
             let const_tree_clone = self.const_tree.clone();
             let proofs_clone = self.proofs.clone();
+            let roots_contributions_clone = self.roots_contributions.clone();
             let compressor_proofs_clone = self.compressor_proofs.clone();
             let recursive1_proofs_clone = self.recursive1_proofs.clone();
             let recursive2_proofs_ongoing_clone = self.recursive2_proofs_ongoing.clone();
@@ -4396,6 +4398,7 @@ where
                                 &const_tree_clone,
                                 reserved,
                                 false,
+                                roots_contributions_clone.ptr(instance_id),
                             ) {
                                 Ok(sid) => {
                                     pending.commit();
@@ -6267,6 +6270,8 @@ where
         // true: no global challenge -- the transcript is seeded from this AIR's own
         // verkey + publics (see genProof's `recursive` branch).
         self_contained: bool,
+        // Stage-1 root from the contribution, or null.
+        contribution_root: *mut c_void,
     ) -> ProofmanResult<usize> {
         let (airgroup_id, air_id) = pctx.dctx_get_instance_info(instance_id)?;
         timer_start_debug!(GEN_PROOF, "GEN_PROOF_{} [{}:{}]", instance_id, airgroup_id, air_id);
@@ -6323,6 +6328,7 @@ where
             const_pols_tree_path,
             &custom_commits_fixed_path,
             self_contained,
+            contribution_root,
         );
         if proof_stream_id == u64::MAX {
             return Err(ProofmanError::ProofmanError(format!(

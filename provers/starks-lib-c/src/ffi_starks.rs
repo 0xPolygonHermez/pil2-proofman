@@ -971,6 +971,8 @@ pub fn gen_proof_c(
     // true: seed the transcript from this AIR's own verkey + publics instead of the
     // global challenge (self-contained proof, no contributions phase).
     self_contained: bool,
+    // Stage-1 root from the contribution, or null; lets the GPU proof reuse its upper tree.
+    contribution_root: *mut c_void,
 ) -> u64 {
     let proof_file_name = CString::new(proof_file).unwrap();
     let proof_file_ptr = proof_file_name.as_ptr() as *mut std::os::raw::c_char;
@@ -1000,6 +1002,7 @@ pub fn gen_proof_c(
             const_tree_filename_ptr,
             custom_commits_path_ptr,
             self_contained,
+            contribution_root,
         )
     }
 }

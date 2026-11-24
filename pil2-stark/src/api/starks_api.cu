@@ -92,6 +92,16 @@ static void withGpuHashFamily(uint32_t arity, Fn &&fn)
     }
 }
 
+// Can the proof reuse the slot commit's upper stage-1 tree (Cm1UpperTree)? BLAKE3, arity 2, no
+// leaf level, and tall enough that the kept levels include the last-level verification.
+static bool cm1UpperTreeEligible(const StarkInfo &si, StreamCommitHash hash)
+{
+    const uint64_t nExt = 1ull << si.starkStruct.nBitsExt;
+    return hash == StreamCommitHash::Blake3 && si.dropLeafLevel && si.starkStruct.merkleTreeArity == 2 &&
+           (nExt >> (CM1_UPPER_LEVEL + si.starkStruct.lastLevelVerification + 1)) > 0 &&
+           streamCommitUpperWords(nExt, CM1_UPPER_LEVEL) <= CM1_UPPER_LEVEL_MAX_WORDS;
+}
+
 void buildMerkleTreeGPU(uint32_t arity, uint64_t *d_tree, uint64_t *d_input,
                          uint64_t nCols, uint64_t nRows, Layout layout, cudaStream_t stream)
 {
@@ -913,6 +923,10 @@ void free_device_buffers_gpu(void *d_buffers_)
         if (d_buffers->streamCommitHost != nullptr) {
             cudaFreeHost(d_buffers->streamCommitHost);
             d_buffers->streamCommitHost = nullptr;
+        }
+        if (d_buffers->streamCommitUpperHost != nullptr) {
+            cudaFreeHost(d_buffers->streamCommitUpperHost);
+            d_buffers->streamCommitUpperHost = nullptr;
         }
         d_buffers->streamCommitSlots = 0;
     }
@@ -1736,7 +1750,7 @@ static bool gpuWitnessFillTrace(DeviceCommitBuffers *d_buffers, StepsParams *par
 }
 
 
-uint64_t gen_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void *params_, void *globalChallenge, uint64_t* proofBuffer, char *proofFile, void *d_buffers_, uint64_t streamId_, char *constPolsPath,  char *constTreePath, char *customCommitsFixedPath, bool selfContained) {
+uint64_t gen_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void *params_, void *globalChallenge, uint64_t* proofBuffer, char *proofFile, void *d_buffers_, uint64_t streamId_, char *constPolsPath,  char *constTreePath, char *customCommitsFixedPath, bool selfContained, void *contributionRoot) {
 
     auto key = std::make_pair(airgroupId, airId);
     std::string proofType = "basic";
@@ -1946,7 +1960,21 @@ uint64_t gen_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, ui
     // tree. Costs a redundant unpack in exactly that case.
     if (customFixedRebuilt) CHECKCUDAERR(cudaStreamWaitEvent(stream, sd.customFixedDone, 0));
     if (fixedPrebuilt) CHECKCUDAERR(cudaStreamWaitEvent(stream, sd.fixedPolsDone, 0));
-    genProof_gpu(*setupCtx, d_aux_trace, d_const_pols, d_const_tree, streamId, instanceId, d_buffers, air_instance_info, timer, stream, selfContained, reuse_const_tree || fixedPrebuilt, fixedPrebuilt);
+    // Take the slot commit's upper tree only if air and root match (ids repeat across jobs); erase it
+    // either way.
+    Cm1UpperTree cm1Upper;
+    bool haveCm1Upper = false;
+    if (contributionRoot != nullptr && !selfContained) {
+        std::lock_guard<std::mutex> lk(d_buffers->cm1UpperMutex);
+        auto it = d_buffers->cm1Upper.find(instanceId);
+        if (it != d_buffers->cm1Upper.end()) {
+            haveCm1Upper = it->second.airgroupId == airgroupId && it->second.airId == airId &&
+                           memcmp(it->second.root, contributionRoot, sizeof(it->second.root)) == 0;
+            if (haveCm1Upper) cm1Upper = std::move(it->second);
+            d_buffers->cm1Upper.erase(it);
+        }
+    }
+    genProof_gpu(*setupCtx, d_aux_trace, d_const_pols, d_const_tree, streamId, instanceId, d_buffers, air_instance_info, timer, stream, selfContained, reuse_const_tree || fixedPrebuilt, fixedPrebuilt, haveCm1Upper ? &cm1Upper : nullptr);
     if (pipeline) {
         // Snapshot the completion into the ring (the per-stream sd fields will be
         // overwritten by the next launch); the harvester writeProofs + fires the callback.
@@ -3330,6 +3358,8 @@ void configure_stream_commit_slots_gpu(void *d_buffers_) {
                                 (size_t)nAll * PINNED_AUX_VALUES_MAX * sizeof(Goldilocks::Element)));
     CHECKCUDAERR(cudaMallocHost((void **)&d_buffers->streamCommitHost,
                                 (size_t)nAll * STREAM_COMMIT_HOST_WORDS * sizeof(uint64_t)));
+    CHECKCUDAERR(cudaMallocHost((void **)&d_buffers->streamCommitUpperHost,
+                                (size_t)nAll * CM1_UPPER_LEVEL_MAX_WORDS * sizeof(uint64_t)));
     d_buffers->streamCommitStreams = (cudaStream_t *)malloc(nAll * sizeof(cudaStream_t));
     d_buffers->streamCommitRegions = new DeviceCommitBuffers::SlotRegion[d_buffers->n_gpus];
     int prevDevice = 0;
@@ -4028,6 +4058,15 @@ int64_t commit_witness_streaming_gpu(void *d_buffers_, uint64_t slotIdx,
     // An air that scatters nothing holds no count back (a failed commit is fatal, see the caller).
     if (slotCtx.mul == nullptr) mul_note_commit();
 
+    // Upper tree levels kept for the instance's proof (Cm1UpperTree), via the slot's pinned area.
+    uint64_t upperWords = 0;
+    uint64_t *hUpper = nullptr;
+    if (aii != nullptr && aii->setupCtx != nullptr && d_buffers->streamCommitUpperHost != nullptr &&
+        cm1UpperTreeEligible(aii->setupCtx->starkInfo, scHash)) {
+        upperWords = streamCommitUpperWords(1ull << nBitsExt, CM1_UPPER_LEVEL);
+        hUpper = d_buffers->streamCommitUpperHost + slotIdx * CM1_UPPER_LEVEL_MAX_WORDS;
+    }
+
     TimerStartGPU(timer, STARK_GPU_COMMIT);
     memcpy(hWidths, colWidths, nCols * sizeof(uint64_t));
     int64_t rc = streamCommitPacked(slotBase, dims, hWidths, packedSrc,
@@ -4035,9 +4074,22 @@ int64_t commit_witness_streaming_gpu(void *d_buffers_, uint64_t slotIdx,
                                     dColSource, dColLane, dTable, scHash,
                                     hook, hook ? (void *)&slotCtx : nullptr, &timer,
                                     chunkHook, chunkHook ? (void *)&slotCtx : nullptr,
-                                    slotElems);
+                                    slotElems, hUpper, CM1_UPPER_LEVEL);
     TimerStopGPU(timer, STARK_GPU_COMMIT);
     if (rc == 0) memcpy(root, hRoot, STREAM_COMMIT_HOST_ROOT_WORDS * sizeof(uint64_t));
+    if (rc == 0) {
+        std::vector<uint64_t> upper(hUpper, hUpper + upperWords);
+        std::lock_guard<std::mutex> lk(d_buffers->cm1UpperMutex);
+        if (upper.empty()) {
+            d_buffers->cm1Upper.erase(instanceId);
+        } else {
+            Cm1UpperTree &e = d_buffers->cm1Upper[instanceId];
+            e.airgroupId = airgroupId;
+            e.airId = airId;
+            memcpy(e.root, hRoot, sizeof(e.root));
+            e.words = std::move(upper);
+        }
+    }
     closeStreamTimer(timer, instanceId, airgroupId, airId, false);
     releaseRegion();
     return rc;

@@ -602,6 +602,20 @@ static void scReduceTree(uint64_t *d_tree, uint64_t nLeaves, uint32_t arity,
     }
 }
 
+uint64_t streamCommitUpperOffset(uint64_t nLeaves, uint32_t upperLevel)
+{
+    uint64_t off = 0;
+    for (uint32_t l = 0; l < upperLevel && (nLeaves >> l) > 1; ++l) off += (nLeaves >> l) * SC_DIGEST;
+    return off;
+}
+
+uint64_t streamCommitUpperWords(uint64_t nLeaves, uint32_t upperLevel)
+{
+    uint64_t words = SC_DIGEST;   // the root
+    for (uint32_t l = upperLevel; (nLeaves >> l) > 1; ++l) words += (nLeaves >> l) * SC_DIGEST;
+    return words;
+}
+
 static uint64_t scTreeNumElements(uint64_t nLeaves, uint32_t arity)
 {
     uint64_t total = 0, pending = nLeaves;
@@ -680,7 +694,7 @@ int64_t streamCommitPacked(gl64_t *slotBase, const StreamCommitDims &dims,
                            const uint64_t *dTable, StreamCommitHash hash,
                            StreamCommitHook hook, void *hookUser, TimerGPU *timer,
                            StreamCommitChunkHook chunkHook, void *chunkUser,
-                           uint64_t slotElems)
+                           uint64_t slotElems, uint64_t *hUpper, uint32_t upperLevel)
 {
     if (const int64_t rc = streamCommitCheck(dims, dColSource, dColLane, dTable, hash); rc != 0) return rc;
     const bool indexed = (dColSource != nullptr);
@@ -792,6 +806,11 @@ int64_t streamCommitPacked(gl64_t *slotBase, const StreamCommitDims &dims,
     CHECKCUDAERR(cudaGetLastError());
     scReduceTree(d_tree, NExt, arity, hash, stream);
     SC_CAT_STOP(timer, MERKLE_TREE);
+    if (hUpper != nullptr && arity == 2) {
+        const uint64_t off = streamCommitUpperOffset(NExt, upperLevel);
+        CHECKCUDAERR(cudaMemcpyAsync(hUpper, d_tree + off, (treeElems - off) * sizeof(uint64_t),
+                                     cudaMemcpyDeviceToHost, stream));
+    }
 
     CHECKCUDAERR(cudaMemcpyAsync(hRoot, d_tree + treeElems - SC_DIGEST, SC_DIGEST * 8,
                                  cudaMemcpyDeviceToHost, stream));

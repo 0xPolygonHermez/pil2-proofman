@@ -11,6 +11,8 @@
 #include "gpu_timer.cuh"
 #include "cuda_graph_cache.cuh"
 #include "stir/stir_gpu.cuh"
+#include "blake3_goldilocks.cuh"
+#include "stream_commit.cuh"
 #include <iomanip>
 
 // TOTO list: //rick
@@ -87,7 +89,8 @@ void calculateWitnessSTD_gpu(SetupCtx& setupCtx, StepsParams& h_params, StepsPar
     updateAirgroupValueGPU(setupCtx, h_params, d_params, hint[0], hintFieldNameAirgroupVal, "numerator_direct", "denominator_direct", options1, options2, !prod, expressionsCtxGPU, d_expsArgs, d_destParams, pinned_exps_params, pinned_exps_args, countId, timer, stream);
 }
 
-void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols, gl64_t *d_const_tree, uint32_t stream_id, uint64_t instance_id, DeviceCommitBuffers *d_buffers, AirInstanceInfo *air_instance_info, TimerGPU &timer, cudaStream_t stream, bool recursive = false, bool reuse_constants = false, bool fixedTreePending = false) {
+// cm1Upper: this proof's upper stage-1 tree from its slot commit; uploaded instead of built.
+void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols, gl64_t *d_const_tree, uint32_t stream_id, uint64_t instance_id, DeviceCommitBuffers *d_buffers, AirInstanceInfo *air_instance_info, TimerGPU &timer, cudaStream_t stream, bool recursive = false, bool reuse_constants = false, bool fixedTreePending = false, const Cm1UpperTree *cm1Upper = nullptr) {
     const bool stirLdt = setupCtx.starkInfo.starkStruct.lowDegreeTest == LowDegreeTestKind::STIR;
     if (stirLdt && setupCtx.starkInfo.starkStruct.verificationHashType != "GL") {
         zklog.error("genProof_gpu: STIR supports GL verification hashes only");
@@ -279,11 +282,31 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
 
     // In place, cm1 is extended over itself, so it commits after the stage-2 witness has read it.
     // The transcript is unchanged: a non-recursive proof never absorbs the cm1 root.
+    const uint64_t NExtCm1 = 1ull << setupCtx.starkInfo.starkStruct.nBitsExt;
+    uint64_t *cm1UpperPinned = nullptr;
+    uint64_t cm1UpperAt = 0;
+    if (cm1Upper != nullptr && !recursive && !stirLdt && d_buffers->streamsData[stream_id].pinned_cm1_upper != nullptr &&
+        cm1Upper->words.size() <= CM1_UPPER_LEVEL_MAX_WORDS) {
+        const uint64_t fullAt = streamCommitUpperOffset(NExtCm1, CM1_UPPER_LEVEL);
+        if (fullAt >= NExtCm1 * HASH_SIZE &&
+            fullAt - NExtCm1 * HASH_SIZE + cm1Upper->words.size() == setupCtx.starkInfo.getNumNodesMTCommit(NExtCm1)) {
+            cm1UpperAt = fullAt - NExtCm1 * HASH_SIZE;
+            cm1UpperPinned = d_buffers->streamsData[stream_id].pinned_cm1_upper + (uint64_t)pipeSlot * CM1_UPPER_LEVEL_MAX_WORDS;
+            memcpy(cm1UpperPinned, cm1Upper->words.data(), cm1Upper->words.size() * sizeof(uint64_t));
+        }
+    }
+    gl64_t *d_nodesCm1 = d_aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("mt1", true)];
     auto commitStage1 = [&] {
         TimerStartGPU(timer, STARK_COMMIT_STAGE_1);
-        cudagraph::run(cudagraph::key(0x434d5431ULL, graphCtxId, recursive), countId, stream, [&] {
-        commitStage_inplace(1, setupCtx, starks.treesGL, (gl64_t*) h_params.trace, (gl64_t*)h_params.aux_trace, recursive ? d_transcript : nullptr, timer, stream);
+        const bool upload = cm1UpperPinned != nullptr;
+        cudagraph::run(cudagraph::key(0x434d5431ULL, graphCtxId, recursive, upload), countId, stream, [&] {
+        commitStage_inplace(1, setupCtx, starks.treesGL, (gl64_t*) h_params.trace, (gl64_t*)h_params.aux_trace, recursive ? d_transcript : nullptr, timer, stream, 0, upload);
         });
+        if (upload) {
+            // After the LDE, which uses the tree area as scratch.
+            CHECKCUDAERR(cudaMemcpyAsync(d_nodesCm1 + cm1UpperAt, cm1UpperPinned, cm1Upper->words.size() * sizeof(uint64_t),
+                                         cudaMemcpyHostToDevice, stream));
+        }
         TimerStopGPU(timer, STARK_COMMIT_STAGE_1);
     };
     if (!setupCtx.starkInfo.inplaceStageCommit) commitStage1();
@@ -497,6 +520,14 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
         d_transcript_helper->put2(d_challenge, FIELD_EXTENSION, d_nonce, 1, stream);
         Goldilocks::Element *permScratch = (Goldilocks::Element *)d_aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("fri_queries_perm", false)];
         d_transcript_helper->getPermutations(friQueries_gpu, setupCtx.starkInfo.starkStruct.nQueries, setupCtx.starkInfo.starkStruct.logDomainSizes[0], permScratch, stream);
+        if (cm1UpperPinned != nullptr) {
+            // Rebuild the lower levels the queries open.
+            const uint64_t nColsCm1 = setupCtx.starkInfo.mapSectionsN["cm1"];
+            Blake3GoldilocksGPU::rebuildQueriedSubtreesNoLeaves(
+                (uint64_t *)d_nodesCm1, (const uint64_t *)(d_aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("cm1", true)]),
+                nColsCm1, NExtCm1, resolveLayout(setupCtx.starkInfo.starkStruct.nBits, nColsCm1), friQueries_gpu,
+                setupCtx.starkInfo.starkStruct.nQueries, CM1_UPPER_LEVEL, stream);
+        }
 
         // d_const_tree joins the key: preloaded const trees give the same air a different
         // (but per-stream-stable) tree pointer, and the query kernels read through it.
