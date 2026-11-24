@@ -647,10 +647,10 @@ pub unsafe fn generate_recursive_proof<F: PrimeField64>(
         )));
     }
 
-    // Trace H2D is async: gate reuse on the stream's commit event so a concurrent take() can't
+    // Trace H2D is async: gate reuse on this launch's trace gate so a concurrent take() can't
     // overwrite `trace` mid-copy. Must finish before the lease drops at scope exit and pools the trace.
     if pctx.gpu {
-        wait_trace_h2d_done_c(pctx.get_device_buffers_ptr(), stream_id);
+        wait_trace_h2d_done_c(pctx.get_device_buffers_ptr(), stream_id, instance_id as u64);
     }
 
     timer_stop_and_log_debug!(
@@ -1378,9 +1378,9 @@ pub fn generate_recurser_aggregator_proof<F: PrimeField64>(
         return Err(ProofmanError::ProofmanError(format!("no GPU stream can hold recurser '{recurser_id}'")));
     }
 
-    // Trace H2D is async: gate reuse on the commit event, as `generate_recursive_proof` does.
+    // Trace H2D is async; the recurser launches with instance id 0.
     if setup.gpu {
-        wait_trace_h2d_done_c(d_buffers, stream_id);
+        wait_trace_h2d_done_c(d_buffers, stream_id, 0);
     }
     memory_handler_recursive_witness.release_buffer_trace(trace)?;
 

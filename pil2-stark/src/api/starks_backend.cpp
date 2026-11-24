@@ -34,7 +34,7 @@ void gen_final_snark_proof_cpu(void *snark_prover, void *circomWitnessFinal, uin
 #ifdef __USE_CUDA__
 uint32_t register_host_memory_gpu(void *ptr, uint64_t size);
 void unregister_host_memory_gpu(void *ptr);
-void wait_trace_h2d_done_gpu(void *d_buffers, uint64_t stream_id);
+void wait_trace_h2d_done_gpu(void *d_buffers, uint64_t stream_id, uint64_t instance_id);
 void init_gpu_setup_gpu(uint64_t arity);
 void tile_const_pols_gpu(void *pStarkInfo, void *pConstPols, char *constFile, void *pConstTree, char *constTreeFile, void *unified_buffer_gpu);
 void prepare_blocks_gpu(uint64_t* pol, uint64_t N, uint64_t nCols, void *unified_buffer_gpu);
@@ -449,9 +449,9 @@ void unregister_host_memory(void *ptr) {
     if (backend->unregister_host_memory) backend->unregister_host_memory(ptr);
 }
 
-void wait_trace_h2d_done(void *d_buffers, uint64_t stream_id) {
+void wait_trace_h2d_done(void *d_buffers, uint64_t stream_id, uint64_t instance_id) {
     auto backend = active_backend.load(std::memory_order_acquire);
-    if (backend->wait_trace_h2d_done) backend->wait_trace_h2d_done(d_buffers, stream_id);
+    if (backend->wait_trace_h2d_done) backend->wait_trace_h2d_done(d_buffers, stream_id, instance_id);
 }
 
 void free_device_buffers(void *d_buffers) {

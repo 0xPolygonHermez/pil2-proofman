@@ -2153,7 +2153,7 @@ where
         if is_shared_buffer {
             // The trace H2D is asynchronous: recycle the buffer only once it has been read.
             if pctx.gpu {
-                wait_trace_h2d_done_c(pctx.get_device_buffers_ptr(), stream_id as u64);
+                wait_trace_h2d_done_c(pctx.get_device_buffers_ptr(), stream_id as u64, instance_id as u64);
             }
             memory_handler.release_buffer(witness_buffer)?;
         }
@@ -4440,7 +4440,11 @@ where
                             let (is_shared_buffer, witness_buffer) = pctx_clone.free_instance(instance_id);
                             if is_shared_buffer {
                                 if pctx_clone.gpu {
-                                    wait_trace_h2d_done_c(pctx_clone.get_device_buffers_ptr(), proof_stream_id as u64);
+                                    wait_trace_h2d_done_c(
+                                        pctx_clone.get_device_buffers_ptr(),
+                                        proof_stream_id as u64,
+                                        instance_id as u64,
+                                    );
                                 }
                                 if let Err(e) = memory_handler_clone.release_buffer(witness_buffer) {
                                     cancellation_info_clone.write_recover().cancel(Some(e));

@@ -4,6 +4,8 @@
 #include <cstdint>
 #include <cassert>
 #include <atomic>
+#include <condition_variable>
+#include <mutex>
 #ifdef USE_CUDA_GRAPH
 #include <memory>
 #include "cuda_graph_cache.cuh"
@@ -402,17 +404,26 @@ struct StreamData{
     uint64_t *d_gate_band_scratch = nullptr;
 
     //runtime data
-    // Atomic: status is read (unlocked) by wait_trace_h2d_done / callbacks while
+    // Atomic: status is read (unlocked) by callbacks and selection scans while
     // reserveStream/gen_proof write it, so a plain int would be a data race. The
     // atomic only removes UB on the individual load/store; the check-then-act
     // sequences in selectStream/reserveStream/get_stream_proofs_* are made correct
     // by holding mutex_stream_selection, not by the atomic.
     std::atomic<uint32_t> status{0}; //0: unused, 1: loading, 2: full, 3: reusable (not unused)
     cudaEvent_t end_event;
-    // Marks the point where this stream stops reading the caller's host trace buffer, i.e. the
-    // trace H2D. Distinct from end_event (the whole commit): the buffer can be recycled as soon
-    // as the copy is done, and gating that on the LDE/Merkle work kept the pool starved.
-    cudaEvent_t trace_copy_event;
+    // Host-trace release gates, one per launch (armTraceGate / wait_trace_h2d_done_gpu).
+    struct TraceGate {
+        enum : uint8_t { FREE = 0, ARMED = 1, WAITING = 2 };
+        uint8_t state = FREE;
+        uint64_t instanceId = 0;
+        uint64_t seq = 0;            // arm order, for evicting the oldest
+        cudaEvent_t event = nullptr;
+    };
+    static constexpr uint32_t TRACE_GATES = 8;
+    TraceGate traceGates[TRACE_GATES];
+    std::mutex traceGateMutex;
+    std::condition_variable traceGateCv;
+    uint64_t traceGateSeq = 0;
     // One timer per ring slot: the next proof is enqueued while the current one still runs,
     // so it must record into its own object. launchSeq advances only at ring pushes, so
     // outside the pipeline every path shares timers[0].
@@ -520,7 +531,10 @@ struct StreamData{
         localStreamId = localStreamId_;
         recursive = recursive_;
         cudaEventCreate(&end_event);
-        cudaEventCreate(&trace_copy_event);
+        for (TraceGate &g : traceGates) {
+            CHECKCUDAERR(cudaEventCreateWithFlags(&g.event, cudaEventDisableTiming));
+            g.state = TraceGate::FREE;
+        }
         instanceId = -1;
         status = 0;
         // x2: parity slots for the deep pipeline (slot 0 is the only one used
@@ -571,7 +585,7 @@ struct StreamData{
 
     void reset(bool reset_status){
         cudaSetDevice(gpuId);
-        // end_event / trace_copy_event are created once in initialize() and destroyed in free();
+        // end_event / the trace gates are created once in initialize() and destroyed in free();
         // cudaEventRecord overwrites them on each use, so there is no need to
         // destroy/recreate them on every per-instance reset.
         status = reset_status ? 0 : 3;
@@ -622,7 +636,7 @@ struct StreamData{
         cudaEventDestroy(fixedPolsDone);
         cudaEventDestroy(fixedTreeDone);
         cudaEventDestroy(end_event);
-        cudaEventDestroy(trace_copy_event);
+        for (TraceGate &g : traceGates) cudaEventDestroy(g.event);
         cudaFreeHost(pinned_buffer_proof);
         cudaFreeHost(pinned_buffer_exps_params);
         cudaFreeHost(pinned_buffer_exps_args);

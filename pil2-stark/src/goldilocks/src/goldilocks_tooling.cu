@@ -83,9 +83,6 @@ void copy_to_device_in_chunks(
     // sources itself.
     if (categorize) { TimerStartCategoryGPU(timer, H2D_COPY); }
     CHECKCUDAERR(cudaMemcpyAsync(dst, src, total_size, cudaMemcpyHostToDevice, stream));
-    // Gates recycling the host trace buffer (see wait_trace_h2d_done).
-
-    cudaEventRecord(d_buffers->streamsData[streamId].trace_copy_event, stream);
     if (categorize) { TimerStopCategoryGPU(timer, H2D_COPY); }
 }
 

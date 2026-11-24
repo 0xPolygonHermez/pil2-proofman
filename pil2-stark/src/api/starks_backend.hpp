@@ -46,7 +46,7 @@ struct StarksBackend {
     void (*unregister_host_memory)(void *ptr);
     // Wait for a stream's async commit (incl. the now-unsynced trace H2D) to
     // finish, so the shared trace buffer can be reused. GPU backend only.
-    void (*wait_trace_h2d_done)(void *d_buffers, uint64_t stream_id);
+    void (*wait_trace_h2d_done)(void *d_buffers, uint64_t stream_id, uint64_t instance_id);
 
     // Device management
     void *(*gen_device_buffers)(uint32_t node_rank, uint32_t node_size, const int32_t* numa_nodes, uint32_t arity, uint32_t max_n_bits_ext);
