@@ -6,6 +6,7 @@
 //! - Verifier evaluations
 //! - Hint computations
 
+use crate::core::dag::format::ConstraintDag;
 use crate::cfg::{FieldCfg, Opening};
 use crate::error::{PilInfoError, Result};
 use crate::pil::cse;
@@ -228,13 +229,18 @@ pub struct ProcessedHint {
 #[derive(Debug, Clone)]
 pub struct VerifierInfo {
     pub q_verifier: ExpressionCodeEntry,
+    /// The constraint DAG `stark_setup` attaches; None from the generator.
+    pub constraint_dag: Option<ConstraintDag>,
 }
 
 impl Serialize for VerifierInfo {
     fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         use serde::ser::SerializeMap;
-        let mut map = s.serialize_map(Some(1))?;
+        let mut map = s.serialize_map(Some(1 + self.constraint_dag.is_some() as usize))?;
         map.serialize_entry("qVerifier", &QVerifierView(&self.q_verifier))?;
+        if let Some(dag) = &self.constraint_dag {
+            map.serialize_entry("constraintDag", dag)?;
+        }
         map.end()
     }
 }
@@ -367,7 +373,7 @@ pub fn generate_pil_code(
 
     Ok(PilCodeResult {
         expressions_info: ExpressionsInfo { hints_info, expressions_code, constraints: constraints_code },
-        verifier_info: VerifierInfo { q_verifier },
+        verifier_info: VerifierInfo { q_verifier, constraint_dag: None },
         ev_map: ev_map_items,
         challenges_map,
         fri_batch_size,

@@ -336,7 +336,10 @@ mod tests {
 
     fn code_of(dag: &ConstraintDag, si: &StarkInfo) -> Vec<CodeOperation> {
         let entry = expression_code(&lower_to_code(dag, &lower_ctx(si).unwrap(), Fold::Stark).unwrap());
-        VerifierInfo::try_from(&gen_code::VerifierInfo { q_verifier: entry }).unwrap().q_verifier.code
+        VerifierInfo::try_from(&gen_code::VerifierInfo { q_verifier: entry, constraint_dag: None })
+            .unwrap()
+            .q_verifier
+            .code
     }
 
     #[test]

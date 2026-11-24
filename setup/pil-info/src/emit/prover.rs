@@ -63,7 +63,8 @@ pub fn to_arena(cs: &ConstraintSystem, im: &ImChoice, lay: &Layout) -> Result<Pr
     fold_quotient(cs, im, lay, arena, hints, kept, constraints)
 }
 
-/// Expressionsinfo, hints and qVerifier through the existing generator, from `to_arena`'s output.
+/// Expressionsinfo, hints and qVerifier through the existing generator, from `to_arena`'s output,
+/// with the mapped setup the STARK summary and today's starkinfo builder read.
 pub fn emit_prover(
     cs: &ConstraintSystem,
     im: &ImChoice,
@@ -72,7 +73,7 @@ pub fn emit_prover(
     chk: &Checked,
     exprs: ProverExprs,
     p: &EmitParams,
-) -> Result<PilCodeResult> {
+) -> Result<(PilCodeResult, SetupResult)> {
     let ProverExprs { arena, roles, hints, constraints } = exprs;
     let mut setup = setup_of(cs, im, lay, p, arena, constraints);
     // constraint lines (im roots printed) as today
@@ -115,7 +116,11 @@ pub fn emit_prover(
     if !p.debug && cs.opening == Opening::Deep {
         same_deep(&code, lay, ops, cs.n_stages)?;
     }
-    Ok(code)
+    (setup.expressions, setup.symbols, setup.hints) = (arena, symbols, hints);
+    setup.opening_points = ops.opening_points.clone();
+    // the layout's sections: `map` counts only the columns it placed (no empty `const`)
+    setup.map_sections_n = lay.map_sections_n.iter().map(|(k, n)| (k.clone(), *n as usize)).collect();
+    Ok((code, setup))
 }
 
 /// TEMPORARY (Task 8): `map`'s maps, rebuilt by the old rule, must be `lay`'s.
@@ -652,7 +657,12 @@ fn setup_of(
             })
             .collect(),
         custom_commits_map: vec![Vec::new(); cs.custom_commits.len()],
-        air_group_values: Vec::new(),
+        air_group_values: cs
+            .airgroup_agg_types
+            .iter()
+            .zip(&cs.airgroup_values)
+            .map(|(a, v)| pb::AirGroupValue { agg_type: *a, stage: v.stage })
+            .collect(),
         expressions,
         constraints,
         symbols: symbols_of(cs, im, lay, p),

@@ -135,7 +135,7 @@ fn emitted(run: &OldRun) -> pil_info::pil::gen_code::PilCodeResult {
     let c = core_out(run);
     let s = &run.old.setup;
     let params = EmitParams { air_id: s.air_id, airgroup_id: s.airgroup_id, air_name: s.name.clone(), debug: false };
-    emit_prover(&run.cs, &run.im, &c.lay, &c.ops, &run.chk, c.exprs, &params).unwrap()
+    emit_prover(&run.cs, &run.im, &c.lay, &c.ops, &run.chk, c.exprs, &params).unwrap().0
 }
 
 #[test]

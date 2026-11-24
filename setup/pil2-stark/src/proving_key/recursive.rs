@@ -715,7 +715,8 @@ pub fn gen_recursive_setup(
             );
 
             // Run pil_info to get real starkinfo/expressionsinfo/verifierinfo
-            let pil_info_result = crate::pil::info::pil_info(pilout, 0, 0, &stark_struct, &Default::default())?;
+            let pil_info_result =
+                crate::pil::stark_setup::stark_setup(pilout, 0, 0, &stark_struct, &Default::default())?;
 
             // Build JSON representations using the same helpers as the non-recursive path
             let opening_points = crate::output::stark_info::collect_opening_points(&pil_info_result.setup);

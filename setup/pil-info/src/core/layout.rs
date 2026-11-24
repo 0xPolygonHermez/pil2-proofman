@@ -209,7 +209,7 @@ fn number_stages(m: &mut [PolMap]) {
 }
 
 /// Dimension of today's cExp: a fold of two or more roots carries `std_vc`, a lone root its own, none is 1.
-fn quotient_dim(cs: &ConstraintSystem, im: &ImChoice) -> u32 {
+pub fn quotient_dim(cs: &ConstraintSystem, im: &ImChoice) -> u32 {
     let roots = cs.constraints.iter().map(|c| &c.e);
     let ims: Vec<Expr> = im.exprs.iter().map(|&e| Expr::Ref(e)).collect();
     let all: Vec<&Expr> = roots.chain(&ims).collect();

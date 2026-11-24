@@ -92,6 +92,9 @@ pub fn build_verifier_info_json(info: &crate::pil::gen_code::VerifierInfo) -> se
 
     let mut result = serde_json::Map::new();
     result.insert("qVerifier".to_string(), serde_json::Value::Object(qv));
+    if let Some(dag) = &info.constraint_dag {
+        result.insert("constraintDag".to_string(), json!(dag));
+    }
 
     serde_json::Value::Object(result)
 }

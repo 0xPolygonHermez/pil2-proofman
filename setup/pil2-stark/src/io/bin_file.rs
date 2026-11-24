@@ -403,6 +403,9 @@ pub fn write_verifier_expressions_bin_file(
     stark_info: &StarkInfo,
     verifier_info: &VerifierInfo,
 ) -> Result<()> {
+    if let Some(dag) = &verifier_info.constraint_dag {
+        crate::output::dag_eval::check_dag_parity(dag, stark_info, verifier_info)?;
+    }
     println!("> Writing chelpers verifier file");
 
     let bin = prepare_verifier_expressions_bin(stark_info, verifier_info)?;

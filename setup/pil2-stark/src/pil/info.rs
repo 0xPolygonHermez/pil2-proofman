@@ -1,19 +1,17 @@
-//! Top-level orchestrator for computing pil info for a single air: the passes of `pil-info`,
-//! plus what is STARK-specific (the starkStruct validation, the degree bound from the blowup, the
-//! prover memory estimate and the printed AIR info summary).
+//! What is STARK-specific around `stark_setup`: the starkStruct validation, the prover memory
+//! estimate and the printed AIR info summary; plus `pil_info_old`, the test oracle until Task 8.
 
-use anyhow::{bail, Context, Result};
+use anyhow::{bail, Result};
+#[cfg(test)]
 use pil2_pilout::pilout as pb;
 
 use crate::pil::gen_code::PilCodeResult;
 use crate::types::pilout_info::SetupResult;
-use crate::pil::prepare::{prepare_pil, PrepareOptions};
+use crate::pil::prepare::PrepareOptions;
 use crate::types::stark_struct::{LowDegreeTest, StarkStruct};
 use crate::types::FIELD_EXTENSION;
-use pil_info::pil::info as passes;
-use pil_info::{FieldCfg, PilInfoCfg};
 
-/// The assembled pil info result returned by `pil_info`.
+/// The assembled pil info result returned by `stark_setup`.
 pub struct PilInfoResult {
     pub setup: SetupResult,
     pub pil_code: PilCodeResult,
@@ -29,46 +27,24 @@ pub struct PilInfoResult {
     pub q_deg: i64,
 }
 
-/// Main entry point: assemble pil info for a single air.
-///
-/// Steps:
-/// 1. prepare_pil
-/// 2. validate starkStruct against the air (unless debug mode)
-/// 3. the remaining passes, with the degree bound the blowup allows
-/// 4. compute prover memory estimate and print AIR info summary
-///
-/// Fails on what the passes refuse (`pil_info::PilInfoError`) and on a starkStruct that does not
-/// fit the air.
-pub fn pil_info(
+/// The old entry: `prepare_pil` and the old passes (unit-test oracle of `stark_setup` until Task 8).
+#[cfg(test)]
+pub fn pil_info_old(
     pilout: &pb::PilOut,
     airgroup_id: usize,
     air_id: usize,
     stark_struct: &StarkStruct,
     options: &PrepareOptions,
 ) -> Result<PilInfoResult> {
+    use anyhow::Context;
+    use pil_info::pil::info as passes;
+    use pil_info::{FieldCfg, PilInfoCfg};
+
     let passes_failed = || format!("the symbolic passes failed on air {air_id} of airgroup {airgroup_id}");
-    let prepared = prepare_pil(pilout, airgroup_id, air_id, &FieldCfg::goldilocks()).with_context(passes_failed)?;
-
-    // Validate starkStruct
+    let prepared = crate::pil::prepare::prepare_pil(pilout, airgroup_id, air_id, &FieldCfg::goldilocks())
+        .with_context(passes_failed)?;
     if !options.debug {
-        if stark_struct.n_bits != prepared.setup.pil_power as usize {
-            bail!(
-                "starkStruct and pilfile have degree mismatch (airId: {} airgroupId: {} starkStruct:{} pilfile:{})",
-                air_id,
-                airgroup_id,
-                stark_struct.n_bits,
-                prepared.setup.pil_power
-            );
-        }
-
-        let initial_domain = stark_struct.low_degree_test.log_domain_sizes()[0];
-        if stark_struct.n_bits_ext != initial_domain {
-            bail!(
-                "starkStruct.nBitsExt and the low-degree test's initial domain have a mismatch (nBitsExt:{} domain:{})",
-                stark_struct.n_bits_ext,
-                initial_domain
-            );
-        }
+        validate_stark_struct(stark_struct, prepared.setup.pil_power, airgroup_id, air_id)?;
     }
 
     // The degree bound comes from the blowup: (1 << (nBitsExt - nBits)) + 1.
@@ -76,6 +52,47 @@ pub fn pil_info(
 
     let passes::PilInfoResult { setup, pil_code, im_pols_info, c_exp_id, q_deg, boundaries } =
         passes::pil_info(prepared, airgroup_id, air_id, &cfg, options).with_context(passes_failed)?;
+    let (summary, prover_memory) = report(&setup, &pil_code, stark_struct, q_deg, boundaries.len(), options);
+    Ok(PilInfoResult { setup, pil_code, summary, prover_memory, im_pols_info, c_exp_id, q_deg })
+}
+
+/// The starkStruct must fit the air: its degree, and nBitsExt the low-degree test's first domain.
+pub(crate) fn validate_stark_struct(
+    stark_struct: &StarkStruct,
+    pil_power: u32,
+    airgroup_id: usize,
+    air_id: usize,
+) -> Result<()> {
+    if stark_struct.n_bits != pil_power as usize {
+        bail!(
+            "starkStruct and pilfile have degree mismatch (airId: {} airgroupId: {} starkStruct:{} pilfile:{})",
+            air_id,
+            airgroup_id,
+            stark_struct.n_bits,
+            pil_power
+        );
+    }
+
+    let initial_domain = stark_struct.low_degree_test.log_domain_sizes()[0];
+    if stark_struct.n_bits_ext != initial_domain {
+        bail!(
+            "starkStruct.nBitsExt and the low-degree test's initial domain have a mismatch (nBitsExt:{} domain:{})",
+            stark_struct.n_bits_ext,
+            initial_domain
+        );
+    }
+    Ok(())
+}
+
+/// Print the AIR info and return its summary line and prover memory estimate (GB).
+pub(crate) fn report(
+    setup: &SetupResult,
+    pil_code: &PilCodeResult,
+    stark_struct: &StarkStruct,
+    q_deg: i64,
+    n_boundaries: usize,
+    options: &PrepareOptions,
+) -> (String, String) {
     let n_stages = setup.n_stages;
     let opening_points = &setup.opening_points;
 
@@ -237,11 +254,11 @@ pub fn pil_info(
     }
 
     let prover_memory_str = get_prover_memory(
-        &setup,
+        setup,
         stark_struct,
         pil_code.ev_map.len(),
         opening_points.len(),
-        boundaries.len(),
+        n_boundaries,
         q_deg as u64,
         options.inplace_stage_commit,
     );
@@ -252,7 +269,7 @@ pub fn pil_info(
     println!("SUMMARY | {} | {}", setup.name, summary);
     println!("------------------------------------------------------------");
 
-    Ok(PilInfoResult { setup, pil_code, summary, prover_memory: prover_memory_str, im_pols_info, c_exp_id, q_deg })
+    (summary, prover_memory_str)
 }
 
 fn get_num_nodes_mt(height: u64, merkle_tree_arity: usize) -> u64 {
@@ -419,7 +436,7 @@ mod tests {
     /// What the passes refuse, which they used to `panic!` on, is an error of the STARK setup.
     #[test]
     fn what_the_passes_refuse_is_an_error() {
-        let err = pil_info(&pb::PilOut::default(), 0, 5, &StarkStruct::default(), &PrepareOptions::default()).err();
+        let err = pil_info_old(&pb::PilOut::default(), 0, 5, &StarkStruct::default(), &PrepareOptions::default()).err();
         assert_eq!(
             err.map(|e| format!("{e:#}")).as_deref(),
             Some("the symbolic passes failed on air 5 of airgroup 0: the pilout has no air 5 in airgroup 0")

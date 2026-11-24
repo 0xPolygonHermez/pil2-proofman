@@ -2,6 +2,7 @@ use anyhow::{anyhow, Context, Result};
 use serde_json::Value;
 use std::collections::HashMap;
 
+use pil_info::core::dag::format::ConstraintDag;
 use crate::types::stark_struct::{LowDegreeTest, StarkStruct};
 use crate::types::{goldilocks_u64, GOLDILOCKS_MODULUS};
 
@@ -130,6 +131,8 @@ pub struct ExpressionsInfo {
 #[derive(Debug, Clone)]
 pub struct VerifierInfo {
     pub q_verifier: ExpCode,
+    /// Absent from keys set up before the thin core.
+    pub constraint_dag: Option<ConstraintDag>,
 }
 
 /// Global constraints info loaded from JSON.
@@ -388,7 +391,12 @@ impl VerifierInfo {
     /// Parse from the verifierInfo JSON.
     pub fn from_json(j: &Value) -> Result<Self> {
         let q_verifier = parse_exp_code(j.get("qVerifier").unwrap_or(&Value::Null))?;
-        Ok(VerifierInfo { q_verifier })
+        let constraint_dag = j
+            .get("constraintDag")
+            .map(|d| serde_json::from_value(d.clone()))
+            .transpose()
+            .context("the constraintDag")?;
+        Ok(VerifierInfo { q_verifier, constraint_dag })
     }
 }
 
@@ -520,7 +528,10 @@ impl TryFrom<&crate::pil::gen_code::VerifierInfo> for VerifierInfo {
     type Error = anyhow::Error;
 
     fn try_from(vi: &crate::pil::gen_code::VerifierInfo) -> Result<Self> {
-        Ok(VerifierInfo { q_verifier: expression_entry_to_exp_code(&vi.q_verifier).context("the qVerifier")? })
+        Ok(VerifierInfo {
+            q_verifier: expression_entry_to_exp_code(&vi.q_verifier).context("the qVerifier")?,
+            constraint_dag: vi.constraint_dag.clone(),
+        })
     }
 }
 
