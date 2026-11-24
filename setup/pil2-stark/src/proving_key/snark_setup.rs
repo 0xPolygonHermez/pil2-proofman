@@ -14,10 +14,8 @@ use crate::io::recurser::{
     gen_circom, pil2circom, pil2circom_bn128_blake3, GenCircomInput, GenCircomOptions, Pil2CircomOptions,
 };
 use pil2_stark_recurser::stark2circom::templates::{gen_solidity, gen_iverifier, SnarkVerifier};
-use crate::proving_key::{bctree, recursive::compile_pil, util::exact_log2};
-use crate::io::fixed_cols;
+use pil2_stark_recurser::stark2circom::CircomGenOptions;
 use crate::output::witness_gen::WitnessTracker;
-use pil2_pilout::pilout_proxy::PilOutProxy;
 use pil2_stark_recurser::plonk2pil::r1cs_types::PlonkOptions;
 use pil2_stark_recurser::plonk2pil::setups::blake3_bn128::wrap as blake3_wrap;
 use pil2_stark_recurser::plonk2pil::setups::poseidon_bn128::wrap;
@@ -28,7 +26,8 @@ use pilfflonk_setup::{run_setup_pilfflonk_with_external_fixed, ExternalFixedColu
 use proofman_common::hash_family::{HashFamily, BLAKE3_BN128_WRAP_FAMILY, BN128_WRAP_FAMILY};
 use proofman_fields::Bn128;
 use proofman_pilfflonk::{CalldataLayout, FrBytes, JsonFile, PilfflonkGlobalInfo, Vkey};
-use crate::types::stark_struct::{generate_stark_struct, StarkSettings};
+use crate::proving_key::pipeline::{self, kinds, kinds::RecursivefCfg, CircuitInput, PipelineCtx, Tools, VerifierInput};
+use crate::types::stark_struct::StarkSettings;
 
 /// The protocol that proves the final circuit, the verifier of the recursivef. It decides how the
 /// recursivef commits to its trees, and with that the final circuit
@@ -441,210 +440,44 @@ pub fn gen_recursivef_setup(
     blake3_lanes: Option<usize>,
 ) -> Result<String> {
     let family: HashFamily = config.hash.parse().map_err(anyhow::Error::msg)?;
-    let build_dir = PathBuf::from(config.build_dir);
-    let circom_dir = build_dir.join("circom");
-    let build_path = build_dir.join("build");
-    let pil_dir = build_dir.join("pil");
-    fs::create_dir_all(&circom_dir)?;
-    fs::create_dir_all(&build_path)?;
-    fs::create_dir_all(&pil_dir)?;
-    fs::create_dir_all(recursivef_dir)?;
-
-    let const_root_str: [String; 4] =
-        [const_root[0].to_string(), const_root[1].to_string(), const_root[2].to_string(), const_root[3].to_string()];
-
-    // pil2circom: generate vadcop_final.verifier.circom
-    let verifier_name_rf = "vadcop_final.verifier.circom";
-    let pil2circom_opts = Pil2CircomOptions {
-        skip_main: true,
-        verkey_input: true,
-        enable_input: false,
-        input_challenges: false,
-        hash: config.hash.to_string(),
+    let const_root_str: [String; 4] = const_root.map(|v| v.to_string());
+    let mut ctx = PipelineCtx::new(config.build_dir.into(), recursivef_dir.to_path_buf(), "recursivef", family);
+    ctx.tools = Tools {
+        circom_exec: config.circom_exec.into(),
+        libs: vec![config.recurser_circuits_path.into(), config.circuits_gl_path.into()],
+        std_pil_path: config.std_pil_path.into(),
+        recurser_pil_path: config.recurser_pil_path.into(),
+        circom_helpers_dir: config.circom_helpers_dir.into(),
     };
-    let verifier_circom_rf = pil2circom(&const_root_str, stark_info, verifier_info, &pil2circom_opts)
-        .context("pil2circom failed for recursivef")?;
-    fs::write(circom_dir.join(verifier_name_rf), &verifier_circom_rf)?;
-
-    // gen_circom: generate recursivef.circom using the recursivef.circom.ejs template.
-    // basic_vk = [[constRoot]] (one airgroup, one air with the vadcop_final constRoot)
-    // recursivef wraps a single proof: the template never reads `agg_arity`, and 0 is
-    // rejected outright by `gen_recursive2`.
-    let gen_opts_rf = GenCircomOptions {
-        airgroup_id: None,
-        has_compressor: false,
-        has_recursion: false,
-        is_final: false,
-        agg_arity: 0,
-        batch_size: 1,
-    };
-    let rf_basic_vk: Vec<Vec<Vec<String>>> = vec![vec![const_root_str.to_vec()]];
-    let gen_input_rf = GenCircomInput {
-        template_name: "src/recursion/templates/recursivef.circom.ejs",
-        stark_infos: std::slice::from_ref(stark_info),
-        vadcop_info: &Value::Null,
-        verifier_filenames: &[verifier_name_rf.to_string()],
-        basic_verification_keys: &rf_basic_vk,
-        agg_verification_keys: &[],
-        publics: &[],
-        options: &gen_opts_rf,
-    };
-    let circom_rf = gen_circom(&gen_input_rf).context("gen_circom failed for recursivef")?;
-    let circom_rf_path = circom_dir.join("recursivef.circom");
-    fs::write(&circom_rf_path, &circom_rf)?;
-
-    // Compile recursivef with GL circuits (prime goldilocks).
-    tracing::info!("Compiling recursivef...");
-    let compile_rf = std::process::Command::new(config.circom_exec)
-        .args([
-            "--O2",
-            "--r1cs",
-            "--prime",
-            "goldilocks",
-            "--c",
-            "--verbose",
-            "-l",
-            config.recurser_circuits_path,
-            "-l",
-            config.circuits_gl_path,
-        ])
-        .arg(circom_rf_path.to_str().unwrap())
-        .arg("-o")
-        .arg(build_path.to_str().unwrap())
-        .output()
-        .context("Failed to execute circom for recursivef")?;
-    if !compile_rf.status.success() {
-        bail!("Circom compilation failed for recursivef: {}", String::from_utf8_lossy(&compile_rf.stderr));
-    }
-
-    // Copy .dat file from build to provingKeySnark/recursivef/.
-    let dat_src_rf = build_path.join("recursivef_cpp").join("recursivef.dat");
-    if dat_src_rf.exists() {
-        fs::copy(&dat_src_rf, recursivef_dir.join("recursivef.dat"))?;
-    }
-
-    // Generate witness library (background).
-    witness_tracker.run_witness_library_generation(
-        config.build_dir,
-        recursivef_dir.to_str().unwrap_or(""),
-        "recursivef",
-        "recursivef",
-        config.circom_helpers_dir,
-    );
-
-    // plonk2pil → PIL → compile PIL.
-    let r1cs_rf = build_path.join("recursivef.r1cs");
-    let r1cs_data_rf =
-        fs::read(&r1cs_rf).with_context(|| format!("Failed to read recursivef.r1cs: {}", r1cs_rf.display()))?;
-    let plonk_opts_rf = PlonkOptions {
-        airgroup_name: Some("Recursivef".to_string()),
-        // blake3's follows its blowup, as the compressed final's does.
-        max_constraint_degree: settings
-            .initial_blowup_factor
-            .filter(|_| family.is_blake3())
-            .map(proofman_common::hash_family::max_constraint_degree_for_blowup),
-        hash_id: config.hash.to_string(),
-        merge_copies: true,
-        blake3_lanes,
-        min_n_bits: None,
-    };
+    ctx.witness = Some(witness_tracker.clone());
+    ctx.verifiers = vec![VerifierInput {
+        file: "vadcop_final.verifier.circom".into(),
+        const_root: const_root_str.clone(),
+        stark_info: stark_info.clone(),
+        verifier_info: verifier_info.clone(),
+    }];
+    // One airgroup, one air: the vadcop_final root. A single proof: the template never reads `agg_arity`.
+    ctx.circuit_input = Some(CircuitInput {
+        stark_infos: vec![stark_info.clone()],
+        vadcop_info: Value::Null,
+        basic_vk: vec![vec![const_root_str.to_vec()]],
+        agg_vk: vec![],
+        publics: vec![],
+        opts: CircomGenOptions {
+            airgroup_id: None,
+            has_compressor: false,
+            has_recursion: false,
+            is_final: false,
+            agg_arity: 0,
+            batch_size: 1,
+        },
+    });
+    ctx.settings = settings.clone();
+    ctx.key = crate::pil::stark_setup::KeyIdentity { name: Some("Recursivef".into()), ..Default::default() };
     let _span = tracing::info_span!("stage", t = "recursivef").entered();
-    let plonk_rf = plonk2pil::plonk2pil(&r1cs_data_rf, "aggregation", &plonk_opts_rf)
-        .context("plonk2pil failed for recursivef")?;
-
-    // Write fixed pols binary.
-    let fixed_bin_rf = build_path.join("recursivef.fixed.bin");
-    let fixed_info_rf: Vec<(String, Vec<u32>, Vec<u64>)> =
-        plonk_rf.fixed_pols.iter().map(|fp| (fp.name.clone(), vec![fp.index as u32], fp.values.clone())).collect();
-    fixed_cols::write_fixed_pols_bin(
-        fixed_bin_rf.to_str().unwrap(),
-        &plonk_rf.airgroup_name,
-        &plonk_rf.air_name,
-        1u64 << plonk_rf.n_bits,
-        &fixed_info_rf,
-    )?;
-
-    let pil_rf = pil_dir.join("recursivef.pil");
-    fs::write(&pil_rf, &plonk_rf.pil_str)?;
-
-    write_exec(&recursivef_dir.join("recursivef.exec"), &plonk_rf.exec)?;
-
-    let pilout_rf = build_path.join("recursivef.pilout");
-    compile_pil(pil_rf.to_str().unwrap(), pilout_rf.to_str().unwrap(), config.std_pil_path, config.recurser_pil_path)?;
-
-    // pil_info with BN128 stark struct.
-    let proxy_rf = PilOutProxy::new(pilout_rf.to_str().unwrap_or(""))
-        .map_err(|e| anyhow::anyhow!("Failed to load recursivef pilout: {}", e))?;
-    let pilout_inner = &proxy_rf.pilout;
-    if pilout_inner.air_groups.is_empty() || pilout_inner.air_groups[0].airs.is_empty() {
-        bail!("recursivef pilout has no AIR groups");
-    }
-    let air_rf = &pilout_inner.air_groups[0].airs[0];
-    let n_bits_rf = {
-        let nr = air_rf.num_rows.unwrap_or(0);
-        if nr > 0 {
-            exact_log2(u64::from(nr)).context("recursivef row count")?
-        } else {
-            plonk_rf.n_bits
-        }
-    };
-
-    let stark_struct_rf = generate_stark_struct(settings, n_bits_rf, config.hash);
-
-    let key = crate::pil::stark_setup::KeyIdentity { name: Some("Recursivef".into()), ..Default::default() };
-    let pil_result_rf =
-        crate::pil::stark_setup::stark_setup(pilout_inner, 0, 0, &stark_struct_rf, &Default::default(), &key)?;
-
-    let starkinfo_rf = pil_result_rf.starkinfo;
-    tracing::info!("Circuit 'recursivef' low-degree test: {}", starkinfo_rf.stark_struct.low_degree_test.describe());
-    let starkinfo_rf_json = crate::output::json::to_json_string(&starkinfo_rf)?;
-    let starkinfo_rf_path = recursivef_dir.join("recursivef.starkinfo.json");
-    fs::write(&starkinfo_rf_path, &starkinfo_rf_json)?;
-
-    let verifier_info_rf = &pil_result_rf.pil_code.verifier_info;
-    let expressions_info_rf = &pil_result_rf.pil_code.expressions_info;
-
-    fs::write(
-        recursivef_dir.join("recursivef.verifierinfo.json"),
-        crate::output::json::to_json_string(verifier_info_rf)?,
-    )?;
-    fs::write(
-        recursivef_dir.join("recursivef.expressionsinfo.json"),
-        crate::output::json::to_json_string(expressions_info_rf)?,
-    )?;
-
-    // Write const file.
-    let const_rf = recursivef_dir.join("recursivef.const");
-    {
-        let plonk_values = fixed_cols::reorder_plonk_pols_for_pilout(&plonk_rf.fixed_pols, &pilout_inner.symbols, 0, 0);
-        fixed_cols::write_const_file(const_rf.to_str().unwrap(), air_rf, &plonk_values)?;
-    }
-
-    // Compute const tree (bctree) for recursivef.
-    tracing::info!("Computing constant tree for recursivef...");
-    let verkey_rf_path = recursivef_dir.join("recursivef.verkey.json");
-    let rf_const_root = bctree::compute_const_tree(
-        const_rf.to_str().unwrap(),
-        starkinfo_rf_path.to_str().unwrap(),
-        verkey_rf_path.to_str().unwrap(),
-    )?;
-    let mut verkey_bin_rf = Vec::with_capacity(32);
-    for &v in rf_const_root.iter() {
-        verkey_bin_rf.extend_from_slice(&v.to_le_bytes());
-    }
-    fs::write(recursivef_dir.join("recursivef.verkey.bin"), &verkey_bin_rf)?;
-
-    // Write bin files.
-    let si_val_rf: Value = serde_json::from_str(&starkinfo_rf_json)?;
-    let si_loaded_rf = crate::types::stark_info::StarkInfo::from_json(&si_val_rf)?;
-    let ei_rf = crate::types::stark_info::ExpressionsInfo::try_from(expressions_info_rf)?;
-    crate::io::bin_file::write_expressions_bin_file(
-        recursivef_dir.join("recursivef.bin").to_str().unwrap(),
-        &si_loaded_rf,
-        &ei_rf,
-    )?;
-
-    Ok(starkinfo_rf_json)
+    let cfg = RecursivefCfg { family, blowup: settings.initial_blowup_factor, blake3_lanes };
+    pipeline::run(&kinds::steps_for_recursivef(&cfg), &mut ctx)?;
+    fs::read_to_string(ctx.file("starkinfo.json")).context("recursivef starkinfo")
 }
 
 /// Sets up `final_snark`'s key in `final_dir`, `provingKeySnark/final/`, with `set_up`, and only

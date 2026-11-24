@@ -37,6 +37,9 @@ pub struct VadcopFinalCfg {
 
 pub struct RecursivefCfg {
     pub family: HashFamily,
+    /// The stark struct's blowup; blake3's constraint degree follows it.
+    pub blowup: Option<usize>,
+    pub blake3_lanes: Option<usize>,
 }
 
 pub struct RecursiveCfg {
@@ -211,11 +214,77 @@ pub fn steps_for_compressed_final(cfg: &CompressedFinalCfg) -> Vec<Step> {
         witness_wait(),
     ]
 }
-pub fn steps_for_vadcop_final(_cfg: &VadcopFinalCfg) -> Vec<Step> {
-    todo!()
+pub fn steps_for_vadcop_final(cfg: &VadcopFinalCfg) -> Vec<Step> {
+    let hash = cfg.family.as_str();
+    let opts = PlonkOptions {
+        airgroup_name: Some("FinalVadcop".to_string()),
+        // Follows the blowup, not the packer's 5: stage2 packs maxDeg-1 bus terms per im pol.
+        max_constraint_degree: Some(hf::max_constraint_degree_for_blowup(hf::final_blowup_factor(hash))),
+        hash_id: hash.to_string(),
+        merge_copies: true,
+        blake3_lanes: None,
+        // A floor: a smaller pilout pads up to the pinned size the committed verifier encodes.
+        min_n_bits: hf::final_n_bits(hash),
+    };
+    let pinned = opts.min_n_bits;
+    vec![
+        Step::CircomPrologue {
+            verifier: Some(gl_verifier(cfg.family, true, true, false)),
+            circom_template: Some("src/vadcop/templates/final.circom.ejs"),
+            // plonk2pil merges the linear constraints itself: --O2 yields the same air, slower.
+            opt: CircomOpt::O1,
+        },
+        Step::WitnessLib,
+        Step::Plonk2Pil { kind: "aggregation", opts },
+        Step::Custom {
+            name: "final_pin",
+            run: Box::new(move |c| {
+                // A floor pads up, never down; overshooting the pin has to be loud.
+                let natural = c.plonk()?.n_bits_natural;
+                match pinned {
+                    Some(p) if natural > p => bail!(
+                        "vadcop_final compiles to 2^{natural} rows but is pinned to 2^{p}: this pilout \
+                         aggregates more airgroups than the pinned size holds. Raise `hash_family::final_n_bits` \
+                         and regenerate the committed verifier, which encodes the size."
+                    ),
+                    _ => Ok(()),
+                }
+            }),
+        },
+        Step::WriteFixed { source: ConstSource::Plonk },
+        Step::CompilePil,
+        Step::StarkTail { reuse: false, starkinfo_only: false },
+        Step::ConstTree { required: true },
+        Step::WriteVerifierRs,
+        witness_wait(),
+    ]
 }
-pub fn steps_for_recursivef(_cfg: &RecursivefCfg) -> Vec<Step> {
-    todo!()
+
+/// The STARK verifying one vadcop_final proof. The final SNARK back-end runs after it, outside the list.
+pub fn steps_for_recursivef(cfg: &RecursivefCfg) -> Vec<Step> {
+    let hash = cfg.family.as_str();
+    let opts = PlonkOptions {
+        airgroup_name: Some("Recursivef".to_string()),
+        // blake3's follows its blowup, as the compressed final's does.
+        max_constraint_degree: cfg.blowup.filter(|_| cfg.family.is_blake3()).map(hf::max_constraint_degree_for_blowup),
+        hash_id: hash.to_string(),
+        merge_copies: true,
+        blake3_lanes: cfg.blake3_lanes,
+        min_n_bits: None,
+    };
+    vec![
+        Step::CircomPrologue {
+            verifier: Some(gl_verifier(cfg.family, true, false, false)),
+            circom_template: Some("src/recursion/templates/recursivef.circom.ejs"),
+            opt: CircomOpt::O2,
+        },
+        Step::WitnessLib,
+        Step::Plonk2Pil { kind: "aggregation", opts },
+        Step::WriteFixed { source: ConstSource::Plonk },
+        Step::CompilePil,
+        Step::StarkTail { reuse: false, starkinfo_only: false },
+        Step::ConstTree { required: true },
+    ]
 }
 /// Compressor, recursive1 and recursive2 (`cfg.template`).
 pub fn steps_for_recursive(_cfg: &RecursiveCfg) -> Vec<Step> {
@@ -246,6 +315,10 @@ mod tests {
 
     fn test_cfg(family: HashFamily) -> TestCfg {
         TestCfg { family, template: RecursiveTemplate::Compressor, blowup: 2, blake3_lanes: None, min_n_bits: None }
+    }
+
+    fn rf_cfg(family: HashFamily) -> RecursivefCfg {
+        RecursivefCfg { family, blowup: Some(2), blake3_lanes: None }
     }
 
     fn pos(steps: &[Step], n: &str) -> Option<usize> {
@@ -300,7 +373,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "Task 4"]
     fn every_kind_with_a_stark_tail_ends_in_a_const_tree() {
         for (k, s) in [
             ("test", steps_for_test(&test_cfg(HashFamily::Blake3))),
@@ -344,7 +416,6 @@ mod tests {
     // ---- Task 4 ----
 
     #[test]
-    #[ignore = "Task 4"]
     fn steps_for_vadcop_final_ends_with_witness_wait() {
         let s = steps_for_vadcop_final(&VadcopFinalCfg { family: HashFamily::Blake3 });
         assert_eq!(names(&s).last(), Some(&"witness_wait"), "{:?}", names(&s));
@@ -352,29 +423,26 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "Task 4"]
-    fn steps_for_recursivef_blake3_uses_bn128_verifier() {
-        let s = steps_for_recursivef(&RecursivefCfg { family: HashFamily::Blake3 });
-        assert!(matches!(verifier_of(&s), Some(VerifierGen::Bn128Blake3(_))), "snark_setup.rs:317");
+    fn steps_for_recursivef_uses_the_goldilocks_verifier_for_every_family() {
+        // bn128_blake3 verifies the blake3 recursivef inside the final SNARK, not here (snark_setup.rs gen_final_snark).
+        for f in HashFamily::ALL {
+            assert!(matches!(verifier_of(&steps_for_recursivef(&rf_cfg(f))), Some(VerifierGen::Gl(_))), "{f:?}");
+        }
     }
 
     #[test]
-    #[ignore = "Task 4"]
     fn steps_for_recursivef_poseidon_uses_the_goldilocks_verifier_at_o2() {
         for f in [HashFamily::Poseidon1, HashFamily::Poseidon2] {
-            let s = steps_for_recursivef(&RecursivefCfg { family: f });
+            let s = steps_for_recursivef(&rf_cfg(f));
             assert!(matches!(verifier_of(&s), Some(VerifierGen::Gl(_))), "{f:?}");
             assert_eq!(opt_of(&s), CircomOpt::O2, "snark_setup.rs:500 is --O2");
         }
     }
 
     #[test]
-    #[ignore = "Task 4"]
-    fn recursivef_invokes_the_bespoke_snark_backend_as_one_custom_step() {
-        let s = steps_for_recursivef(&RecursivefCfg { family: HashFamily::Blake3 });
-        let n = names(&s);
-        assert_eq!(n.iter().filter(|x| **x == "snark_backend").count(), 1, "{n:?}");
-        assert!(pos(&s, "snark_backend").unwrap() > pos(&s, "const_tree").unwrap(), "{n:?}");
+    fn recursivef_ends_at_its_const_tree_the_snark_backend_runs_after() {
+        let s = steps_for_recursivef(&rf_cfg(HashFamily::Blake3));
+        assert_eq!(names(&s).last(), Some(&"const_tree"), "{:?}", names(&s));
     }
 
     // ---- Task 5 ----

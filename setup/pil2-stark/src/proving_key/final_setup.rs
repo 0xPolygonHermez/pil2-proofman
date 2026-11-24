@@ -12,21 +12,16 @@
 //! 8. Writes verifier.rs for the final circuit
 
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use anyhow::{bail, Context, Result};
+use pil2_stark_recurser::stark2circom::CircomGenOptions;
+use proofman_common::hash_family as hf;
 use serde_json::Value;
 
-use crate::io::recurser::{gen_circom, pil2circom, GenCircomInput, GenCircomOptions, Pil2CircomOptions};
-use pil2_pilout::pilout_proxy::PilOutProxy;
-use pil2_stark_recurser::plonk2pil::r1cs_types::PlonkOptions;
-
-use pil2_stark_recurser::plonk2pil::{self, PlonkResult};
-
-use crate::proving_key::bctree;
-use crate::io::fixed_cols;
-use crate::proving_key::recursive::compile_pil;
 use crate::output::witness_gen::WitnessTracker;
+use crate::proving_key::pipeline::{self, kinds, CircuitInput, PipelineCtx, Tools, VerifierInput};
+use crate::types::stark_struct::StarkSettings;
 
 /// Configuration for the final setup.
 pub struct FinalSetupConfig<'a> {
@@ -51,15 +46,13 @@ pub struct FinalSetupResult {
     pub const_root: [u64; 4],
 }
 
-/// Run the final setup.
-///
-/// Ports `genFinalSetup()` from `generateFinalSetup.js`.
 /// Parse a JSON value that may be either a string or a u64 number into a String.
 /// Used when reading vks.json fields that are stored as u64 integers.
 fn json_val_to_str(v: &Value) -> String {
     v.as_str().map(|s| s.to_string()).or_else(|| v.as_u64().map(|n| n.to_string())).unwrap_or_else(|| "0".to_string())
 }
 
+/// Run the final setup (`genFinalSetup()`).
 pub fn gen_final_setup(config: &FinalSetupConfig<'_>, witness_tracker: &WitnessTracker) -> Result<FinalSetupResult> {
     let build_dir = PathBuf::from(config.build_dir);
     let global_name = config.global_info.get("name").and_then(|v| v.as_str()).unwrap_or("pilout");
@@ -132,316 +125,75 @@ pub fn gen_final_setup(config: &FinalSetupConfig<'_>, witness_tracker: &WitnessT
     }
 
     let files_dir = build_dir.join("provingKey").join(global_name).join("vadcop_final");
-    fs::create_dir_all(&files_dir)?;
+    let family = config.hash.parse().map_err(anyhow::Error::msg)?;
+    let mut ctx = PipelineCtx::new(build_dir, files_dir, "vadcop_final", family);
+    ctx.tools = Tools {
+        circom_exec: config.circom_exec.into(),
+        libs: vec![config.recurser_circuits_path.into(), config.circuits_gl_path.into()],
+        std_pil_path: config.std_pil_path.into(),
+        recurser_pil_path: config.recurser_pil_path.into(),
+        circom_helpers_dir: config.circom_helpers_dir.into(),
+    };
+    ctx.witness = Some(witness_tracker.clone());
+    // One verifier per airgroup's recursive2, from the recursive2 starkinfo (not recursive1's).
+    ctx.verifiers = stark_infos
+        .iter()
+        .zip(&verifier_infos)
+        .zip(&verifier_names)
+        .enumerate()
+        .map(|(i, ((si, vi), file))| VerifierInput {
+            file: file.clone(),
+            const_root: agg_keys_recursive2
+                .get(i)
+                .filter(|k| k.len() == 4)
+                .map(|k| [k[0].clone(), k[1].clone(), k[2].clone(), k[3].clone()])
+                .unwrap_or_else(|| ["0".into(), "0".into(), "0".into(), "0".into()]),
+            stark_info: si.clone(),
+            verifier_info: vi.clone(),
+        })
+        .collect();
 
-    let circom_dir = build_dir.join("circom");
-    let build_path = build_dir.join("build");
-    let pil_dir = build_dir.join("pil");
-    fs::create_dir_all(&circom_dir)?;
-    fs::create_dir_all(&build_path)?;
-    fs::create_dir_all(&pil_dir)?;
-
-    // Generate verifier circom for each airgroup's recursive2 output.
-    // This must use the recursive2 starkinfo (not reuse the verifier from the
-    // recursive2 step, which was generated from the recursive1 starkinfo).
-    for (i, (si, vi)) in stark_infos.iter().zip(verifier_infos.iter()).enumerate() {
-        let const_root = if i < agg_keys_recursive2.len() && agg_keys_recursive2[i].len() == 4 {
-            [
-                agg_keys_recursive2[i][0].clone(),
-                agg_keys_recursive2[i][1].clone(),
-                agg_keys_recursive2[i][2].clone(),
-                agg_keys_recursive2[i][3].clone(),
-            ]
-        } else {
-            ["0".into(), "0".into(), "0".into(), "0".into()]
-        };
-
-        let pil2circom_opts = Pil2CircomOptions {
-            skip_main: true,
-            verkey_input: true,
-            enable_input: true,
-            hash: config.hash.to_string(),
-            ..Default::default()
-        };
-
-        let verifier_circom = pil2circom(&const_root, si, vi, &pil2circom_opts)
-            .context("pil2circom failed generating recursive2 verifier for final setup")?;
-
-        let verifier_path = circom_dir.join(&verifier_names[i]);
-        fs::write(&verifier_path, &verifier_circom)?;
-    }
-
-    // Build global info with constraints for the template
+    // The global info the template reads carries the global constraints.
     let mut final_global_info = config.global_info.clone();
     if let Some(constraints) = config.global_constraints.get("constraints") {
         final_global_info.as_object_mut().map(|obj| obj.insert("globalConstraints".to_string(), constraints.clone()));
     }
-
-    // Generate final circom
-    // One proof per airgroup, not an aggregation fan-in: the template never reads
-    // `agg_arity`, and `gen_recursive2` rejects 0 outright.
-    let gen_circom_opts = GenCircomOptions {
-        airgroup_id: None,
-        has_compressor: false,
-        has_recursion: false,
-        is_final: true,
-        agg_arity: 0,
-        batch_size: 1,
-    };
-
-    let gen_input = GenCircomInput {
-        template_name: "src/vadcop/templates/final.circom.ejs",
-        stark_infos: &stark_infos,
-        vadcop_info: &final_global_info,
-        verifier_filenames: &verifier_names,
-        basic_verification_keys: &basic_keys_recursive1,
-        agg_verification_keys: &agg_keys_recursive2,
-        publics: &[],
-        options: &gen_circom_opts,
-    };
-
-    let final_circom = gen_circom(&gen_input).context("gen_circom failed in final setup")?;
-
-    let final_circom_path = circom_dir.join("vadcop_final.circom");
-    fs::write(&final_circom_path, &final_circom)?;
-
-    // Compile circom
-    tracing::info!("Compiling vadcop_final...");
-    let compile_output = std::process::Command::new(config.circom_exec)
-        .args([
-            "--O1",
-            "--r1cs",
-            "--prime",
-            "goldilocks",
-            "--c",
-            "--verbose",
-            "-l",
-            config.recurser_circuits_path,
-            "-l",
-            config.circuits_gl_path,
-        ])
-        .arg(final_circom_path.to_str().unwrap())
-        .arg("-o")
-        .arg(build_path.to_str().unwrap())
-        .output()
-        .context("Failed to execute circom for final setup")?;
-
-    if !compile_output.status.success() {
-        let stderr = String::from_utf8_lossy(&compile_output.stderr);
-        bail!("Circom compilation failed for vadcop_final: {}", stderr);
-    }
-
-    // Copy .dat file
-    tracing::info!("Copying circom files...");
-    let dat_src = build_path.join("vadcop_final_cpp").join("vadcop_final.dat");
-    let dat_dst = files_dir.join("vadcop_final.dat");
-    if dat_src.exists() {
-        fs::copy(&dat_src, &dat_dst)?;
-    }
-
-    // Generate witness library
-    witness_tracker.run_witness_library_generation(
-        config.build_dir,
-        files_dir.to_str().unwrap_or(""),
-        "vadcop_final",
-        "vadcop_final",
-        config.circom_helpers_dir,
-    );
-
-    // plonk2pil
-    let r1cs_path = build_path.join("vadcop_final.r1cs");
-    let r1cs_data = fs::read(&r1cs_path).with_context(|| format!("Failed to read R1CS: {}", r1cs_path.display()))?;
-
-    let plonk_opts = PlonkOptions {
-        airgroup_name: Some("FinalVadcop".to_string()),
-        // Follow the blowup instead of taking the packer's default of 5. The extra degree is paid
-        // back out of stage2: `std_sum` packs maxDeg-1 bus terms behind each im pol, so 5 -> 8 takes
-        // stage2 from 114 columns to 66. Derived from the same family-scoped blowup the stark struct
-        // uses, so the two cannot disagree about what the quotient can carry.
-        max_constraint_degree: Some(proofman_common::hash_family::max_constraint_degree_for_blowup(
-            proofman_common::hash_family::final_blowup_factor(config.hash),
-        )),
-        hash_id: config.hash.to_string(),
-        merge_copies: true,
-        // blake3 chooses LANES in its own setup; None takes the air's default of 4.
-        blake3_lanes: None,
-        // A floor: a smaller pilout pads up to the pinned size the committed verifier encodes.
-        min_n_bits: proofman_common::hash_family::final_n_bits(config.hash),
-    };
-    let _span = tracing::info_span!("stage", t = "vadcop_final").entered();
-    let plonk_result: PlonkResult =
-        plonk2pil::plonk2pil(&r1cs_data, "aggregation", &plonk_opts).context("plonk2pil failed in final setup")?;
-
-    // A floor pads up, never down; overshooting the pin has to be loud.
-    if let Some(pinned) = plonk_opts.min_n_bits {
-        if plonk_result.n_bits_natural > pinned {
-            bail!(
-                "vadcop_final compiles to 2^{} rows but is pinned to 2^{}: this pilout aggregates \
-                 more airgroups than the pinned size holds. Raise `hash_family::final_n_bits` and \
-                 regenerate the committed verifier, which encodes the size.",
-                plonk_result.n_bits_natural,
-                pinned
-            );
-        }
-    }
-
-    // Write fixed pols binary
-    let fixed_bin_path = build_path.join("vadcop_final.fixed.bin");
-    let fixed_info: Vec<(String, Vec<u32>, Vec<u64>)> =
-        plonk_result.fixed_pols.iter().map(|fp| (fp.name.clone(), vec![fp.index as u32], fp.values.clone())).collect();
-    fixed_cols::write_fixed_pols_bin(
-        fixed_bin_path.to_str().unwrap(),
-        &plonk_result.airgroup_name,
-        &plonk_result.air_name,
-        1u64 << plonk_result.n_bits,
-        &fixed_info,
-    )?;
-
-    // Write PIL
-    let pil_path = pil_dir.join("vadcop_final.pil");
-    fs::write(&pil_path, &plonk_result.pil_str)?;
-
-    // Compile PIL
-    let pilout_path = build_path.join("vadcop_final.pilout");
-    compile_pil(
-        pil_path.to_str().unwrap(),
-        pilout_path.to_str().unwrap(),
-        config.std_pil_path,
-        config.recurser_pil_path,
-    )?;
-
-    // Write exec
-    let exec_path = files_dir.join("vadcop_final.exec");
-    let exec_bytes: Vec<u8> = plonk_result.exec.iter().flat_map(|v| v.to_le_bytes()).collect();
-    fs::write(&exec_path, &exec_bytes)?;
-
-    // Const file writing is deferred until after pil_info, which determines
-    // the true nConstants (may be larger than plonk2pil's fixedPols count).
-    let const_path = files_dir.join("vadcop_final.const");
-    let plonk_n_rows = 1usize << plonk_result.n_bits;
-    let plonk_n_fixed = plonk_result.fixed_pols.len();
-
-    // Final stark struct settings
-    let final_settings = crate::types::stark_struct::StarkSettings {
-        initial_blowup_factor: Some(proofman_common::hash_family::final_blowup_factor(config.hash)),
+    // One proof per airgroup, not an aggregation fan-in: the template never reads `agg_arity`.
+    ctx.circuit_input = Some(CircuitInput {
+        stark_infos,
+        vadcop_info: final_global_info,
+        basic_vk: basic_keys_recursive1,
+        agg_vk: agg_keys_recursive2,
+        publics: vec![],
+        opts: CircomGenOptions {
+            airgroup_id: None,
+            has_compressor: false,
+            has_recursion: false,
+            is_final: true,
+            agg_arity: 0,
+            batch_size: 1,
+        },
+    });
+    let hash = config.hash;
+    ctx.settings = StarkSettings {
+        initial_blowup_factor: Some(hf::final_blowup_factor(hash)),
         initial_folding_factor: Some(4),
         // Per family: poseidon's 22 is what its committed verifiers encode, blake3 affords 24.
-        grinding_bits: Some(proofman_common::hash_family::final_grinding_bits(config.hash)),
-        // The terminal the FRI walk stops at, as the final polynomial's log-degree bound: the
-        // family's terminal domain (log2) minus the blowup — poseidon's 5 − 4 = 1 is what its
-        // committed vadcop_final verifier encodes. For a family whose steps are solved rather than
-        // folded uniformly this is the ceiling the solver works under, not the degree it lands on.
-        final_degree: Some(
-            proofman_common::hash_family::fri_terminal_degree(config.hash)
-                - proofman_common::hash_family::final_blowup_factor(config.hash),
-        ),
-        // Paid by the recursivef that verifies this proof, not here, so it takes the family value
-        // every recursion layer takes: 5 for blake3, the size-based default for poseidon.
-        last_level_verification: proofman_common::hash_family::recursive_last_level_verification(config.hash),
+        grinding_bits: Some(hf::final_grinding_bits(hash)),
+        // The family's terminal FRI domain (log2) minus the blowup, as a log-degree bound: poseidon's
+        // 5 - 4 = 1 is what its committed verifier encodes; a solved schedule takes it as a ceiling.
+        final_degree: Some(hf::fri_terminal_degree(hash) - hf::final_blowup_factor(hash)),
+        // Paid by the recursivef that verifies this proof: the family value every recursion layer takes.
+        last_level_verification: hf::recursive_last_level_verification(hash),
         ..Default::default()
     };
-    let final_stark_struct =
-        crate::types::stark_struct::generate_stark_struct(&final_settings, plonk_result.n_bits, config.hash);
+    ctx.key = crate::pil::stark_setup::KeyIdentity { name: Some("vadcop_final".into()), ..Default::default() };
 
-    // Run real starkSetup via pil_info on the compiled vadcop_final pilout
-    let starkinfo_path = files_dir.join("vadcop_final.starkinfo.json");
-
-    let pilout_file_str = pilout_path.to_str().unwrap_or("");
-    if !Path::new(pilout_file_str).exists() {
-        bail!("vadcop_final pilout not found at {}", pilout_file_str);
-    }
-
-    let proxy = PilOutProxy::new(pilout_file_str).map_err(|e| anyhow::anyhow!("Failed to load pilout: {}", e))?;
-    let pilout = &proxy.pilout;
-    if pilout.air_groups.is_empty() || pilout.air_groups[0].airs.is_empty() {
-        bail!("vadcop_final pilout has no AIR groups");
-    }
-
-    let key = crate::pil::stark_setup::KeyIdentity { name: Some("vadcop_final".into()), ..Default::default() };
-    let pil_info_result =
-        crate::pil::stark_setup::stark_setup(pilout, 0, 0, &final_stark_struct, &Default::default(), &key)?;
-
-    let starkinfo_output = pil_info_result.starkinfo;
-    tracing::info!(
-        "Circuit 'vadcop_final' low-degree test: {}",
-        starkinfo_output.stark_struct.low_degree_test.describe()
-    );
-    let verifier_info_ref = &pil_info_result.pil_code.verifier_info;
-    let expressions_info_ref = &pil_info_result.pil_code.expressions_info;
-
-    // Write all JSON files
-    fs::write(&starkinfo_path, crate::output::json::to_json_string(&starkinfo_output)?)?;
-    fs::write(
-        files_dir.join("vadcop_final.expressionsinfo.json"),
-        crate::output::json::to_json_string(expressions_info_ref)?,
-    )?;
-    fs::write(
-        files_dir.join("vadcop_final.verifierinfo.json"),
-        crate::output::json::to_json_string(verifier_info_ref)?,
-    )?;
-
-    // Write binary files — convert in-memory structs directly (no disk round-trip)
-    {
-        let si_val: serde_json::Value = serde_json::from_str(&fs::read_to_string(&starkinfo_path)?)?;
-        let stark_info_loaded = crate::types::stark_info::StarkInfo::from_json(&si_val)?;
-
-        let expressions_loaded = crate::types::stark_info::ExpressionsInfo::try_from(expressions_info_ref)?;
-        crate::io::bin_file::write_expressions_bin_file(
-            files_dir.join("vadcop_final.bin").to_str().unwrap(),
-            &stark_info_loaded,
-            &expressions_loaded,
-        )?;
-
-        let verifier_loaded = crate::types::stark_info::VerifierInfo::try_from(verifier_info_ref)?;
-
-        // Write verifier Rust file
-        crate::output::verifier::write_verifier_rust_file(
-            files_dir.join("vadcop_final.verifier.rs").to_str().unwrap(),
-            &stark_info_loaded,
-            &verifier_loaded,
-            true,
-            config.hash,
-        )?;
-
-        // Write const file: pilout inline values are the selector polynomials;
-        // plonk2pil polynomials fill the columns with empty pilout values.
-        {
-            let air = &pilout.air_groups[0].airs[0];
-            let plonk_values =
-                fixed_cols::reorder_plonk_pols_for_pilout(&plonk_result.fixed_pols, &pilout.symbols, 0, 0);
-            fixed_cols::write_const_file(const_path.to_str().unwrap(), air, &plonk_values)?;
-            tracing::info!(
-                "Wrote vadcop_final const file: {} cols ({} from plonk + {} from pilout), {} rows",
-                air.fixed_cols.len(),
-                plonk_n_fixed,
-                air.fixed_cols.len().saturating_sub(plonk_n_fixed),
-                plonk_n_rows
-            );
-        }
-    }
-
-    // Compute constant tree
-    tracing::info!("Computing Constant Tree for vadcop_final...");
-    let verkey_json_path = files_dir.join("vadcop_final.verkey.json");
-    crate::proving_key::util::require_const_file("vadcop_final", &const_path)?;
-    let const_root = bctree::compute_const_tree(
-        const_path.to_str().unwrap(),
-        starkinfo_path.to_str().unwrap(),
-        verkey_json_path.to_str().unwrap(),
-    )?;
-    let mut verkey_bin = Vec::with_capacity(32);
-    for &val in const_root.iter() {
-        verkey_bin.extend_from_slice(&val.to_le_bytes());
-    }
-    fs::write(files_dir.join("vadcop_final.verkey.bin"), &verkey_bin)?;
-
-    // Wait for witness library
-    witness_tracker.await_all()?;
-
-    let result_stark_info = serde_json::to_value(&starkinfo_output)?;
-    let result_verifier_info = serde_json::to_value(verifier_info_ref).unwrap_or(serde_json::Value::Null);
-
-    Ok(FinalSetupResult { stark_info: result_stark_info, verifier_info: result_verifier_info, const_root })
+    let _span = tracing::info_span!("stage", t = "vadcop_final").entered();
+    pipeline::run(&kinds::steps_for_vadcop_final(&kinds::VadcopFinalCfg { family }), &mut ctx)?;
+    let (stark_info, verifier_info, _) = ctx.pil_info.take().context("vadcop_final produced no starkinfo")?;
+    let const_root = ctx.const_root.context("vadcop_final produced no const root")?;
+    Ok(FinalSetupResult { stark_info, verifier_info, const_root })
 }
 
 #[cfg(test)]
