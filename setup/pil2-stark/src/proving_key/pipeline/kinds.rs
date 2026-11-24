@@ -3,8 +3,13 @@
 use pil2_stark_recurser::plonk2pil::r1cs_types::PlonkOptions;
 use proofman_common::hash_family::HashFamily;
 
-use super::steps::{CircomOpt, ConstSource, Step};
+use anyhow::{bail, Result};
+use pil2_stark_recurser::stark2circom::StarkVerifierOptions;
+use proofman_common::hash_family as hf;
+
+use super::steps::{CircomOpt, ConstSource, Step, VerifierGen};
 use crate::proving_key::recursive::RecursiveTemplate;
+use crate::types::stark_struct::{generate_stark_struct, LowDegreeTestKind, StarkSettings, StarkStruct};
 
 /// Basic AIR: `.const` comes from the user's fixed-column supply, no circom.
 pub struct BasicCfg {
@@ -22,6 +27,8 @@ pub struct TestCfg {
 
 pub struct CompressedFinalCfg {
     pub family: HashFamily,
+    /// `None` is the family's (`compressed_final_stir`).
+    pub low_degree_test: Option<LowDegreeTestKind>,
 }
 
 pub struct VadcopFinalCfg {
@@ -99,8 +106,110 @@ pub fn steps_for_test(cfg: &TestCfg) -> Vec<Step> {
     ]
 }
 
-pub fn steps_for_compressed_final(_cfg: &CompressedFinalCfg) -> Vec<Step> {
-    todo!()
+/// The verifier circom of a proof that skips `main`, with these inputs.
+fn gl_verifier(family: HashFamily, verkey_input: bool, enable_input: bool, input_challenges: bool) -> VerifierGen {
+    VerifierGen::Gl(StarkVerifierOptions {
+        skip_main: true,
+        verkey_input,
+        enable_input,
+        input_challenges,
+        fri_queries_batch_size: None,
+        hash: family.as_str().to_string(),
+    })
+}
+
+/// The compressed final's stark struct at 2^`n_bits` and whether its proof is a multiproof: no wrap
+/// reads this proof, so its geometry is a proof-size knob.
+pub fn compressed_final_settings(
+    family: HashFamily,
+    low_degree_test: Option<LowDegreeTestKind>,
+    n_bits: usize,
+) -> Result<(StarkStruct, bool)> {
+    let hash = family.as_str();
+    let ldt = low_degree_test.unwrap_or(if hf::compressed_final_stir(hash) {
+        LowDegreeTestKind::Stir
+    } else {
+        LowDegreeTestKind::Fri
+    });
+    let multiproof = hf::compressed_final_multiproof(hash);
+    let blowup = hf::compressed_final_blowup_factor(hash);
+    // A pinned schedule applies only at the air size and blowup it was measured at.
+    let here = (n_bits, blowup);
+    let pinned = |measured: (usize, usize)| {
+        if measured != here {
+            tracing::warn!(
+                "compressed final at (2^n, blowup) {here:?}: schedule pinned for {measured:?}, deriving one"
+            );
+        }
+        measured == here
+    };
+    let stir_schedule = (ldt == LowDegreeTestKind::Stir)
+        .then(|| hf::compressed_final_stir_schedule(hash))
+        .flatten()
+        .filter(|(measured, ..)| pinned(*measured));
+    let fri_folds = (ldt == LowDegreeTestKind::Fri)
+        .then(|| hf::compressed_final_fri_folds(hash))
+        .flatten()
+        .filter(|(measured, _)| pinned(*measured));
+    let settings = StarkSettings {
+        initial_blowup_factor: Some(blowup),
+        initial_folding_factor: Some(if family.is_blake3() { 4 } else { 3 }),
+        grinding_bits: Some(hf::compressed_final_grinding_bits(hash)),
+        merkle_tree_arity: (!family.is_blake3()).then_some(2),
+        last_level_verification: if multiproof { Some(0) } else { hf::compressed_final_last_level_verification(hash) },
+        // final_degree is a log degree here; the helper gives the terminal FRI domain.
+        final_degree: Some(hf::compressed_final_fri_terminal_degree(hash) - blowup),
+        low_degree_test: Some(ldt),
+        folding_factors: stir_schedule.as_ref().map(|(_, folds, _)| folds.clone()).or(fri_folds.map(|(_, f)| f)),
+        grinding_bits_queries: stir_schedule.as_ref().map(|(_, _, grinding)| grinding.clone()),
+        ..Default::default()
+    };
+    let ss = generate_stark_struct(&settings, n_bits, hash);
+    let (mta, ta) = (ss.merkle_tree_arity, ss.transcript_arity);
+    if multiproof && !hf::has_multiproof_codec(hash, mta as u64, ta as u64) {
+        bail!("no {hash} multiproof codec at tree arity {mta}, transcript arity {ta}");
+    }
+    Ok((ss, multiproof))
+}
+
+pub fn steps_for_compressed_final(cfg: &CompressedFinalCfg) -> Vec<Step> {
+    let (family, ldt) = (cfg.family, cfg.low_degree_test);
+    let hash = family.as_str();
+    let opts = PlonkOptions {
+        airgroup_name: Some("VadcopFinalCompressed".to_string()),
+        // blake3 follows the blowup, as vadcop_final does; poseidon keeps the packer default.
+        max_constraint_degree: family
+            .is_blake3()
+            .then(|| hf::max_constraint_degree_for_blowup(hf::compressed_final_blowup_factor(hash))),
+        hash_id: hash.to_string(),
+        merge_copies: true,
+        blake3_lanes: hf::compressed_final_blake3_lanes(hash),
+        min_n_bits: None,
+    };
+    vec![
+        Step::CircomPrologue {
+            verifier: Some(gl_verifier(family, false, false, false)),
+            circom_template: Some("src/vadcop/templates/final_compressed.circom.ejs"),
+            opt: CircomOpt::O2,
+        },
+        Step::WitnessLib,
+        Step::Plonk2Pil { kind: "aggregation", opts },
+        Step::WriteFixed { source: ConstSource::Plonk },
+        Step::CompilePil,
+        Step::Custom {
+            name: "compressed_settings",
+            run: Box::new(move |c| {
+                let (ss, multiproof) = compressed_final_settings(family, ldt, c.plonk()?.n_bits)?;
+                c.stark_struct = Some(ss);
+                c.key.multiproof = multiproof;
+                Ok(())
+            }),
+        },
+        Step::StarkTail { reuse: false, starkinfo_only: false },
+        Step::ConstTree { required: true },
+        Step::WriteVerifierRs,
+        witness_wait(),
+    ]
 }
 pub fn steps_for_vadcop_final(_cfg: &VadcopFinalCfg) -> Vec<Step> {
     todo!()
@@ -195,7 +304,10 @@ mod tests {
     fn every_kind_with_a_stark_tail_ends_in_a_const_tree() {
         for (k, s) in [
             ("test", steps_for_test(&test_cfg(HashFamily::Blake3))),
-            ("compressed", steps_for_compressed_final(&CompressedFinalCfg { family: HashFamily::Blake3 })),
+            (
+                "compressed",
+                steps_for_compressed_final(&CompressedFinalCfg { family: HashFamily::Blake3, low_degree_test: None }),
+            ),
             ("vadcop_final", steps_for_vadcop_final(&VadcopFinalCfg { family: HashFamily::Blake3 })),
         ] {
             assert!(pos(&s, "const_tree").unwrap() > pos(&s, "stark_tail").unwrap(), "{k}: {:?}", names(&s));
@@ -214,7 +326,7 @@ mod tests {
             family: HashFamily::Blake3,
             reuse: false,
         });
-        let cmp = steps_for_compressed_final(&CompressedFinalCfg { family: HashFamily::Blake3 });
+        let cmp = steps_for_compressed_final(&CompressedFinalCfg { family: HashFamily::Blake3, low_degree_test: None });
         let a = circom_args(opt_of(&rec), "goldilocks", &[], Path::new("x.circom"), Path::new("/o"));
         let b = circom_args(opt_of(&cmp), "goldilocks", &[], Path::new("x.circom"), Path::new("/o"));
         assert!(a.contains(&"--O1".to_string()), "recursive.rs:424 is --O1: {a:?}");
@@ -222,9 +334,9 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "Task 3"]
     fn compressed_final_uses_the_goldilocks_verifier_generator() {
-        let s = steps_for_compressed_final(&CompressedFinalCfg { family: HashFamily::Poseidon2 });
+        let s =
+            steps_for_compressed_final(&CompressedFinalCfg { family: HashFamily::Poseidon2, low_degree_test: None });
         assert!(matches!(verifier_of(&s), Some(VerifierGen::Gl(_))));
         assert!(pos(&s, "circom_prologue").unwrap() < pos(&s, "plonk2pil").unwrap());
     }
@@ -317,5 +429,14 @@ mod tests {
             assert_eq!(opt_of(&s), CircomOpt::O1, "{t:?}");
         }
         assert!(matches!(verifier_of(&rec(RecursiveTemplate::Recursive1, false)), Some(VerifierGen::Gl(_))));
+    }
+
+    /// Deriving Poseidon's blowup and grinding from the family table reproduces what it shipped with.
+    #[test]
+    fn the_derived_settings_match_the_shipped_geometry() {
+        for fam in ["Poseidon1", "Poseidon2"] {
+            assert_eq!(proofman_common::hash_family::compressed_final_blowup_factor(fam), 4, "{fam} blowup");
+            assert_eq!(proofman_common::hash_family::compressed_final_grinding_bits(fam), 22, "{fam} grinding");
+        }
     }
 }
