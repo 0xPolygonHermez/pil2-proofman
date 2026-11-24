@@ -25,6 +25,7 @@
 //! The tests below check that the checked-in files are what they compute, and write them with
 //! `PILFFLONK_UPDATE_FIXTURES=1`, as the Sample.bin test does. The Fibonacci one needs `PIL2C_EXEC`.
 
+use pil_info::core::from_pilout::pilout_expr_index;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -56,11 +57,6 @@ const FIXTURES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/byte
 /// The shift of the extended coset (pilfflonk/docs/protocol.md#extended-coset), the C++ core's
 /// `COSET_SHIFT`.
 const COSET_SHIFT: u64 = 5;
-
-/// The pilout index of the setup's (canonical) expression `exp_id`, which the oracle reads.
-fn pilout_exp(pilout: &pb::PilOut, exp_id: u64) -> usize {
-    pil_info::core::from_pilout::pilout_expr_index(pilout, 0, 0, exp_id as u32).unwrap().unwrap()
-}
 
 /// `bytes` is the checked-in fixture `name`, which `PILFFLONK_UPDATE_FIXTURES=1` writes first.
 fn check_fixture(name: &str, bytes: &[u8]) {
@@ -392,7 +388,9 @@ fn column_of(pilout: &pb::PilOut, info: &PilfflonkInfo, e: &EvMapEntry) -> Colum
     let pol = info.pol(e.pol_type, e.id).unwrap();
     match (e.pol_type, pol.exp_id) {
         (PolType::Const, _) => ColumnRef::Fixed(e.id as usize),
-        (PolType::Cm, Some(exp_id)) if pol.im_pol => ColumnRef::Im(pilout_exp(pilout, exp_id)),
+        (PolType::Cm, Some(exp_id)) if pol.im_pol => {
+            ColumnRef::Im(pilout_expr_index(pilout, 0, 0, exp_id as u32).unwrap())
+        }
         (PolType::Cm, _) => ColumnRef::Witness { stage: pol.stage as usize, idx: pol.stage_id as usize },
     }
 }
@@ -453,8 +451,12 @@ fn the_fibonacci_fixtures_are_the_setups_and_the_oracles() {
     let source = FileWitnessSource::open(&witness_dir, &shape).unwrap();
     let values = air_oracle.values(&source, 0).unwrap();
     let (xi, std_vc) = xi_and_std_vc();
-    let im_pols: Vec<usize> =
-        info.cm_pols_map.iter().filter(|p| p.im_pol).map(|p| pilout_exp(&pilout, p.exp_id.unwrap())).collect();
+    let im_pols: Vec<usize> = info
+        .cm_pols_map
+        .iter()
+        .filter(|p| p.im_pol)
+        .map(|p| pilout_expr_index(&pilout, 0, 0, p.exp_id.unwrap() as u32).unwrap())
+        .collect();
     let q = air_oracle.q_at(&values, &im_pols, &std_vc, &xi).unwrap();
     let evals: Vec<Fr> = info
         .ev_map
@@ -547,7 +549,9 @@ fn the_sum_bus_fixtures_are_the_setups_and_the_oracles() {
     let mut stage_2 = vec![Value::Null; info.map_sections_n["cm2"] as usize];
     for p in info.cm_pols_map.iter().filter(|p| p.stage == 2) {
         let column = if p.im_pol {
-            air_oracle.expression_rows(&values, pilout_exp(&pilout, p.exp_id.unwrap())).unwrap()
+            air_oracle
+                .expression_rows(&values, pilout_expr_index(&pilout, 0, 0, p.exp_id.unwrap() as u32).unwrap())
+                .unwrap()
         } else {
             values.witness[1][p.stage_id as usize].clone()
         };

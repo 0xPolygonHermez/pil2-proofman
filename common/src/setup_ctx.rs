@@ -515,7 +515,7 @@ impl<F: PrimeField64> SetupRepository<F> {
             true => {
                 let global_bin_path =
                     &global_info.get_proving_key_path().join("pilout.globalConstraints.bin").display().to_string();
-                Some(expressions_bin_new_c(global_bin_path.as_str(), true, false))
+                Some(expressions_bin_new_c(global_bin_path.as_str(), true))
             }
             false => None,
         };

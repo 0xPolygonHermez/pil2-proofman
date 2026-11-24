@@ -26,6 +26,7 @@
 #[path = "../../../pilfflonk/tests/data/fibonacci.rs"]
 mod fibonacci;
 
+use pil_info::core::from_pilout::pilout_expr_index;
 use std::fs;
 use std::path::PathBuf;
 
@@ -78,7 +79,9 @@ fn column_of(pilout: &pb::PilOut, info: &PilfflonkInfo, e: &EvMapEntry) -> Colum
     let pol = info.pol(e.pol_type, e.id).expect("an evMap entry of the pilfflonkinfo");
     match (e.pol_type, pol.exp_id) {
         (PolType::Const, _) => ColumnRef::Fixed(e.id as usize),
-        (PolType::Cm, Some(exp_id)) if pol.im_pol => ColumnRef::Im(pilout_exp(pilout, exp_id)),
+        (PolType::Cm, Some(exp_id)) if pol.im_pol => {
+            ColumnRef::Im(pilout_expr_index(pilout, 0, 0, exp_id as u32).unwrap())
+        }
         (PolType::Cm, _) => ColumnRef::Witness { stage: pol.stage as usize, idx: pol.stage_id as usize },
     }
 }
@@ -100,7 +103,7 @@ impl Air<'_> {
             .cm_pols_map
             .iter()
             .filter(|p| p.im_pol)
-            .map(|p| pilout_exp(self.pilout, p.exp_id.expect("an im pol has an expId")))
+            .map(|p| pilout_expr_index(self.pilout, 0, 0, p.exp_id.expect("an im pol has an expId") as u32).unwrap())
             .collect();
         let mut evaluations = Map::new();
         for (name, e) in &self.names {
@@ -167,9 +170,4 @@ fn q_at_xi() {
         "cases": cases,
     });
     fs::write(dir.join("q_at_xi.json"), serde_json::to_string_pretty(&fixture).unwrap()).unwrap();
-}
-
-/// The pilout index the oracle reads of a key's (canonical) `expId`.
-fn pilout_exp(pilout: &pb::PilOut, exp_id: u64) -> usize {
-    pil_info::core::from_pilout::pilout_expr_index(pilout, 0, 0, exp_id as u32).unwrap().unwrap()
 }

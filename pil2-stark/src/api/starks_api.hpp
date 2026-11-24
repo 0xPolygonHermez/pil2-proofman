@@ -110,7 +110,9 @@ extern "C" {
 
     // Expressions Bin
     // ========================================================================================
-    void *expressions_bin_new(char *filename, bool global, bool verifier);
+    void *expressions_bin_new(char *filename, bool global);
+    void *constraint_dag_new(char *filename);
+    void constraint_dag_free(void *pConstraintDag);
     uint64_t get_max_n_tmp1(void *pExpressionsBin);
     uint64_t get_max_n_tmp3(void *pExpressionsBin);
     uint64_t get_max_args(void *pExpressionsBin);
@@ -207,9 +209,9 @@ extern "C" {
 
     // Stark Verify
     // =================================================================================
-    bool stark_verify(uint64_t *jProof, void *pStarkInfo, void *pExpressionsBin, char *verkey, void *pPublics, void *pProofValues, void *challenges);
-    bool stark_verify_bn128(void *jProof, void *pStarkInfo, void *pExpressionsBin, char *verkey, void *pPublics);
-    bool stark_verify_from_file(char *proof, void *pStarkInfo, void *pExpressionsBin, char *verkey, void *pPublics, void *pProofValues, void *challenges);
+    bool stark_verify(uint64_t *jProof, void *pStarkInfo, void *pConstraintDag, char *verkey, void *pPublics, void *pProofValues, void *challenges);
+    bool stark_verify_bn128(void *jProof, void *pStarkInfo, void *pConstraintDag, char *verkey, void *pPublics);
+    bool stark_verify_from_file(char *proof, void *pStarkInfo, void *pConstraintDag, char *verkey, void *pPublics, void *pProofValues, void *challenges);
 
     // Fixed cols
     // =================================================================================

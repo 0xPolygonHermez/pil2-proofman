@@ -1,10 +1,10 @@
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, bail, ensure, Result};
+use std::collections::HashMap;
 use std::fs;
 
-use pil_info::core::dag::lower_code::{lower_to_code, Fold};
+use pil_info::core::dag::lower_code::{lower_to_code, CodeOp, Fold, LowerCtx, Operand, VerifierCode};
 use proofman_common::{hash_family, LowDegreeLayout};
-use crate::io::parser_args::rust_verify_lines;
-use crate::output::dag_eval::lower_ctx;
+use crate::types::goldilocks_u64;
 use crate::types::stark_info::{StarkInfo, VerifierInfo};
 use crate::types::stark_struct::LowDegreeTest;
 
@@ -70,8 +70,8 @@ fn prepare_verifier_rust(
     // The transcript CONSTRUCTION, not a hash to wrap in a sponge: BLAKE3's is not a sponge.
     let transcript_type = hash_family::rust_transcript_type(hash_id, transcript_arity as u64);
     let grinding_type = hash_family::rust_grinding_type(hash_id);
-    let code = lower_to_code(&verifier_info.constraint_dag, &lower_ctx(stark_info)?, Fold::Stark)
-        .map_err(|e| anyhow!("{e:?}"))?;
+    let ctx = LowerCtx::new(stark_info.lower_tables.clone()).map_err(|e| anyhow!("{e:?}"))?;
+    let code = lower_to_code(&verifier_info.constraint_dag, &ctx, Fold::Stark).map_err(|e| anyhow!("{e:?}"))?;
     let q = rust_verify_lines(stark_info, &code, "q_verify", false)?;
     let (verify_q_rust, verify_q_helpers) = (q.verify_rust, q.verify_rust_helpers);
 
@@ -278,11 +278,176 @@ fn prepare_verifier_rust(
     Ok(lines.join("\n"))
 }
 
+/// The Rust source of a generated `q_verify`: the chunk helpers and the function body.
+#[derive(Debug, Clone, Default)]
+pub struct VerifyRust {
+    pub verify_rust_helpers: Vec<String>,
+    pub verify_rust: Vec<String>,
+}
+
+/// `q_verify`'s Rust source: one assignment per instruction, chunked; `packed = false` gives temporary `k` its own slot.
+pub fn rust_verify_lines(
+    stark_info: &StarkInfo,
+    code: &VerifierCode,
+    function_name: &str,
+    packed: bool,
+) -> Result<VerifyRust> {
+    // slot reuse would need owner approval (Task D speed rule)
+    ensure!(!packed, "packed verifier temporaries are not implemented");
+    let ext = crate::types::FIELD_EXTENSION;
+    code.check_dims(ext).map_err(|e| anyhow!("{function_name}: {e:?}"))?;
+    let mut slots: HashMap<u32, (usize, usize)> = HashMap::new();
+    let mut count = [0usize; 2];
+    let mut lines: Vec<String> = Vec::with_capacity(code.code.len());
+    let mut uses: Vec<Uses> = Vec::with_capacity(code.code.len());
+    for ins in &code.code {
+        let mut u = Uses::default();
+        let mut args: Vec<(String, usize)> = Vec::with_capacity(2);
+        for s in &ins.src {
+            let e = match s.operand {
+                Operand::Tmp(k) => {
+                    let (d, slot) = slots[&k];
+                    format!("tmp_{d}[{slot}]")
+                }
+                Operand::Eval(k) => format!("evals[{k}]"),
+                Operand::Challenge { id, .. } => format!("challenges[{id}]"),
+                Operand::Number(ref v) => format!("Goldilocks::new({})", goldilocks_u64(v)?),
+                Operand::Public(id) => {
+                    ensure!((id as u64) < stark_info.n_publics, "tmp {}: public {id} is out of range", ins.dest);
+                    format!("_publics[{id}]")
+                }
+                Operand::Zi { boundary } => {
+                    ensure!(boundary == 0, "tmp {}: Zi {boundary}: q_verify has only the everyRow zerofier", ins.dest);
+                    String::from("zi[0]")
+                }
+                Operand::ProofValue { .. } | Operand::AirValue { .. } | Operand::AirgroupValue { .. } => {
+                    bail!("tmp {}: q_verify has no {:?} input", ins.dest, s.operand)
+                }
+            };
+            u.add(&s.operand, s.dim == ext);
+            args.push((e, s.dim));
+        }
+        let dim = ins.dim;
+        let slot = count[usize::from(dim == ext)];
+        count[usize::from(dim == ext)] += 1;
+        slots.insert(ins.dest, (dim, slot));
+        u.tmp[usize::from(dim == ext)] = true;
+        let dest = format!("tmp_{dim}[{slot}]");
+        // the scalar goes on the right: CubicExtensionField implements ext op base
+        let line = match (ins.op, args.as_slice()) {
+            (CodeOp::Copy, [a]) => format!("    {dest} = {};", a.0),
+            (op, [a, b]) => {
+                let swap = a.1 == 1 && b.1 == ext;
+                let (x, y) = if swap { (&b.0, &a.0) } else { (&a.0, &b.0) };
+                match op {
+                    CodeOp::Add => format!("    {dest} = {x} + {y};"),
+                    CodeOp::Mul => format!("    {dest} = {x} * {y};"),
+                    CodeOp::Sub if swap => format!("    {dest} = {x}.sub_from_scalar({y});"),
+                    _ => format!("    {dest} = {x} - {y};"),
+                }
+            }
+            _ => unreachable!("operand count checked above"),
+        };
+        lines.push(line);
+        uses.push(u);
+    }
+    let last = code.code.last().ok_or_else(|| anyhow!("{function_name}: no verifier code"))?;
+    let &(dim, slot) = &slots[&last.dest];
+    ensure!(dim == ext, "{function_name}: the result is not an extension element");
+
+    let mut out = VerifyRust::default();
+    let [count1d, count3d] = count;
+    if count1d > 0 {
+        out.verify_rust.push(format!("    let mut tmp_1 = vec![Goldilocks::ZERO; {count1d}];"));
+    }
+    if count3d > 0 {
+        out.verify_rust.push(format!(
+            "    let mut tmp_3 = vec![CubicExtensionField {{ value: [Goldilocks::ZERO, Goldilocks::ZERO, Goldilocks::ZERO] }}; {count3d}];"
+        ));
+    }
+    if lines.len() <= RUST_VERIFIER_CHUNK_SIZE {
+        out.verify_rust.extend(lines);
+    } else {
+        for (i, (body, us)) in
+            lines.chunks(RUST_VERIFIER_CHUNK_SIZE).zip(uses.chunks(RUST_VERIFIER_CHUNK_SIZE)).enumerate()
+        {
+            let used = us.iter().fold(Uses::default(), |a, b| a.or(b));
+            // a chunk that does not touch a tmp vector still takes it, underscored
+            let (mut params, mut call) = (Vec::new(), Vec::new());
+            for (k, n, ty, present) in [
+                (0, "tmp_1", "&mut [Goldilocks]", count1d > 0),
+                (1, "tmp_3", "&mut [CubicExtensionField<Goldilocks>]", count3d > 0),
+            ] {
+                if present {
+                    let u = if used.tmp[k] { "" } else { "_" };
+                    params.push(format!("{u}{n}: {ty}"));
+                    call.push(format!("&mut {n}"));
+                }
+            }
+            for (n, ty, present) in [
+                ("challenges", "&[CubicExtensionField<Goldilocks>]", used.challenges),
+                ("evals", "&[CubicExtensionField<Goldilocks>]", used.evals),
+                ("_publics", "&[Goldilocks]", used.publics),
+                ("zi", "&[CubicExtensionField<Goldilocks>]", used.zi),
+            ] {
+                if present {
+                    params.push(format!("{n}: {ty}"));
+                    call.push(n.to_string());
+                }
+            }
+            let name = format!("{function_name}_chunk_{i}");
+            out.verify_rust_helpers
+                .extend(["#[inline(never)]", "#[rustfmt::skip]", "#[allow(clippy::all)]"].map(String::from));
+            out.verify_rust_helpers.push(format!("fn {name}({}) {{", params.join(", ")));
+            out.verify_rust_helpers.extend(body.iter().cloned());
+            out.verify_rust_helpers.push("}\n".to_string());
+            out.verify_rust.push(format!("    {name}({});", call.join(", ")));
+        }
+    }
+    out.verify_rust.push(format!("    return tmp_3[{slot}];"));
+    Ok(out)
+}
+
+/// The `q_verify` inputs and temporary vectors (`tmp[0]` base, `tmp[1]` ext) a block of lines reads or writes.
+#[derive(Default, Clone, Copy)]
+struct Uses {
+    challenges: bool,
+    evals: bool,
+    publics: bool,
+    zi: bool,
+    tmp: [bool; 2],
+}
+
+impl Uses {
+    fn add(&mut self, o: &Operand, ext: bool) {
+        match o {
+            Operand::Challenge { .. } => self.challenges = true,
+            Operand::Eval(_) => self.evals = true,
+            Operand::Public(_) => self.publics = true,
+            Operand::Zi { .. } => self.zi = true,
+            Operand::Tmp(_) => self.tmp[usize::from(ext)] = true,
+            _ => {}
+        }
+    }
+
+    fn or(self, o: &Uses) -> Uses {
+        Uses {
+            challenges: self.challenges | o.challenges,
+            evals: self.evals | o.evals,
+            publics: self.publics | o.publics,
+            zi: self.zi | o.zi,
+            tmp: [self.tmp[0] | o.tmp[0], self.tmp[1] | o.tmp[1]],
+        }
+    }
+}
+
+/// Number of verifier operations per `#[inline(never)]` helper chunk (matches JS).
+const RUST_VERIFIER_CHUNK_SIZE: usize = 100;
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::output::test_support::full_random;
-    use crate::types::stark_info::PolMap;
     use pil_info::core::dag::format::{DagBoundary, DagNode, DagRoot};
     use pil_info::core::dag::lower_code::{CodeOp, Instr, Operand, Src, VerifierCode};
     use std::collections::HashSet;
@@ -305,7 +470,8 @@ mod tests {
     fn q_verify_one_assignment_per_op_node() {
         for f in full_random(3) {
             let dag = &f.vi.constraint_dag;
-            let code = lower_to_code(dag, &lower_ctx(&f.si).unwrap(), Fold::Stark).unwrap();
+            let ctx = LowerCtx::new(f.si.lower_tables.clone()).unwrap();
+            let code = lower_to_code(dag, &ctx, Fold::Stark).unwrap();
             // op nodes + fold instructions (copy of leaf roots, mul/add per root, final mul by Zi)
             assert_eq!(code.code.len(), code.tmp_used);
             let r = rust_verify_lines(&f.si, &code, "q_verify", false).unwrap();
@@ -354,8 +520,8 @@ mod tests {
         let Some((si, vi)) = shared_key() else { return };
         assert!(write(&si, &vi).is_ok(), "baseline: the unmodified key renders");
         let (mut si, mut vi) = (si, vi);
-        if si.air_values_map.is_empty() {
-            si.air_values_map = vec![PolMap { stage: 2, dim: 3, ..Default::default() }];
+        if si.lower_tables.air_values_stage.is_empty() {
+            si.lower_tables.air_values_stage = vec![2];
         }
         let dag = &mut vi.constraint_dag;
         dag.nodes.push(DagNode::AirValue { id: 0 });

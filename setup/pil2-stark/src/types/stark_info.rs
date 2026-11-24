@@ -3,6 +3,8 @@ use serde_json::Value;
 use std::collections::HashMap;
 
 use pil_info::core::dag::format::ConstraintDag;
+use pil_info::core::dag::lower_code::LowerTables;
+use pil_info::FieldCfg;
 use crate::types::stark_struct::{LowDegreeTest, StarkStruct};
 use crate::types::{goldilocks_u64, GOLDILOCKS_MODULUS};
 
@@ -66,6 +68,8 @@ pub struct StarkInfo {
     pub multiproof: bool,
     /// The same json as `proofman_common::StarkInfo`, or why it does not parse.
     pub common: Option<std::result::Result<proofman_common::StarkInfo, String>>,
+    /// The constraint DAG's resolver tables (`LowerTables::from_starkinfo`).
+    pub lower_tables: LowerTables,
 }
 
 /// Expression code block as loaded from expressionsInfo JSON.
@@ -293,6 +297,7 @@ impl StarkInfo {
             map_sections_n,
             multiproof: get_bool(j, "multiproof"),
             common: Some(common),
+            lower_tables: LowerTables::from_starkinfo(j).map_err(|e| anyhow!("starkinfo: {e:?}"))?,
         })
     }
 }
@@ -372,8 +377,8 @@ impl VerifierInfo {
     /// Parse from the verifierInfo JSON; fails without a `constraintDag`.
     pub fn from_json(j: &Value) -> Result<Self> {
         let dag =
-            j.get("constraintDag").ok_or_else(|| anyhow!("verifierinfo has no constraintDag: regenerate the setup"))?;
-        Ok(VerifierInfo { constraint_dag: serde_json::from_value(dag.clone()).context("the constraintDag")? })
+            ConstraintDag::from_verifierinfo(j, &FieldCfg::goldilocks()).map_err(|e| anyhow!("verifierinfo: {e:?}"))?;
+        Ok(VerifierInfo { constraint_dag: dag })
     }
 }
 

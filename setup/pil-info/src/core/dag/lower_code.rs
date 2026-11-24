@@ -3,12 +3,14 @@
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 
+use serde_json::Value;
+
 use crate::core::dag::format::{ConstraintDag, DagBoundary, DagError, DagNode};
 use crate::core::fold::fold_roots;
 use crate::core::ir::{ColRef, ColType};
 
 /// What a DAG's references resolve against; `ev_map[k]` is evaluation `k`, `challenges[k]` is `(stage, stage_id)`.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct LowerTables {
     pub ev_map: Vec<ColRef>,
     pub challenges: Vec<(u32, u32)>,
@@ -86,9 +88,51 @@ pub fn ev_col_ref(ty: &str, commit_id: Option<u32>, id: u32, offset: i64) -> Opt
     Some(ColRef { col, commit_id, id, offset })
 }
 
-/// Index of the challenge named `std_vc`.
-pub fn std_vc_index<'a>(names: impl IntoIterator<Item = &'a str>) -> Option<usize> {
-    names.into_iter().position(|n| n == "std_vc")
+/// Index of the challenge named `std_vc`; a second one is refused.
+fn std_vc_index<'a>(names: impl IntoIterator<Item = &'a str>) -> Result<Option<usize>, DagError> {
+    let mut at = names.into_iter().enumerate().filter(|(_, n)| *n == "std_vc").map(|(i, _)| i);
+    match (at.next(), at.next()) {
+        (_, Some(_)) => Err(DagError::DuplicateKey { what: "challenge std_vc".into() }),
+        (i, None) => Ok(i),
+    }
+}
+
+impl LowerTables {
+    /// The tables of a starkinfo JSON: evMap by `prime`, `std_vc` by name (past the end when absent), value stages.
+    pub fn from_starkinfo(si: &Value) -> Result<Self, DagError> {
+        let bad = |what: String| DagError::Unresolved { node: 0, what: format!("starkinfo {what}") };
+        let num = |v: &Value, k: &str| v.get(k).and_then(Value::as_u64).and_then(|x| u32::try_from(x).ok());
+        let list = |k: &str| si.get(k).and_then(Value::as_array).map_or(&[][..], Vec::as_slice);
+        let ev_map = (list("evMap").iter())
+            .map(|e| {
+                let (ty, offset) =
+                    (e.get("type").and_then(Value::as_str).unwrap_or(""), e.get("prime").and_then(Value::as_i64));
+                let col = num(e, "id").zip(offset).and_then(|(id, o)| ev_col_ref(ty, num(e, "commitId"), id, o));
+                col.ok_or_else(|| bad(format!("evMap entry {e}")))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let ch = list("challengesMap");
+        let challenges = (ch.iter())
+            .map(|c| num(c, "stage").zip(num(c, "stageId")).ok_or_else(|| bad(format!("challengesMap entry {c}"))))
+            .collect::<Result<Vec<_>, _>>()?;
+        let vc = std_vc_index(ch.iter().map(|c| c.get("name").and_then(Value::as_str).unwrap_or("")))?;
+        let stages = |k: &str| {
+            list(k)
+                .iter()
+                .map(|p| num(p, "stage").ok_or_else(|| bad(format!("{k} entry {p}"))))
+                .collect::<Result<Vec<u32>, _>>()
+        };
+        Ok(LowerTables {
+            vc: vc.unwrap_or(challenges.len()),
+            ev_map,
+            challenges,
+            n_publics: num(si, "nPublics").unwrap_or(0),
+            air_values_stage: stages("airValuesMap")?,
+            proof_values_stage: stages("proofValuesMap")?,
+            airgroup_values_stage: stages("airgroupValuesMap")?,
+            ext_dim: 3,
+        })
+    }
 }
 
 impl VerifierCode {
@@ -242,6 +286,9 @@ pub fn stark_roots(dag: &ConstraintDag) -> Result<Vec<u32>, DagError> {
 
 /// One instruction per operation node in node order (the only traversal); `val[i]` is node `i`'s value.
 fn lower_nodes(dag: &ConstraintDag, ctx: &LowerCtx) -> Result<(Vec<Instr>, Vec<Src>), DagError> {
+    if dag.ext_dim as usize != ctx.tables().ext_dim {
+        return Err(DagError::NonCanonical { node: 0, why: "the DAG's extDim is not the lowering context's" });
+    }
     let mut code: Vec<Instr> = Vec::new();
     let mut val: Vec<Src> = Vec::with_capacity(dag.nodes.len());
     for (i, n) in dag.nodes.iter().enumerate() {
@@ -277,9 +324,6 @@ pub fn lower_roots(dag: &ConstraintDag, ctx: &LowerCtx) -> Result<(Vec<Instr>, V
 /// Shplonk first multiplies each non-everyRow root by its boundary's `Zi`.
 pub fn lower_to_code(dag: &ConstraintDag, ctx: &LowerCtx, fold: Fold<'_>) -> Result<VerifierCode, DagError> {
     let ext = ctx.tables().ext_dim;
-    if dag.ext_dim as usize != ext {
-        return Err(DagError::NonCanonical { node: 0, why: "the DAG's extDim is not the lowering context's" });
-    }
     let (roots, every_row) = match fold {
         Fold::Stark => (stark_roots(dag)?.into_iter().map(|n| (n, None)).collect(), 0),
         Fold::Shplonk { boundaries } => shplonk_roots(dag, boundaries)?,

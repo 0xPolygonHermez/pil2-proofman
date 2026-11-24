@@ -1,7 +1,7 @@
 use proofman_fields::PrimeField64;
 
 use proofman_starks_lib_c::{
-    expressions_bin_free_c, expressions_bin_new_c, get_n_publics_c, get_proof_size_c, stark_info_free_c,
+    constraint_dag_free_c, constraint_dag_new_c, get_n_publics_c, get_proof_size_c, stark_info_free_c,
     stark_info_new_c, stark_verify_bn128_c, stark_verify_c, stark_verify_from_file_c,
 };
 
@@ -21,7 +21,7 @@ pub fn verify_proof_from_file<F: PrimeField64>(
     challenges: Option<Vec<F>>,
 ) -> bool {
     let p_stark_info = stark_info_new_c(stark_info_path.as_str(), false, false, false, true, false);
-    let p_expressions_bin = expressions_bin_new_c(verifier_info_path.as_str(), false, true);
+    let p_constraint_dag = constraint_dag_new_c(verifier_info_path.as_str());
 
     let proof_challenges_ptr = match challenges {
         Some(ref challenges) => challenges.as_ptr() as *mut u8,
@@ -42,14 +42,14 @@ pub fn verify_proof_from_file<F: PrimeField64>(
         &verkey_path,
         &proof_file,
         p_stark_info,
-        p_expressions_bin,
+        p_constraint_dag,
         publics_ptr,
         proof_values_ptr,
         proof_challenges_ptr,
     );
 
     // Clean up allocated resources
-    expressions_bin_free_c(p_expressions_bin);
+    constraint_dag_free_c(p_constraint_dag);
     stark_info_free_c(p_stark_info);
 
     result
@@ -73,7 +73,7 @@ pub fn verify_proof<F: PrimeField64>(
     global_challenge: Option<Vec<F>>,
 ) -> bool {
     let p_stark_info = stark_info_new_c(stark_info_path.as_str(), false, false, false, true, false);
-    let p_expressions_bin = expressions_bin_new_c(verifier_info_path.as_str(), false, true);
+    let p_constraint_dag = constraint_dag_new_c(verifier_info_path.as_str());
 
     let proof_size = get_proof_size_c(p_stark_info) as usize;
     let n_publics = get_n_publics_c(p_stark_info) as usize;
@@ -92,7 +92,7 @@ pub fn verify_proof<F: PrimeField64>(
             "··· {}",
             format!("\u{2717} Proof does not match {stark_info_path}: {reason}").bright_red().bold()
         );
-        expressions_bin_free_c(p_expressions_bin);
+        constraint_dag_free_c(p_constraint_dag);
         stark_info_free_c(p_stark_info);
         return false;
     }
@@ -116,14 +116,14 @@ pub fn verify_proof<F: PrimeField64>(
         &verkey_path,
         proof.as_ptr() as *mut u64,
         p_stark_info,
-        p_expressions_bin,
+        p_constraint_dag,
         publics_ptr,
         proof_values_ptr,
         global_challenge_ptr,
     );
 
     // Clean up allocated resources
-    expressions_bin_free_c(p_expressions_bin);
+    constraint_dag_free_c(p_constraint_dag);
     stark_info_free_c(p_stark_info);
 
     result
@@ -135,17 +135,17 @@ pub fn verify_proof_bn128<F: PrimeField64>(p_proof: *mut c_void, setup: &Setup<F
     let verkey_path = setup.setup_path.display().to_string() + ".verkey.json";
 
     let p_stark_info = stark_info_new_c(stark_info_path.as_str(), false, false, false, true, false);
-    let p_expressions_bin = expressions_bin_new_c(verifier_info_path.as_str(), false, true);
+    let p_constraint_dag = constraint_dag_new_c(verifier_info_path.as_str());
 
     let publics_ptr = match publics {
         Some(ref publics) => publics.as_ptr() as *mut u8,
         None => std::ptr::null_mut(),
     };
 
-    let result = stark_verify_bn128_c(&verkey_path, p_proof, p_stark_info, p_expressions_bin, publics_ptr);
+    let result = stark_verify_bn128_c(&verkey_path, p_proof, p_stark_info, p_constraint_dag, publics_ptr);
 
     // Clean up allocated resources
-    expressions_bin_free_c(p_expressions_bin);
+    constraint_dag_free_c(p_constraint_dag);
     stark_info_free_c(p_stark_info);
 
     result

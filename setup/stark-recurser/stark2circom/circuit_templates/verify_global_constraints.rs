@@ -7,13 +7,7 @@
 
 use serde_json::Value;
 
-fn parse_num_proof_values(v: &Value) -> usize {
-    if let Some(arr) = v.as_array() {
-        arr.iter().map(|e| e.as_u64().unwrap_or(0)).sum::<u64>() as usize
-    } else {
-        v.as_u64().unwrap_or(0) as usize
-    }
-}
+use super::parse_num_proof_values;
 
 const MIN_CHUNK_SIZE: usize = 50;
 

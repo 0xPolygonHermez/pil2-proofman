@@ -20,6 +20,8 @@ pub enum PiloutError {
     CyclicRef { expr: usize },
     #[error("the pilout has no air {air} in airgroup {airgroup}")]
     UnknownAir { airgroup: usize, air: usize },
+    #[error("no pilout expression has canonical id {id}")]
+    NoExpression { id: u32 },
     #[error("expression {expr}: {why}")]
     BadOperand { expr: usize, why: &'static str },
     #[error("hint `{hint}`: {why}")]

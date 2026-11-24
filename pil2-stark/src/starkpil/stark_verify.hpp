@@ -1,6 +1,7 @@
 #include "expressions_ctx.hpp"
 #include "stir/stir.hpp"
 #include "stark_info.hpp"
+#include "constraint_dag.hpp"
 #include "deep.hpp"
 #include "merkleTreeGL.hpp"
 #include "merkleTreeBN128.hpp"
@@ -94,10 +95,10 @@ StirProof<ElementType> stirProofFromJson(json &jproof, const StirParams &params,
 }
 
 template <typename ElementType>
-bool starkVerify(json jproof, StarkInfo& starkInfo, ExpressionsBin& expressionsBin, string verkeyFile, Goldilocks::Element *publics, Goldilocks::Element *proofValues, bool challengesVadcop, Goldilocks::Element* globalChallenge) {
+bool starkVerify(json jproof, StarkInfo& starkInfo, ConstraintDag& dag, string verkeyFile, Goldilocks::Element *publics, Goldilocks::Element *proofValues, bool challengesVadcop, Goldilocks::Element* globalChallenge) {
 
     std::string dagErr;
-    if(!checkConstraintDag(expressionsBin.constraintDag, starkInfo, dagErr)) {
+    if(!checkConstraintDag(dag, starkInfo, dagErr)) {
         zklog.error("starkVerify: " + dagErr + "; regenerate the setup");
         return false;
     }
@@ -456,7 +457,7 @@ bool starkVerify(json jproof, StarkInfo& starkInfo, ExpressionsBin& expressionsB
     DagInputs dagInputs = {evals, challenges, publics, proofValues, airValues, airgroupValues, {xN[0] - Goldilocks::one(), xN[1], xN[2]}};
     Goldilocks3::inv((Goldilocks3::Element &)dagInputs.zi, (Goldilocks3::Element &)dagInputs.zi);
     Goldilocks::Element buff[FIELD_EXTENSION];
-    evalConstraintDag(expressionsBin.constraintDag, dagInputs, buff);
+    evalConstraintDag(dag, dagInputs, buff);
 
     Goldilocks::Element xAcc[3] = { Goldilocks::one(), Goldilocks::zero(), Goldilocks::zero() };
     Goldilocks::Element q[3] = { Goldilocks::zero(), Goldilocks::zero(), Goldilocks::zero() };

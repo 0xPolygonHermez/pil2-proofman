@@ -13,25 +13,10 @@ use super::vadcop_inputs::{
     init_vadcop_inputs, AggVadcopOptions, AssignVadcopOptions, VadcopSignals,
 };
 use super::verify_global_constraints::gen_verify_global_constraints;
-use super::CircomGenOptions;
+use super::{parse_num_proof_values, CircomGenOptions};
 use crate::stark2circom::circom_verifier::lib_bn128::uses_custom_templates;
 
 // ── helpers ───────────────────────────────────────────────────────────────────
-
-/// Parse `numProofValues` from a vadcop_info JSON value.
-///
-/// In the serialised globalInfo, `numProofValues` is emitted as a JSON array
-/// (one entry per stage, e.g. `[2]`).  JavaScript coerces `[2] > 0` → `true`
-/// and `[2].toString() === "2"`, so the JS templates work transparently.
-/// Rust must do the coercion explicitly: sum the array elements, or fall back
-/// to treating the value as a plain scalar.
-fn parse_num_proof_values(v: &Value) -> usize {
-    if let Some(arr) = v.as_array() {
-        arr.iter().map(|e| e.as_u64().unwrap_or(0)).sum::<u64>() as usize
-    } else {
-        v.as_u64().unwrap_or(0) as usize
-    }
-}
 
 // ── Embedded Tera templates ───────────────────────────────────────────────────
 
@@ -319,7 +304,7 @@ pub fn gen_compressor(
         n_publics > 0,
         format!("    for (var i=0; i< {n_publics}; i++) {{\n        sV.publics[i] <== publics[i];\n    }}\n\n"),
     );
-    out += &init_vadcop_inputs("sV", "sv", "", airgroup_id, stark_info, vadcop_info, None);
+    out += &init_vadcop_inputs("sV", "sv", "", airgroup_id, stark_info, vadcop_info, None)?;
     out += &format!("\n}}\n\ncomponent main {{public [{}]}} = Compressor();\n", pub_names.join(", "));
     Ok(out)
 }
@@ -373,7 +358,7 @@ pub fn gen_recursive1(
         out += &assign_stark_inputs("sV", "", stark_info, &assign_opts, &EnableInput::None);
         out += "\n\n";
         out += &if !has_compressor {
-            init_vadcop_inputs("sV", "sv", "", airgroup_id, stark_info, vadcop_info, None)
+            init_vadcop_inputs("sV", "sv", "", airgroup_id, stark_info, vadcop_info, None)?
         } else {
             let av_opts = AssignVadcopOptions { add_prefix_agg_types: true, ..Default::default() };
             assign_vadcop_inputs("sV", vadcop_info, airgroup_id, "sv", "", &av_opts)
@@ -401,7 +386,7 @@ pub fn gen_recursive1(
             vadcop += &if has_compressor {
                 assign_vadcop_inputs(&comp, vadcop_info, airgroup_id, pfx, l, &av_opts)
             } else {
-                init_vadcop_inputs(&comp, pfx, l, airgroup_id, stark_info, vadcop_info, Some(&format!("{l}_isNull")))
+                init_vadcop_inputs(&comp, pfx, l, airgroup_id, stark_info, vadcop_info, Some(&format!("{l}_isNull")))?
             };
             vadcop += "\n";
         }

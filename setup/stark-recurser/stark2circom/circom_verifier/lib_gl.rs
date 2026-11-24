@@ -2,8 +2,7 @@
 //! (`lib_params`), the constraints (`ConstraintRoots<suffix>`) and `StarkVerifier<suffix>`, which wires
 //! transcript -> roots -> checks and, until stage 4, keeps today's named proof inputs.
 
-use anyhow::{anyhow, bail, Context, Result};
-use pil_info::core::dag::format::ConstraintDag;
+use anyhow::{bail, Context, Result};
 use proofman_common::StarkInfo;
 use serde_json::Value;
 
@@ -78,9 +77,7 @@ pub(crate) fn gen_stark_verifier_gl(
     if info.ev_map.is_empty() {
         bail!("evMap has no evaluations, so the DEEP polynomial is undefined");
     }
-    let dag = vi.get("constraintDag").context("verifierinfo has no constraintDag: regenerate the setup")?;
-    let dag: ConstraintDag = serde_json::from_value(dag.clone()).map_err(|e| anyhow!("constraintDag: {e}"))?;
-    let ctx = super::lower_ctx(&info)?;
+    let (dag, ctx) = super::dag_and_ctx(si, vi)?;
     let roots = constraint_roots(&sfx, &dag, &ctx)?;
     let key = KeyData::new(
         &info,

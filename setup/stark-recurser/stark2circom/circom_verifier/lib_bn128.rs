@@ -7,8 +7,6 @@ use anyhow::{bail, Context, Result};
 use proofman_common::StarkInfo;
 use serde_json::Value;
 
-use pil_info::core::dag::format::ConstraintDag;
-
 use super::constraint_roots::constraint_eval_bn128;
 use super::lib_params::KeyData;
 use super::Pil2CircomOptions;
@@ -141,9 +139,8 @@ fn gen(
             ss.merkle_tree_arity
         );
     }
-    let dag = vi.get("constraintDag").context("verifierinfo has no constraintDag: regenerate the setup")?;
-    let dag: ConstraintDag = serde_json::from_value(dag.clone()).context("constraintDag")?;
-    out += &constraint_eval_bn128(&dag, &super::lower_ctx(&info)?)?;
+    let (dag, ctx) = super::dag_and_ctx(si, vi)?;
+    out += &constraint_eval_bn128(&dag, &ctx)?;
 
     // ---- StarkVerifier: the key's vars, the proof inputs, the library ----
     let mut d = key.vars.clone();

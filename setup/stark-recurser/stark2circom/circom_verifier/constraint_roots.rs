@@ -5,7 +5,9 @@
 
 use anyhow::{anyhow, bail, Result};
 use pil_info::core::dag::format::ConstraintDag;
-use pil_info::core::dag::lower_code::{lower_roots, lower_to_code, CodeOp, Fold, Instr, LowerCtx, Operand, Src};
+use pil_info::core::dag::lower_code::{
+    lower_roots, lower_to_code, CodeOp, Fold, Instr, LowerCtx, Operand, Src, VerifierCode,
+};
 
 /// The generated template plus what the params record about it.
 pub(crate) struct ConstraintRoots {
@@ -15,44 +17,34 @@ pub(crate) struct ConstraintRoots {
 }
 
 /// A value-map entry: limb 0 at stage 1 (base field), all three after.
-fn value(map: &str, id: u32, stage: u32) -> (String, usize) {
+fn value(map: &str, id: u32, stage: u32) -> String {
     if stage == 1 {
-        (format!("{map}[{id}][0]"), 1)
+        format!("{map}[{id}][0]")
     } else {
-        (format!("{map}[{id}]"), 3)
+        format!("{map}[{id}]")
     }
 }
 
-/// The circom expression of an operand; its DAG dimension must be the one its signal has.
-fn operand(src: &Src, code: &[Instr]) -> Result<String> {
-    let (name, dim) = match &src.operand {
-        Operand::Tmp(k) => (
-            format!("tmp_{k}"),
-            code.get(*k as usize).ok_or_else(|| anyhow!("tmp_{k} is read before it is written"))?.dim,
-        ),
-        Operand::Eval(k) => (format!("evals[{k}]"), 3),
-        Operand::Challenge { id, .. } => (format!("challenges[{id}]"), 3),
-        Operand::Number(v) => (v.clone(), 1),
-        Operand::Public(id) => (format!("publics[{id}]"), 1),
+/// The circom expression of an operand.
+fn operand(src: &Src) -> Result<String> {
+    Ok(match &src.operand {
+        Operand::Tmp(k) => format!("tmp_{k}"),
+        Operand::Eval(k) => format!("evals[{k}]"),
+        Operand::Challenge { id, .. } => format!("challenges[{id}]"),
+        Operand::Number(v) => v.clone(),
+        Operand::Public(id) => format!("publics[{id}]"),
         Operand::ProofValue { id, stage } => value("proofvalues", *id, *stage),
         Operand::AirValue { id, stage } => value("airvalues", *id, *stage),
         Operand::AirgroupValue { id, stage } => value("airgroupvalues", *id, *stage),
         Operand::Zi { .. } => bail!("Zi belongs to the fold, not to a constraint"),
-    };
-    if src.dim != dim {
-        bail!("dimension mismatch: {name} is a dim-{dim} signal, the DAG reads it as dim {}", src.dim);
-    }
-    Ok(name)
+    })
 }
 
 /// One instruction, in unroll_code's forms so the constraints are today's.
 // The Tera verifier's forms over lower_roots' stream (counts measured identical).
-fn instr(i: &Instr, code: &[Instr]) -> Result<String> {
+fn instr(i: &Instr) -> Result<String> {
     let [a, b] = &i.src[..] else { bail!("tmp_{} has {} operands", i.dest, i.src.len()) };
-    if i.dim != a.dim.max(b.dim) || !(i.dim == 1 || i.dim == 3) {
-        bail!("dimension mismatch: tmp_{} is dim {} from dims {} and {}", i.dest, i.dim, a.dim, b.dim);
-    }
-    let (x, y) = (operand(a, code)?, operand(b, code)?);
+    let (x, y) = (operand(a)?, operand(b)?);
     let rhs = match (i.op, a.dim, b.dim) {
         (CodeOp::Add, 1, 1) => format!("{x} + {y}"),
         (CodeOp::Add, 1, 3) => format!("[{x} + {y}[0], {y}[1],  {y}[2]]"),
@@ -75,6 +67,8 @@ fn instr(i: &Instr, code: &[Instr]) -> Result<String> {
 /// `template parallel ConstraintRoots{suffix}()`, fixed signature (empty inputs padded to one entry).
 pub(crate) fn constraint_roots(suffix: &str, dag: &ConstraintDag, ctx: &LowerCtx) -> Result<ConstraintRoots> {
     let (code, roots) = lower_roots(dag, ctx).map_err(|e| anyhow!("constraintDag: {e:?}"))?;
+    let code = VerifierCode { tmp_used: code.len(), code };
+    code.check_dims(3).map_err(|e| anyhow!("constraintDag: {e:?}"))?;
     let t = ctx.tables();
     let len1 = |n: usize| n.max(1);
     let mut out = format!(
@@ -95,12 +89,12 @@ pub(crate) fn constraint_roots(suffix: &str, dag: &ConstraintDag, ctx: &LowerCtx
         len1(t.airgroup_values_stage.len()),
         roots.len(),
     );
-    for i in &code {
-        out += &instr(i, &code)?;
+    for i in &code.code {
+        out += &instr(i)?;
     }
     out.push('\n');
     for (k, r) in roots.iter().enumerate() {
-        let x = operand(r, &code)?;
+        let x = operand(r)?;
         out += &if r.dim == 3 {
             format!("    roots[{k}] <== {x};\n")
         } else {
@@ -212,7 +206,9 @@ impl Bn128Code {
 
 /// `template ConstraintEval()`: the folded constraints at xi times Zh, as `evalP` (BN128 verifier).
 pub(crate) fn constraint_eval_bn128(dag: &ConstraintDag, ctx: &LowerCtx) -> Result<String> {
-    let code = lower_to_code(dag, ctx, Fold::Stark).map_err(|e| anyhow!("constraintDag: {e:?}"))?.code;
+    let code = lower_to_code(dag, ctx, Fold::Stark).map_err(|e| anyhow!("constraintDag: {e:?}"))?;
+    code.check_dims(3).map_err(|e| anyhow!("constraintDag: {e:?}"))?;
+    let code = code.code;
     let mut b = Bn128Code::default();
     for i in &code {
         b.instr(i)?;
@@ -310,18 +306,14 @@ mod tests {
         assert!(e.to_string().contains("everyRow"), "{e}");
     }
 
+    /// The one dimension rule refuses a DAG over another extension (here degree 2).
     #[test]
-    fn refuses_a_dimension_mismatch() {
-        let code = vec![Instr { op: CodeOp::Mul, dest: 0, dim: 3, src: vec![] }];
-        let src = Src { operand: Operand::Eval(0), dim: 1 };
-        let Err(e) = operand(&src, &code) else { panic!("an extension evaluation read as base field") };
-        assert!(e.to_string().contains("dimension mismatch"), "{e}");
-        let bad = Instr {
-            op: CodeOp::Add,
-            dest: 1,
-            dim: 1,
-            src: vec![Src { operand: Operand::Eval(0), dim: 3 }, Src { operand: Operand::Public(0), dim: 1 }],
-        };
-        assert!(instr(&bad, &code).unwrap_err().to_string().contains("dimension mismatch"));
+    fn bn128_refuses_a_dimension_mismatch() {
+        let mut t = ctx().tables().clone();
+        t.ext_dim = 2;
+        let mut d = dag(vec![cm(0), cm(1), DagNode::Mul { a: 0, b: 1 }], &[2]);
+        d.ext_dim = 2;
+        let e = constraint_eval_bn128(&d, &LowerCtx::new(t).unwrap()).unwrap_err();
+        assert!(e.to_string().contains("Dimension"), "{e}");
     }
 }

@@ -64,7 +64,7 @@
 //!
 //! The im pols are given as the indices of their expressions in the pilout. The setup's `expId`
 //! (of the `imPol` entries of `cmPolsMap`) is the core's canonical numbering: map it back with
-//! `pil_info::core::from_pilout::pilout_expr_ids`.
+//! `pil_info::core::from_pilout::pilout_expr_index`.
 //!
 //! **Indices** are the pilout's: witness column `idx` of stage `s` is
 //! `Values::witness[s − 1][idx]`, challenge `idx` of stage `s` is `Values::challenges[s − 1][idx]`,

@@ -4,17 +4,10 @@
 //! - `init_vadcop_inputs.circom.ejs`
 //! - `agg_vadcop_inputs.circom.ejs`
 
+use anyhow::{Context, Result};
 use serde_json::Value;
 
-/// Parse `numProofValues` — which is emitted as a JSON array (e.g. `[2]`) in
-/// globalInfo.json.  Sum the elements, or fall back to a plain scalar.
-fn parse_num_proof_values(v: &Value) -> usize {
-    if let Some(arr) = v.as_array() {
-        arr.iter().map(|e| e.as_u64().unwrap_or(0)).sum::<u64>() as usize
-    } else {
-        v.as_u64().unwrap_or(0) as usize
-    }
-}
+use super::parse_num_proof_values;
 
 // ── define_vadcop_inputs ──────────────────────────────────────────────────────
 
@@ -262,7 +255,7 @@ pub fn init_vadcop_inputs(
     vadcop_info: &Value,
     // Binary signal that is 1 when this slot carries no proof; None for a slot always full.
     is_null: Option<&str>,
-) -> String {
+) -> Result<String> {
     let mut out = String::new();
     let prefix_ = if prefix.is_empty() { String::new() } else { format!("{prefix}_") };
     let prefix_stark_ = if prefix_stark.is_empty() { String::new() } else { format!("{prefix_stark}_") };
@@ -313,27 +306,28 @@ pub fn init_vadcop_inputs(
     let (n_av, av_list) = (av.len(), if av.is_empty() { "0".to_string() } else { av.join(", ") });
     let airvalues = if av.is_empty() { "[[0, 0, 0]]".to_string() } else { format!("{prefix_stark_}airvalues") };
     let hash = if curve == "None" {
-        format!(
-            "CalculateStage1Hash(circuitType, {n_av}, [{av_list}], {})",
-            vadcop_info["latticeSize"].as_u64().unwrap_or(0)
-        )
+        let lattice =
+            vadcop_info["latticeSize"].as_u64().filter(|&n| n > 0).context("vadcopInfo has no latticeSize")?;
+        format!("CalculateStage1Hash(circuitType, {n_av}, [{av_list}], {lattice})")
     } else {
         let c = &vadcop_info["curveConstants"];
-        let k = |n: &str| format!("[{}]", c[n].as_str().unwrap_or("0"));
+        let k = |n: &str| {
+            c[n].as_str().map(|v| format!("[{v}]")).with_context(|| format!("vadcopInfo has no curveConstants.{n}"))
+        };
         format!(
             "CalculateStage1HashEC(circuitType, {n_av}, [{av_list}], {}, {}, {}, {}, {})",
-            k("A"),
-            k("B"),
-            k("Z"),
-            k("C1"),
-            k("C2")
+            k("A")?,
+            k("B")?,
+            k("Z")?,
+            k("C1")?,
+            k("C2")?
         )
     };
     out.push_str(&format!(
         "    {prefix_}stage1Hash <== {hash}({component_name}.rootC, {prefix_stark_}root1, {airvalues});\n"
     ));
 
-    out
+    Ok(out)
 }
 
 // ── agg_vadcop_inputs ─────────────────────────────────────────────────────────

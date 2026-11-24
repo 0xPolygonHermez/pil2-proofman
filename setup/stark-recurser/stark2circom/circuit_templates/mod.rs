@@ -21,6 +21,14 @@ pub use templates::{
     gen_recursive1, gen_recursive2, gen_vadcop_final, SnarkVerifier,
 };
 
+/// `numProofValues` of globalInfo: an array (one count per stage) summed, or a scalar.
+pub(crate) fn parse_num_proof_values(v: &Value) -> usize {
+    match v.as_array() {
+        Some(a) => a.iter().map(|e| e.as_u64().unwrap_or(0)).sum::<u64>() as usize,
+        None => v.as_u64().unwrap_or(0) as usize,
+    }
+}
+
 // ── Public types ──────────────────────────────────────────────────────────────
 
 /// Options forwarded from `GenCircomOptions` / CLI `--has*` flags.

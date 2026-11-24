@@ -400,6 +400,32 @@ fn ctx_rejects_repeated_keys() {
     assert!(matches!(LowerCtx::new(t), Err(DagError::DuplicateKey { .. })), "a repeated challenge");
 }
 
+/// `tables()` as a starkinfo JSON reads it, and its refusals (M1: a second `std_vc`).
+#[test]
+fn tables_from_starkinfo() {
+    let ch = |name: &str, stage: u32, id: u32| serde_json::json!({"name": name, "stage": stage, "stageId": id});
+    let si = serde_json::json!({
+        "nPublics": 5,
+        "evMap": [
+            {"type": "cm", "id": 0, "prime": 0}, {"type": "cm", "id": 0, "prime": 1}, {"type": "cm", "id": 3, "prime": 0},
+            {"type": "const", "id": 1, "prime": 0}, {"type": "custom", "id": 0, "prime": 0, "commitId": 2}
+        ],
+        "challengesMap": [ch("a", 2, 0), ch("b", 2, 1), ch("std_vc", 3, 0)],
+        "airValuesMap": [{"stage": 1}, {"stage": 2}], "proofValuesMap": [{"stage": 1}, {"stage": 2}],
+        "airgroupValuesMap": [{"stage": 2}]
+    });
+    assert_eq!(LowerTables::from_starkinfo(&si).unwrap(), tables());
+    let mut bad = si.clone();
+    bad["evMap"][0]["type"] = "cmm".into();
+    assert!(LowerTables::from_starkinfo(&bad).is_err(), "an unknown evMap type");
+    let mut bad = si.clone();
+    bad["challengesMap"].as_array_mut().unwrap().push(ch("std_vc", 4, 0));
+    assert!(matches!(LowerTables::from_starkinfo(&bad), Err(DagError::DuplicateKey { .. })), "a second std_vc");
+    let mut no_vc = si;
+    no_vc["challengesMap"][2]["name"] = "x".into();
+    assert_eq!(LowerTables::from_starkinfo(&no_vc).unwrap().vc, 3, "an absent std_vc is past the end");
+}
+
 #[test]
 fn dims_follow_the_rule() {
     let c = ctx();

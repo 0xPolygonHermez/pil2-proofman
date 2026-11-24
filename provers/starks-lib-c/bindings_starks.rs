@@ -154,11 +154,11 @@ extern "C" {
 
     // Expressions Bin
     // ========================================================================================
-    pub fn expressions_bin_new(
-        filename: *mut ::std::os::raw::c_char,
-        global: bool,
-        verifier: bool,
-    ) -> *mut ::std::os::raw::c_void;
+    pub fn expressions_bin_new(filename: *mut ::std::os::raw::c_char, global: bool) -> *mut ::std::os::raw::c_void;
+
+    pub fn constraint_dag_new(filename: *mut ::std::os::raw::c_char) -> *mut ::std::os::raw::c_void;
+
+    pub fn constraint_dag_free(pConstraintDag: *mut ::std::os::raw::c_void);
     
     pub fn get_max_n_tmp1(pExpressionsBin: *mut ::std::os::raw::c_void) -> u64;
     
@@ -565,7 +565,7 @@ extern "C" {
     pub fn stark_verify(
         jProof: *mut u64,
         pStarkInfo: *mut ::std::os::raw::c_void,
-        pExpressionsBin: *mut ::std::os::raw::c_void,
+        pConstraintDag: *mut ::std::os::raw::c_void,
         verkey: *mut ::std::os::raw::c_char,
         pPublics: *mut ::std::os::raw::c_void,
         pProofValues: *mut ::std::os::raw::c_void,
@@ -575,7 +575,7 @@ extern "C" {
     pub fn stark_verify_bn128(
         jProof: *mut ::std::os::raw::c_void,
         pStarkInfo: *mut ::std::os::raw::c_void,
-        pExpressionsBin: *mut ::std::os::raw::c_void,
+        pConstraintDag: *mut ::std::os::raw::c_void,
         verkey: *mut ::std::os::raw::c_char,
         pPublics: *mut ::std::os::raw::c_void,
     ) -> bool;
@@ -583,7 +583,7 @@ extern "C" {
     pub fn stark_verify_from_file(
         proof: *mut ::std::os::raw::c_char,
         pStarkInfo: *mut ::std::os::raw::c_void,
-        pExpressionsBin: *mut ::std::os::raw::c_void,
+        pConstraintDag: *mut ::std::os::raw::c_void,
         verkey: *mut ::std::os::raw::c_char,
         pPublics: *mut ::std::os::raw::c_void,
         pProofValues: *mut ::std::os::raw::c_void,

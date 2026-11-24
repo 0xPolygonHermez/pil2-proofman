@@ -15,7 +15,6 @@
 #include "goldilocks_cubic_extension_avx.hpp"
 #include "goldilocks_cubic_extension_avx512.hpp"
 #include "stark_info.hpp"
-#include "constraint_dag.hpp"
 #include <cassert>
 
 const int EXPRESSIONS_SECTION = 1;
@@ -97,8 +96,6 @@ public:
 
     std::vector<Hint> hints;
 
-    ConstraintDag constraintDag; // verifier only
-
     ParserArgs expressionsBinArgsConstraints;
     
     ParserArgs expressionsBinArgsExpressions;
@@ -122,7 +119,7 @@ public:
     };
 
     /* Constructor */
-    ExpressionsBin(string file, bool globalBin = false, bool verifierBin = false);
+    ExpressionsBin(string file, bool globalBin = false);
 
     ExpressionsBin(string starkInfoFile, string expressionsInfoFile, string expressionsBinFile, bool globalBin = false);
 

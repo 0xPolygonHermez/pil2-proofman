@@ -66,6 +66,8 @@ pub enum DagError {
     DuplicateKey { what: String },
     // lowered code whose dimensions or temporaries disagree (`VerifierCode::check_dims`)
     Dimension { tmp: u32, what: String },
+    // a verifierinfo without a decodable `constraintDag`
+    Decode { what: String },
 }
 
 impl ConstraintDag {
@@ -113,6 +115,16 @@ impl ConstraintDag {
             Some(i) => Err(DagError::Unreachable { node: i as u32 }), // < nodes.len()
             None => Ok(()),
         }
+    }
+
+    /// The `constraintDag` of a verifierinfo JSON, validated for `f`: every consumer's one loader.
+    pub fn from_verifierinfo(vi: &serde_json::Value, f: &FieldCfg) -> Result<Self, DagError> {
+        let j = vi
+            .get("constraintDag")
+            .ok_or(DagError::Decode { what: "no constraintDag: regenerate the setup".into() })?;
+        let dag = Self::deserialize(j).map_err(|e| DagError::Decode { what: format!("constraintDag: {e}") })?;
+        dag.validate(f)?;
+        Ok(dag)
     }
 
     /// Number of operation nodes (add, sub, mul, neg).

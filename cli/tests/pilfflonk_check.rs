@@ -64,6 +64,7 @@ mod sum_bus;
 mod witness_libraries;
 
 use std::collections::BTreeSet;
+use pil_info::core::from_pilout::pilout_expr_index;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -751,7 +752,9 @@ fn checks_a_bus_with_fixed_challenges(
             let checked: Vec<Fr> =
                 columns.columns[p.stage as usize - 1][p.stage_pos as usize].iter().map(Fr::from).collect();
             let expected = if p.im_pol {
-                oracle.expression_rows(&values, pilout_exp(&pilout, p.exp_id.unwrap())).unwrap()
+                oracle
+                    .expression_rows(&values, pilout_expr_index(&pilout, 0, 0, p.exp_id.unwrap() as u32).unwrap())
+                    .unwrap()
             } else {
                 values.witness[p.stage as usize - 1][p.stage_id as usize].clone()
             };
@@ -1004,9 +1007,4 @@ fn the_cli_takes_one_witness() {
         assert_eq!(out.status.code(), Some(2), "{source:?}: {}", output(&out));
         assert!(output(&out).contains(expected), "{expected:?} not in:\n{}", output(&out));
     }
-}
-
-/// The pilout index the oracle reads of a key's (canonical) `expId`.
-fn pilout_exp(pilout: &pil2_pilout::pilout::PilOut, exp_id: u64) -> usize {
-    pil_info::core::from_pilout::pilout_expr_index(pilout, 0, 0, exp_id as u32).unwrap().unwrap()
 }

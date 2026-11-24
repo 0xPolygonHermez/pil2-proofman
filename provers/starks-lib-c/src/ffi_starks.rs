@@ -378,12 +378,21 @@ pub fn verify_root_bn128_from_tree_c(tree_filename: &str, expected_root: &str) -
     }
 }
 
-pub fn expressions_bin_new_c(filename: &str, global: bool, verify: bool) -> *mut c_void {
+pub fn expressions_bin_new_c(filename: &str, global: bool) -> *mut c_void {
     unsafe {
         let filename = CString::new(filename).unwrap();
 
-        expressions_bin_new(filename.as_ptr() as *mut std::os::raw::c_char, global, verify)
+        expressions_bin_new(filename.as_ptr() as *mut std::os::raw::c_char, global)
     }
+}
+
+pub fn constraint_dag_new_c(filename: &str) -> *mut c_void {
+    let filename = CString::new(filename).unwrap();
+    unsafe { constraint_dag_new(filename.as_ptr() as *mut std::os::raw::c_char) }
+}
+
+pub fn constraint_dag_free_c(p_constraint_dag: *mut c_void) {
+    unsafe { constraint_dag_free(p_constraint_dag) }
 }
 
 pub fn get_max_n_tmp1_c(p_expressions_bin: *mut c_void) -> u64 {
@@ -1319,7 +1328,7 @@ pub fn stark_verify_c(
     verkey: &str,
     p_proof: *mut u64,
     p_stark_info: *mut c_void,
-    p_expressions_bin: *mut c_void,
+    p_constraint_dag: *mut c_void,
     p_publics: *mut u8,
     p_proof_values: *mut u8,
     p_challenges: *mut u8,
@@ -1331,7 +1340,7 @@ pub fn stark_verify_c(
         stark_verify(
             p_proof,
             p_stark_info,
-            p_expressions_bin,
+            p_constraint_dag,
             verkey_file_ptr,
             p_publics as *mut c_void,
             p_proof_values as *mut c_void,
@@ -1344,20 +1353,20 @@ pub fn stark_verify_bn128_c(
     verkey: &str,
     p_proof: *mut c_void,
     p_stark_info: *mut c_void,
-    p_expressions_bin: *mut c_void,
+    p_constraint_dag: *mut c_void,
     p_publics: *mut u8,
 ) -> bool {
     let verkey_file = CString::new(verkey).unwrap();
     let verkey_file_ptr = verkey_file.as_ptr() as *mut std::os::raw::c_char;
 
-    unsafe { stark_verify_bn128(p_proof, p_stark_info, p_expressions_bin, verkey_file_ptr, p_publics as *mut c_void) }
+    unsafe { stark_verify_bn128(p_proof, p_stark_info, p_constraint_dag, verkey_file_ptr, p_publics as *mut c_void) }
 }
 
 pub fn stark_verify_from_file_c(
     verkey: &str,
     proof: &str,
     p_stark_info: *mut c_void,
-    p_expressions_bin: *mut c_void,
+    p_constraint_dag: *mut c_void,
     p_publics: *mut u8,
     p_proof_values: *mut u8,
     p_challenges: *mut u8,
@@ -1372,7 +1381,7 @@ pub fn stark_verify_from_file_c(
         stark_verify_from_file(
             proof_file_ptr,
             p_stark_info,
-            p_expressions_bin,
+            p_constraint_dag,
             verkey_file_ptr,
             p_publics as *mut c_void,
             p_proof_values as *mut c_void,

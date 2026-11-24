@@ -461,12 +461,32 @@ bool verify_root_bn128_from_tree(char *treeFilename, char *expectedRoot) {
 
 // Expressions Bin
 // ========================================================================================
-void *expressions_bin_new(char* filename, bool global, bool verifier)
+void *expressions_bin_new(char* filename, bool global)
 {
-    auto expressionsBin = new ExpressionsBin(filename, global, verifier);
+    auto expressionsBin = new ExpressionsBin(filename, global);
 
     return expressionsBin;
 };
+
+// <air>.verifierinfo.json's constraintDag, for stark_verify*.
+void *constraint_dag_new(char *filename)
+{
+    json j;
+    std::string err = "no constraintDag key";
+    auto dag = new ConstraintDag();
+    if(!fileExists(filename)) err = "missing";
+    else file2json(filename, j);
+    if(!j.contains("constraintDag") || !readConstraintDag(j["constraintDag"], *dag, err)) {
+        zklog.error(std::string(filename) + ": " + err + "; regenerate the setup");
+        exitProcess();
+    }
+    return dag;
+}
+
+void constraint_dag_free(void *pConstraintDag)
+{
+    delete (ConstraintDag *)pConstraintDag;
+}
 
 uint64_t get_max_n_tmp1(void *pExpressionsBin) {
     auto expressionsBin = (ExpressionsBin *)pExpressionsBin;
@@ -1145,29 +1165,29 @@ void setLogLevel(uint64_t level) {
 
 // Stark Verify
 // =================================================================================
-bool stark_verify(uint64_t* proof, void *pStarkInfo, void *pExpressionsBin, char *verkeyFile, void *pPublics, void *pProofValues, void *pChallenges) {
+bool stark_verify(uint64_t* proof, void *pStarkInfo, void *pConstraintDag, char *verkeyFile, void *pPublics, void *pProofValues, void *pChallenges) {
     Goldilocks::Element *challenges = (Goldilocks::Element *)pChallenges;
     bool vadcop = challenges == nullptr ? false : true;
     StarkInfo starkInfo = *(StarkInfo *)pStarkInfo;
     json jProof = pointer2json(proof, starkInfo);
-    return starkVerify<Goldilocks::Element>(jProof, *(StarkInfo *)pStarkInfo, *(ExpressionsBin *)pExpressionsBin, string(verkeyFile), (Goldilocks::Element *)pPublics, (Goldilocks::Element *)pProofValues, vadcop, (Goldilocks::Element *)pChallenges);
+    return starkVerify<Goldilocks::Element>(jProof, *(StarkInfo *)pStarkInfo, *(ConstraintDag *)pConstraintDag, string(verkeyFile), (Goldilocks::Element *)pPublics, (Goldilocks::Element *)pProofValues, vadcop, (Goldilocks::Element *)pChallenges);
 }
 
-bool stark_verify_bn128(void* jProof, void *pStarkInfo, void *pExpressionsBin, char *verkeyFile, void *pPublics) {
-    return starkVerify<RawFr::Element>(*(nlohmann::json*) jProof, *(StarkInfo *)pStarkInfo, *(ExpressionsBin *)pExpressionsBin, string(verkeyFile), (Goldilocks::Element *)pPublics, nullptr, false, nullptr);
+bool stark_verify_bn128(void* jProof, void *pStarkInfo, void *pConstraintDag, char *verkeyFile, void *pPublics) {
+    return starkVerify<RawFr::Element>(*(nlohmann::json*) jProof, *(StarkInfo *)pStarkInfo, *(ConstraintDag *)pConstraintDag, string(verkeyFile), (Goldilocks::Element *)pPublics, nullptr, false, nullptr);
 
 }
 
-bool stark_verify_from_file(char* proofFile, void *pStarkInfo, void *pExpressionsBin, char *verkeyFile, void *pPublics, void *pProofValues, void *pChallenges) {
+bool stark_verify_from_file(char* proofFile, void *pStarkInfo, void *pConstraintDag, char *verkeyFile, void *pPublics, void *pProofValues, void *pChallenges) {
     Goldilocks::Element *challenges = (Goldilocks::Element *)pChallenges;
     bool vadcop = challenges == nullptr ? false : true;
     StarkInfo starkInfo = *((StarkInfo *)pStarkInfo);
     json jProof;
     file2json(proofFile, jProof);
     if (starkInfo.starkStruct.verificationHashType == "GL") {
-        return starkVerify<Goldilocks::Element>(jProof, *(StarkInfo *)pStarkInfo, *(ExpressionsBin *)pExpressionsBin, string(verkeyFile), (Goldilocks::Element *)pPublics, (Goldilocks::Element *)pProofValues, vadcop, (Goldilocks::Element *)pChallenges);
+        return starkVerify<Goldilocks::Element>(jProof, *(StarkInfo *)pStarkInfo, *(ConstraintDag *)pConstraintDag, string(verkeyFile), (Goldilocks::Element *)pPublics, (Goldilocks::Element *)pProofValues, vadcop, (Goldilocks::Element *)pChallenges);
     } else {
-        return starkVerify<RawFr::Element>(jProof, *(StarkInfo *)pStarkInfo, *(ExpressionsBin *)pExpressionsBin, string(verkeyFile), (Goldilocks::Element *)pPublics, (Goldilocks::Element *)pProofValues, vadcop, (Goldilocks::Element *)pChallenges);
+        return starkVerify<RawFr::Element>(jProof, *(StarkInfo *)pStarkInfo, *(ConstraintDag *)pConstraintDag, string(verkeyFile), (Goldilocks::Element *)pPublics, (Goldilocks::Element *)pProofValues, vadcop, (Goldilocks::Element *)pChallenges);
     }
 }
 

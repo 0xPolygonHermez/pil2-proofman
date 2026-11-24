@@ -384,7 +384,7 @@ impl<F: PrimeField64> Setup<F> {
             let bn128_recursive_final = recursive_final && stark_info.stark_struct.verification_hash_type == "BN128";
             let p_stark_info =
                 stark_info_new_c(stark_info_path.as_str(), recursive_final, recursive, verify_constraints, false, gpu);
-            let expressions_bin = expressions_bin_new_c(expressions_bin_path.as_str(), false, false);
+            let expressions_bin = expressions_bin_new_c(expressions_bin_path.as_str(), false);
             let n_max_tmp1 = get_max_n_tmp1_c(expressions_bin);
             let n_max_tmp3 = get_max_n_tmp3_c(expressions_bin);
             set_memory_expressions_c(p_stark_info, n_max_tmp1, n_max_tmp3);

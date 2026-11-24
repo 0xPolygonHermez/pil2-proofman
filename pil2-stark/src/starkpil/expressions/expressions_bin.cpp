@@ -1,23 +1,8 @@
 #include "expressions_bin.hpp"
 #include "utils.hpp"
 
-ExpressionsBin::ExpressionsBin(string file, bool globalBin, bool verifierBin) {
+ExpressionsBin::ExpressionsBin(string file, bool globalBin) {
     binFile = file;
-    if(verifierBin) {
-        // The verifier reads <air>.verifierinfo.json, not a bin file.
-        if(!fileExists(file)) {
-            zklog.error("ExpressionsBin: " + file + " is missing; regenerate the setup");
-            exitProcess();
-        }
-        json j;
-        file2json(file, j);
-        std::string err = "no constraintDag key";
-        if(!j.contains("constraintDag") || !readConstraintDag(j["constraintDag"], constraintDag, err)) {
-            zklog.error("ExpressionsBin: " + file + ": " + err + "; regenerate the setup");
-            exitProcess();
-        }
-        return;
-    }
     std::unique_ptr<BinFileUtils::BinFile> bin = BinFileUtils::openExisting(file, "chps", 1);
 
     if(globalBin) {

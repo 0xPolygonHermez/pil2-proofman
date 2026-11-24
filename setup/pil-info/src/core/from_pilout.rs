@@ -447,7 +447,7 @@ fn numbered_exprs(a: &pc::Air, tables: &Tables) -> Result<(Vec<Expr>, Vec<u32>),
 }
 
 /// The `ExprId` `from_pilout` gives each pilout expression of air (`airgroup`, `air`), by pilout index.
-pub fn pilout_expr_ids(
+fn pilout_expr_ids(
     pilout: &pb::PilOut,
     airgroup: usize,
     air: usize,
@@ -467,8 +467,8 @@ pub fn pilout_expr_index(
     airgroup: usize,
     air: usize,
     id: crate::core::ir::ExprId,
-) -> Result<Option<usize>, PiloutError> {
-    Ok(pilout_expr_ids(pilout, airgroup, air)?.iter().position(|&c| c == id))
+) -> Result<usize, PiloutError> {
+    pilout_expr_ids(pilout, airgroup, air)?.iter().position(|&c| c == id).ok_or(PiloutError::NoExpression { id })
 }
 
 /// Lowers `a` of airgroup values `agvs`; of `core` only the pilout-wide tables, symbols and hints are read.

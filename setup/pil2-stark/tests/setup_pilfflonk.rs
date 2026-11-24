@@ -457,7 +457,7 @@ fn it_writes_the_proving_key_of_the_fibonacci_fixture() {
     let pilout = pb::PilOut::decode(fs::read(&pilout_path).unwrap().as_slice()).unwrap();
     // the setup's expId is the core's canonical numbering
     let canonical = info.cm_pols_map[2].exp_id.unwrap() as u32;
-    let exp_id = pil_info::core::from_pilout::pilout_expr_index(&pilout, 0, 0, canonical).unwrap().unwrap();
+    let exp_id = pil_info::core::from_pilout::pilout_expr_index(&pilout, 0, 0, canonical).unwrap();
     let witness = |col_idx, row_offset| {
         Some(pb::Operand {
             operand: Some(operand::Operand::WitnessCol(operand::WitnessCol { stage: 1, col_idx, row_offset })),

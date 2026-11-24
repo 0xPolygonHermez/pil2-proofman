@@ -18,9 +18,10 @@ pub(crate) mod lib_params;
 pub(crate) mod constraint_roots;
 pub(crate) mod lib_gl;
 
-use anyhow::{anyhow, bail, Context, Result};
-use pil_info::core::dag::lower_code::{ev_col_ref, std_vc_index, LowerCtx, LowerTables};
-use proofman_common::{EvMapEType, PolMap, StarkInfo};
+use anyhow::{anyhow, bail, Result};
+use pil_info::core::dag::format::ConstraintDag;
+use pil_info::core::dag::lower_code::{LowerCtx, LowerTables};
+use pil_info::FieldCfg;
 use serde_json::Value;
 
 pub(crate) use lib_gl::gen_stark_verifier_gl;
@@ -68,34 +69,11 @@ pub fn gen_stark_verifier(
     }
 }
 
-/// The DAG resolver of a starkinfo (evMap and `std_vc` by the shared rules `ev_col_ref` / `std_vc_index`).
-pub(crate) fn lower_ctx(si: &StarkInfo) -> Result<LowerCtx> {
-    let mut ev_map = Vec::with_capacity(si.ev_map.len());
-    for e in &si.ev_map {
-        let ty = match e.type_ {
-            EvMapEType::Cm => "cm",
-            EvMapEType::Const => "const",
-            EvMapEType::Custom => "custom",
-        };
-        let offset = *si.opening_points.get(e.opening_pos).context("evMap[].openingPos outside openingPoints")?;
-        ev_map.push(ev_col_ref(ty, Some(e.commit_id as u32), e.id as u32, offset).context("evMap entry")?);
-    }
-    let challenges = || si.challenges_map.iter().flatten();
-    let n_challenges = challenges().count();
-    // a missing `std_vc` is past the end, so lowering reports it unresolved
-    let vc = std_vc_index(challenges().map(|c| c.name.as_str())).unwrap_or(n_challenges);
-    let stages = |m: &Option<Vec<PolMap>>| -> Vec<u32> { m.iter().flatten().map(|p| p.stage as u32).collect() };
-    let t = LowerTables {
-        ev_map,
-        challenges: challenges().map(|c| (c.stage as u32, c.stage_id as u32)).collect(),
-        vc,
-        n_publics: si.n_publics as u32,
-        air_values_stage: stages(&si.airvalues_map),
-        proof_values_stage: stages(&si.proofvalues_map),
-        airgroup_values_stage: stages(&si.airgroupvalues_map),
-        ext_dim: 3,
-    };
-    LowerCtx::new(t).map_err(|e| anyhow!("{e:?}"))
+/// The validated constraint DAG of `vi` and the resolver of `si`.
+pub(crate) fn dag_and_ctx(si: &Value, vi: &Value) -> Result<(ConstraintDag, LowerCtx)> {
+    let dag = ConstraintDag::from_verifierinfo(vi, &FieldCfg::goldilocks()).map_err(|e| anyhow!("{e:?}"))?;
+    let ctx = LowerTables::from_starkinfo(si).and_then(LowerCtx::new).map_err(|e| anyhow!("{e:?}"))?;
+    Ok((dag, ctx))
 }
 
 #[cfg(test)]
