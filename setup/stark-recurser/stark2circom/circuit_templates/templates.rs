@@ -12,6 +12,7 @@ use super::get_sha256_inputs::sha256_defs;
 use super::vadcop_inputs::{air_id_vars, vadcop_data};
 use super::verify_global_constraints::gen_verify_global_constraints;
 use super::CircomGenOptions;
+use crate::stark2circom::circom_verifier::lib_params::{proof_inputs, Origin};
 use crate::stark2circom::circom_verifier::{key_dispatch, key_suffix};
 
 // ── Embedded Tera templates ───────────────────────────────────────────────────
@@ -63,6 +64,8 @@ pub fn gen_recursivef(stark_info: &Value, verifier_filenames: &[String]) -> Resu
 }
 
 /// The final circuit: the recursivef's BN128 verifier and the publics hash (`FinalSnark`, static).
+/// Its witness is computed from a JSON zkin addressed by input name (`gl_proof_zkin`), so the main
+/// takes the proof's inputs by their names and flattens them into `FinalSnark`'s proof.
 pub fn gen_recursion_final(
     stark_info: &Value,
     verifier_filenames: &[String],
@@ -71,9 +74,38 @@ pub fn gen_recursion_final(
     let (n_sha, n_defs, defs) = sha256_defs(publics.unwrap_or(&Value::Null))?;
     // A custom-tree verifier wants the pragma on every file that includes it.
     let custom = stark_info["starkStruct"]["merkleTreeCustom"].as_bool() == Some(true);
+    let inputs = proof_inputs(&serde_json::from_value(stark_info.clone())?)?;
+    let (mut decl, mut wire, mut at) = (String::new(), String::new(), 0u64);
+    for i in inputs.iter().filter(|i| i.origin != Origin::ProofValues) {
+        let shape: String = i.dims.iter().map(|d| format!("[{d}]")).collect();
+        decl += &format!("    signal input {}{shape};\n", i.name);
+        if i.origin == Origin::Publics {
+            wire += &format!("    f.publics <== {};\n", i.name);
+            continue;
+        }
+        // Row-major flattening: nested loops over the dims, the flat index from the loop variables.
+        let vars: Vec<String> = (0..i.dims.len()).map(|d| format!("i{d}")).collect();
+        let mut flat = String::from("0");
+        for (v, d) in vars.iter().zip(&i.dims) {
+            flat = format!("({flat}) * {d} + {v}");
+        }
+        let mut line = format!(
+            "f.proof[{at} + {flat}] <== {}{};",
+            i.name,
+            vars.iter().map(|v| format!("[{v}]")).collect::<String>()
+        );
+        for (v, d) in vars.iter().zip(&i.dims).rev() {
+            line = format!("for (var {v} = 0; {v} < {d}; {v}++) {{ {line} }}");
+        }
+        wire += &format!("    {line}\n");
+        at += i.dims.iter().product::<u64>();
+    }
     Ok(head(verifier_filenames, "final_snark.circom", &[stark_info], false, custom)
         + &defs
-        + &main_line(&[], &format!("FinalSnark({n_sha}, {n_defs})")))
+        + &format!(
+            "\ntemplate Main() {{\n    signal output publicsHash;\n{decl}\n    component f = FinalSnark({n_sha}, {n_defs});\n{wire}    publicsHash <== f.publicsHash;\n}}\n"
+        )
+        + &main_line(&[], "Main()"))
 }
 
 /// The compressed vadcop_final circuit. The incoming proof commits `[is_vadcop_final_proof | vk(4) | inputs]`
@@ -309,7 +341,7 @@ mod tests {
 
     /// A recursivef starkinfo, whose trees are custom or not, with what the final circuit and the
     /// head of its verifier read.
-    fn recursivef_stark_info(merkle_tree_custom: bool) -> Value {
+    pub(super) fn recursivef_stark_info(merkle_tree_custom: bool) -> Value {
         json!({
             "starkStruct": {
                 "verificationHashType": "BN128",
@@ -593,11 +625,24 @@ mod solidity_version_tests {
     /// The final circuit's main: the publics definitions as data, the static FinalSnark.
     #[test]
     fn recursion_final_is_data_over_final_snark() {
-        let si = serde_json::json!({ "nPublics": 73, "starkStruct": { "merkleTreeCustom": false } });
+        let si = super::tests::recursivef_stark_info(false);
         let out = gen_recursion_final(&si, &["v.circom".into()], None).unwrap();
+        // The zkin addresses the inputs by name: the proof's, as the recursivef proof names them.
+        for decl in [
+            "signal input publics[6];",
+            "signal input root1;",
+            "signal input evals[2][3];",
+            "signal input s0_valsC[4][3];",
+            "signal input finalPol[",
+        ] {
+            assert!(out.contains(decl), "missing `{decl}`:\n{out}");
+        }
         assert!(out.contains("include \"final_snark.circom\";"), "{out}");
         assert!(out.contains("function vd_DEFS() { return [0]; }"), "{out}");
-        assert!(out.ends_with("\ncomponent main = FinalSnark(0, 0);\n"), "{out}");
+        assert!(
+            out.contains("component f = FinalSnark(0, 0);") && out.ends_with("\ncomponent main = Main();\n"),
+            "{out}"
+        );
     }
     fn zisk_publics() -> Value {
         serde_json::json!({
