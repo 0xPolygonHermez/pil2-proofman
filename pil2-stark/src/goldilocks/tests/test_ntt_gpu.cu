@@ -4,6 +4,7 @@
 #include "../src/goldilocks_tooling.hpp"
 #include "../src/ntt_goldilocks.hpp"
 #include "../src/ntt_goldilocks.cuh"
+#include "../src/ntt_lde_helper.cuh"
 #include "../src/goldilocks_tooling.cuh"
 
 TEST(GOLDILOCKS_TEST, ntt_gpu_intt_roundtrip)
@@ -112,10 +113,17 @@ TEST(GOLDILOCKS_TEST, ntt_gpu_colmajor_shapes)
         {12, 13, 5},  {6, 12, 5},   {10, 18, 3},  {17, 19, 37}, // two passes
         {19, 20, 3},  {19, 21, 3},  {18, 22, 5},  {6, 20, 3},   // three passes
         {21, 22, 3},  {22, 23, 2},
+        {19, 21, 40}, {20, 22, 9},  {21, 22, 5},                // several iNTT batches and forward sub-chunks
     };
+    // Second pass with a helper stream attached: the batches alternate over two streams and the raw
+    // words must not change.
+    std::vector<uint64_t> soloHash;
+    for (int withHelper = 0; withHelper < 2; withHelper++) {
+    if (withHelper) nttAttachLdeHelper(stream);
+    uint64_t shapeIdx = 0;
     for (const Shape &sh : shapes) {
         SCOPED_TRACE("LDE " + std::to_string(sh.n_bits) + "->" + std::to_string(sh.n_bits_ext) +
-                     " nCols=" + std::to_string(sh.nCols));
+                     " nCols=" + std::to_string(sh.nCols) + (withHelper ? " two streams" : ""));
         const uint64_t N = 1ULL << sh.n_bits, NExt = 1ULL << sh.n_bits_ext, nCols = sh.nCols;
         std::vector<Goldilocks::Element> h_in(N * nCols), h_coef(N * nCols), h_q(NExt * nCols);
         fill(h_in, sh.n_bits * 1009 + sh.n_bits_ext * 31 + nCols);
@@ -125,13 +133,43 @@ TEST(GOLDILOCKS_TEST, ntt_gpu_colmajor_shapes)
         CHECKCUDAERR(cudaMemcpy(d_a, h_in.data(), N * nCols * sizeof(gl64_t), cudaMemcpyHostToDevice));
         gpu_ntt.LDE(d_ext, 0, d_a, 0, sh.n_bits, sh.n_bits_ext, nCols, timer, stream);
         CHECKCUDAERR(cudaStreamSynchronize(stream));
-        if (getenv("NTT_TEST_RAW_HASH") != nullptr) {
-            // Raw device words (not canonicalized), to compare two builds bit for bit.
+        {
+            // Raw device words (not canonicalized): equal with and without the helper, and printed
+            // on request to compare two builds bit for bit.
             CHECKCUDAERR(cudaMemcpy(h_q.data(), d_ext, NExt * nCols * sizeof(gl64_t), cudaMemcpyDeviceToHost));
             uint64_t h = 1469598103934665603ULL;
             const uint64_t *w = (const uint64_t *)h_q.data();
             for (uint64_t i = 0; i < NExt * nCols; i++) h = (h ^ w[i]) * 1099511628211ULL;
-            printf("RAWHASH %lu %lu %lu %016lx\n", sh.n_bits, sh.n_bits_ext, nCols, h);
+            if (getenv("NTT_TEST_RAW_HASH") != nullptr)
+                printf("RAWHASH %lu %lu %lu %016lx\n", sh.n_bits, sh.n_bits_ext, nCols, h);
+            if (!withHelper) soloHash.push_back(h);
+            else ASSERT_EQ(h, soloHash[shapeIdx]) << "two-stream LDE differs";
+            shapeIdx++;
+        }
+        {
+            // The preserving and the in-place (equal bases) layouts must give the same raw words.
+            std::vector<uint64_t> h_ref(NExt * nCols), h_alt(NExt * nCols), h_src(N * nCols);
+            CHECKCUDAERR(cudaMemcpy(h_ref.data(), d_ext, NExt * nCols * sizeof(gl64_t), cudaMemcpyDeviceToHost));
+            gl64_t *d_alt, *d_scratch;
+            const uint64_t scratchCols = 5;
+            CHECKCUDAERR(cudaMalloc((void**)&d_alt, NExt * nCols * sizeof(gl64_t)));
+            CHECKCUDAERR(cudaMalloc((void**)&d_scratch, N * scratchCols * sizeof(gl64_t)));
+            // The LDE above ran its iNTT in place over the source.
+            CHECKCUDAERR(cudaMemcpy(d_a, h_in.data(), N * nCols * sizeof(gl64_t), cudaMemcpyHostToDevice));
+            gpu_ntt.ldeColMajor(d_alt, d_a, sh.n_bits, sh.n_bits_ext, nCols, stream, true, d_scratch, N * scratchCols);
+            CHECKCUDAERR(cudaStreamSynchronize(stream));
+            CHECKCUDAERR(cudaMemcpy(h_alt.data(), d_alt, NExt * nCols * sizeof(gl64_t), cudaMemcpyDeviceToHost));
+            CHECKCUDAERR(cudaMemcpy(h_src.data(), d_a, N * nCols * sizeof(gl64_t), cudaMemcpyDeviceToHost));
+            ASSERT_EQ(memcmp(h_alt.data(), h_ref.data(), NExt * nCols * sizeof(uint64_t)), 0) << "preserving LDE differs";
+            ASSERT_EQ(memcmp(h_src.data(), h_in.data(), N * nCols * sizeof(uint64_t)), 0) << "preserving LDE changed its source";
+            CHECKCUDAERR(cudaMemset(d_alt, 0xCD, NExt * nCols * sizeof(gl64_t)));
+            CHECKCUDAERR(cudaMemcpy(d_alt, h_in.data(), N * nCols * sizeof(gl64_t), cudaMemcpyHostToDevice));
+            gpu_ntt.ldeColMajor(d_alt, d_alt, sh.n_bits, sh.n_bits_ext, nCols, stream, false, d_scratch, N);
+            CHECKCUDAERR(cudaStreamSynchronize(stream));
+            CHECKCUDAERR(cudaMemcpy(h_alt.data(), d_alt, NExt * nCols * sizeof(gl64_t), cudaMemcpyDeviceToHost));
+            ASSERT_EQ(memcmp(h_alt.data(), h_ref.data(), NExt * nCols * sizeof(uint64_t)), 0) << "in-place LDE differs";
+            CHECKCUDAERR(cudaFree(d_alt));
+            CHECKCUDAERR(cudaFree(d_scratch));
         }
         gpu_ntt.inttColMajor(d_ext, sh.n_bits_ext, nCols, stream);
         CHECKCUDAERR(cudaMemcpy(d_a, h_in.data(), N * nCols * sizeof(gl64_t), cudaMemcpyHostToDevice));
@@ -149,6 +187,8 @@ TEST(GOLDILOCKS_TEST, ntt_gpu_colmajor_shapes)
         }
         CHECKCUDAERR(cudaFree(d_a));
         CHECKCUDAERR(cudaFree(d_ext));
+    }
+    if (withHelper) nttDetachLdeHelper(stream);
     }
     CHECKCUDAERR(cudaStreamDestroy(stream));
     NTTGoldilocksGPU::freeConstants();

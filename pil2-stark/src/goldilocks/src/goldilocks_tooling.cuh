@@ -20,6 +20,7 @@
 #include <tuple>
 #include <vector>
 #include "cuda_utils.cuh"
+#include "ntt_lde_helper.cuh"
 #include "transcriptGL.cuh"
 #include "expressions_gpu.cuh"
 #include "eval_groups.hpp"
@@ -510,6 +511,10 @@ struct StreamData{
         CHECKCUDAERR(cudaEventCreateWithFlags(&customFixedFork, cudaEventDisableTiming));
         CHECKCUDAERR(cudaEventCreateWithFlags(&customFixedDone, cudaEventDisableTiming));
         CHECKCUDAERR(cudaStreamCreateWithPriority(&fixedStream, cudaStreamNonBlocking, prioLo));
+        // The three lanes run LDEs (stage commits, custom commits, fixed trees).
+        nttAttachLdeHelper(stream);
+        nttAttachLdeHelper(customStream);
+        nttAttachLdeHelper(fixedStream);
         CHECKCUDAERR(cudaEventCreateWithFlags(&fixedTreeFork, cudaEventDisableTiming));
         CHECKCUDAERR(cudaEventCreateWithFlags(&fixedPolsDone, cudaEventDisableTiming));
         CHECKCUDAERR(cudaEventCreateWithFlags(&fixedTreeDone, cudaEventDisableTiming));
@@ -613,6 +618,9 @@ struct StreamData{
 #ifdef USE_CUDA_GRAPH
         graph_cache.reset();
 #endif
+        nttDetachLdeHelper(stream);
+        nttDetachLdeHelper(customStream);
+        nttDetachLdeHelper(fixedStream);
         cudaStreamDestroy(stream);
         cudaStreamDestroy(customStream);
         cudaEventDestroy(customFixedFork);
