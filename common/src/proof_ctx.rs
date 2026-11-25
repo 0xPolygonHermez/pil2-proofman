@@ -8,6 +8,7 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use crate::{plan_stream_layout, StreamClass, StreamLayout};
 use crate::{plan_buffer, BufferPlan, BufferPlanInput, CacheInput, CONST_CACHE_SLOTS_PLAN_MAX};
+use crate::{CancellationInfo, CancellationInfoExt};
 use crate::{GpuWitnessAir, GpuWitnessAirs, MpiCtx, ProofmanError};
 use borsh::{BorshDeserialize, BorshSerialize};
 use std::fs::File;
@@ -407,6 +408,9 @@ pub struct ProofCtx<F: PrimeField64> {
     /// This prover's GPU witness declarations, copied from the options at startup: the one source the
     /// witness side asks before staging kernel inputs.
     pub gpu_witness_airs: GpuWitnessAirs,
+    /// The cancellation of the current proof, shared with `Proofman`, which cancels and resets it;
+    /// see [`Self::is_cancelled`].
+    cancellation_info: Arc<RwLock<CancellationInfo>>,
 }
 
 pub const MAX_INSTANCES: u64 = 1 << 17;
@@ -470,6 +474,7 @@ impl<F: PrimeField64> ProofCtx<F> {
         Ok(Self {
             prover_owned_tables: RwLock::new(Vec::new()),
             gpu_witness_airs: GpuWitnessAirs::default(),
+            cancellation_info: Arc::new(RwLock::new(CancellationInfo::default())),
             device_owned_table_airs: RwLock::new(Vec::new()),
             prover_counts: RwLock::new(HashMap::new()),
             mpi_ctx,
@@ -538,6 +543,20 @@ impl<F: PrimeField64> ProofCtx<F> {
 
     pub fn set_witness_tx(&self, witness_tx: Option<crossbeam_channel::Sender<usize>>) {
         *self.witness_tx.write().unwrap() = witness_tx;
+    }
+
+    /// Whether the current proof was cancelled: by the caller, by an error in any of its stages, or
+    /// by another process. A witness component that waits inside a proofman call reads it to stop
+    /// waiting for work that will no longer be done. Cleared when the next proof starts.
+    pub fn is_cancelled(&self) -> bool {
+        self.cancellation_info.read_recover().token.is_cancelled()
+    }
+
+    /// The cancellation [`Self::is_cancelled`] reads. Only for `Proofman`, which cancels and resets
+    /// it; nothing else may write it.
+    #[doc(hidden)]
+    pub fn cancellation_info(&self) -> Arc<RwLock<CancellationInfo>> {
+        self.cancellation_info.clone()
     }
 
     /// Queue this instance for dispatch, at most once per proof; urgency is its declared

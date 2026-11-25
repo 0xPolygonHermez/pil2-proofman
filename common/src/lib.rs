@@ -1,4 +1,5 @@
 mod air_instance;
+mod cancellation;
 mod verbose_mode;
 mod distribution_ctx;
 mod gpu_stream_layout;
@@ -28,6 +29,7 @@ pub mod final_witness;
 pub mod circuit_type;
 
 pub use air_instance::*;
+pub use cancellation::*;
 pub use verbose_mode::*;
 pub use proof_ctx::*;
 pub use prover::*;

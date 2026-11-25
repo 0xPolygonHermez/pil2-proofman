@@ -1576,6 +1576,7 @@ dependencies = [
  "sha2",
  "sysinfo",
  "thiserror",
+ "tokio-util",
  "tracing",
  "tracing-subscriber",
  "yansi",
