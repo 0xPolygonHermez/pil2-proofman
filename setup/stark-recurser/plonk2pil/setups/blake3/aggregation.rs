@@ -39,7 +39,7 @@ use crate::plonk2pil::field::PlonkField;
 use crate::plonk2pil::r1cs::to_plonk::CustomGatesInfo;
 use crate::plonk2pil::r1cs::types::{CustomGateUse, FixedPol, GateBand, GateBandKind, PlonkOptions, R1csFile, SetupResult};
 use crate::plonk2pil::utils::{
-    bind_public_signals, build_fixed_pols, build_s_polynomials, fft4_constants, public_rows, rand_hex,
+    bind_public_signals, PlonkBand, build_fixed_pols, build_s_polynomials, fft4_constants, public_rows, rand_hex,
 };
 use proofman_common::hash_family::GateRole;
 use num_bigint::BigUint;
@@ -676,17 +676,17 @@ pub fn build_blake3_air(r1cs: &R1csFile<Goldilocks>, options: &PlonkOptions) -> 
     keys.sort_unstable();
 
     alloc.open(n_plonk_rows, 1);
+    // PLONK is 1 on a plonk run's interior rows and nothing else writes them; `band` asserts both.
+    let mut band = PlonkBand::new(n);
     let mut next_row = 0usize;
     for k in &keys {
         for group in by_key[k].chunks(PLONK_GATES_PER_ROW) {
             let row = alloc.take();
             next_row += 1;
+            band.allow(row, (1 << PLONK_GATES_PER_ROW) - 1);
             write_plonk_coeffs(&mut cv, row, group[0]);
             for gate in 0..PLONK_GATES_PER_ROW {
-                let c = group[gate.min(group.len() - 1)];
-                s_map[3 * gate][row] = c.wires[0];
-                s_map[3 * gate + 1][row] = c.wires[1];
-                s_map[3 * gate + 2][row] = c.wires[2];
+                band.put(&mut s_map, row, gate, group[gate.min(group.len() - 1)]);
             }
         }
     }

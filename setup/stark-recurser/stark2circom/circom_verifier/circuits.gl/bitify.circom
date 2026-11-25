@@ -24,25 +24,6 @@ template Num2Bits(n) {
     lc1 === in;
 }
 
-template Num2Ternary(n) {
-    signal input in;
-    signal output {binary} out[n][2];
-    var lc1=0;
-
-    var e3=1;
-
-    signal ternary_digits[n];
-    for (var i = 0; i<n; i++) {
-        ternary_digits[i] <-- (in \ e3) % 3;
-        lc1 += ternary_digits[i] * e3;
-        e3 *= 3;
-        out[i] <== Num2Bits(2)(ternary_digits[i]);
-        out[i][0] * out[i][1] === 0; // ensure that the digits are 0, 1 or 2
-    }
-
-    lc1 === in;
-}
-
 template AliasCheck() {
     signal input {binary} in[64];
 
@@ -92,13 +73,6 @@ template Bits2Num(n) {
     lc1 ==> out;
 }
 
-template Bits2Num_strict() {
-    signal input in[64];
-    signal output out;
-
-    AliasCheck()(in);
-    out <== Bits2Num(64)(in);
-}
 // A transcript word's bits (verifier/transcript.circom): a Goldilocks word, 64 bits.
 template TranscriptWordBits(n) {
     signal input in;

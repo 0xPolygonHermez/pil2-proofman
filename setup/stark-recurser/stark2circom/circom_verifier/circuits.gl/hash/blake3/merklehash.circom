@@ -45,25 +45,6 @@ template VerifyMerkleHash(eSize, elementsInLinear, arity, nLevels) {
     enable * (merkleRoot[3] - root[3]) === 0;
 }
 
-template VerifyMerkleHashBatch(queries, eSize, elementsInLinear, arity, nLevels) {
-    var nBits = log2(arity);
-    signal input values[queries][elementsInLinear][eSize];
-    signal input siblings[queries][nLevels][(arity - 1) * 4];
-    signal input {binary} key[queries][nLevels][nBits];
-    signal input root[4];
-    signal input {binary} enable;
-
-    signal merkleRoot[queries][4];
-
-    for (var i = 0; i < queries; i++) {
-        merkleRoot[i] <== MerkleHash(eSize, elementsInLinear, arity, nLevels)(values[i], siblings[i], key[i]);
-        enable * (merkleRoot[i][0] - root[0]) === 0;
-        enable * (merkleRoot[i][1] - root[1]) === 0;
-        enable * (merkleRoot[i][2] - root[2]) === 0;
-        enable * (merkleRoot[i][3] - root[3]) === 0;
-    }
-}
-
 template VerifyMerkleHashUntilLevel(eSize, elementsInLinear, arity, nLevels, nLastLevels, height) {
     var nBits = log2(arity);
     signal input values[elementsInLinear][eSize];
@@ -96,47 +77,6 @@ template VerifyMerkleHashUntilLevel(eSize, elementsInLinear, arity, nLevels, nLa
     enable * (calculatedVal[1] - expectedVal[1]) === 0;
     enable * (calculatedVal[2] - expectedVal[2]) === 0;
     enable * (calculatedVal[3] - expectedVal[3]) === 0;
-}
-
-template VerifyMerkleHashUntilLevelBatch(queries, eSize, elementsInLinear, arity, nLevels, nLastLevels, height) {
-    var nBits = log2(arity);
-    signal input values[queries][elementsInLinear][eSize];
-    signal input siblings[queries][nLevels][(arity - 1) * 4];
-    signal input {binary} key[queries][nLevels + nLastLevels][nBits];
-    signal input last_mt_levels[arity**nLastLevels][4];
-    signal input {binary} enable;
-
-    signal {binary} keys_merkle[queries][nLevels][nBits];
-    signal {binary} last_levels_keys[queries][nLastLevels][nBits];
-    signal calculatedVal[queries][4];
-    signal expectedVal[queries][4];
-
-    for (var q = 0; q < queries; q++) {
-        for (var i = 0; i < nLevels; i++) {
-            for (var j = 0; j < nBits; j++) {
-                keys_merkle[q][i][j] <== key[q][i][j];
-            }
-        }
-        calculatedVal[q] <== MerkleHash(eSize, elementsInLinear, arity, nLevels)(values[q], siblings[q], keys_merkle[q]);
-
-        for (var i = 0; i < nLastLevels; i++) {
-            for (var j = 0; j < nBits; j++) {
-                last_levels_keys[q][i][j] <== key[q][nLevels + i][j];
-            }
-        }
-
-        var num_nodes_level = height;
-        while (num_nodes_level > arity ** nLastLevels) {
-            num_nodes_level = (num_nodes_level + (arity - 1)) \ arity;
-        }
-
-        expectedVal[q] <== SelectValue(arity, nLastLevels, num_nodes_level)(last_mt_levels, last_levels_keys[q]);
-
-        enable * (calculatedVal[q][0] - expectedVal[q][0]) === 0;
-        enable * (calculatedVal[q][1] - expectedVal[q][1]) === 0;
-        enable * (calculatedVal[q][2] - expectedVal[q][2]) === 0;
-        enable * (calculatedVal[q][3] - expectedVal[q][3]) === 0;
-    }
 }
 
 template VerifyMerkleHashUntilLevelEmpty(eSize, elementsInLinear, arity, nLastLevels, height) {

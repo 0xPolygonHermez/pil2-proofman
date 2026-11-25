@@ -288,15 +288,6 @@ function is_zero_fp5(a) {
     return ((a[0] == 0) && (a[1] == 0) && (a[2] == 0) && (a[3] == 0) && (a[4] == 0));
 }
 
-// Given a,b ∈ Fp⁵, computes c := a+b ∈ Fp⁵
-function add_fp5(a, b) {
-    var c[5];
-    for (var i = 0; i < 5; i++) {
-        c[i] = a[i] + b[i];
-    }
-    return c;
-}
-
 // Given a,b ∈ Fp⁵, computes c := a·b ∈ Fp⁵
 function mul_fp5(a, b) {
     var c[5];

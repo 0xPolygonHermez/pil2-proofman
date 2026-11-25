@@ -2,13 +2,13 @@
 //! (`lib_params`), the constraints (`ConstraintRoots<suffix>`) and `StarkVerifier<suffix>`, which wires
 //! transcript -> roots -> checks and, until stage 4, keeps today's named proof inputs.
 
-use anyhow::{bail, Context, Result};
+use anyhow::{bail, Result};
 use proofman_common::StarkInfo;
 use serde_json::Value;
 
 use super::constraint_roots::constraint_roots;
 use super::Pil2CircomOptions;
-use super::lib_params::KeyData;
+use super::lib_params::{parse_stark_info, proof_inputs, KeyData, ProofInput};
 
 /// The library templates `StarkVerifier<suffix>` instantiates.
 const LIB: [&str; 5] = [
@@ -38,7 +38,7 @@ pub(crate) fn call_in(lib: &[&str], name: &str) -> String {
 }
 
 /// The family's hash, selector and transcript files; the library calls them by family-neutral names.
-fn includes(hash: &str, split_linear_hash: bool) -> Result<String> {
+fn includes(hash: &str) -> Result<String> {
     let (dir, selector, transcript) = match hash {
         "Poseidon1" => ("poseidon1", "treeselector8", "transcript_sponge"),
         "Poseidon2" => ("poseidon2", "treeselector4", "transcript_sponge"),
@@ -46,15 +46,8 @@ fn includes(hash: &str, split_linear_hash: bool) -> Result<String> {
         "blake3" => ("blake3", "treeselector4", "transcript_blake3"),
         other => bail!("gen_stark_verifier_gl: unknown hash family '{other}'"),
     };
-    if split_linear_hash && hash != "Poseidon2" {
-        bail!(
-            "gen_stark_verifier_gl: {hash} + splitLinearHash is not supported \
-             (no hash/{dir}/merklehash_gpu.circom / linearhash_gpu.circom exist)"
-        );
-    }
-    let merkle = if split_linear_hash { "merklehash_gpu" } else { "merklehash" };
     let mut out = format!(
-        "include \"hash/{dir}/pow.circom\";\ninclude \"tree/{selector}.circom\";\ninclude \"hash/{dir}/{merkle}.circom\";\n"
+        "include \"hash/{dir}/pow.circom\";\ninclude \"tree/{selector}.circom\";\ninclude \"hash/{dir}/merklehash.circom\";\n"
     );
     if transcript == "transcript_sponge" {
         out += &format!("include \"hash/{dir}/sponge.circom\";\n");
@@ -72,11 +65,11 @@ pub(crate) fn gen_stark_verifier_gl(
 ) -> Result<String> {
     // Presence, not the typed default 0: a starkinfo without airgroupId names its templates unsuffixed.
     let sfx = si.get("airgroupId").and_then(Value::as_u64).map(|id| id.to_string()).unwrap_or_default();
-    let info: StarkInfo = serde_json::from_value(si.clone()).context("starkinfo")?;
-    // An empty evMap would leave f_0 undefined (the circuit must never check against 0).
-    if info.ev_map.is_empty() {
-        bail!("evMap has no evaluations, so the DEEP polynomial is undefined");
+    let info = parse_stark_info(si)?;
+    if info.stark_struct.split_linear_hash {
+        bail!("gen_stark_verifier_gl: splitLinearHash has no verifier circuits");
     }
+    let inputs = proof_inputs(&info)?;
     let (dag, ctx) = super::dag_and_ctx(si, vi)?;
     let roots = constraint_roots(&sfx, &dag, &ctx)?;
     let key = KeyData::new(
@@ -87,8 +80,8 @@ pub(crate) fn gen_stark_verifier_gl(
     )?;
 
     let mut out = String::from("pragma circom 2.1.0;\npragma custom_templates;\n\n");
-    out += &includes(&opts.hash, info.stark_struct.split_linear_hash)?;
-    out += &format!("\n{}\n{}", roots.template, stark_verifier(&sfx, &info, &key, const_root, opts));
+    out += &includes(&opts.hash)?;
+    out += &format!("\n{}\n{}", roots.template, stark_verifier(&sfx, &info, &key, &inputs, const_root, opts));
     if !opts.skip_main {
         let public = if info.n_publics > 0 { "{public [publics]}" } else { "" };
         out += &format!("\ncomponent main {public}= StarkVerifier{sfx}();\n");
@@ -97,20 +90,90 @@ pub(crate) fn gen_stark_verifier_gl(
 }
 
 /// `name` when the input exists, else the zero padding the library's one-entry input takes.
-fn or_pad(n: u64, name: &str, pad: &str) -> String {
-    if n > 0 {
+fn or_pad(has: bool, name: &str, pad: &str) -> String {
+    if has {
         name.to_string()
     } else {
         pad.to_string()
     }
 }
 
-/// `StarkVerifier{sfx}`: the key's vars, the library wired around `ConstraintRoots{sfx}`, and (temporary,
-/// until stage 4) today's named proof inputs copied into the library's flat ones.
+/// The transcript's inputs in absorb order; GL and BN128 wire the same template.
+pub(crate) struct TranscriptIn {
+    pub global: String,
+    pub publics: String,
+    pub root_c: String,
+    pub stage_roots: Vec<String>,
+    pub airvalues: String,
+    pub airgroupvalues: String,
+    pub evals: String,
+    pub fold_roots: Vec<String>,
+    /// `foldRoots` when there is no fold tree.
+    pub fold_pad: String,
+    pub betas: String,
+    pub hints: String,
+    pub final_pol: String,
+    pub nonce: String,
+}
+
+impl TranscriptIn {
+    /// `component transcript = {call}` and its inputs.
+    pub fn wire(&self, call: &str) -> String {
+        let mut w = format!("\n    component transcript = {call};\n");
+        w += &format!("    transcript.globalChallenge <== {};\n", self.global);
+        w += &format!("    transcript.publics <== {};\n    transcript.rootC <== {};\n", self.publics, self.root_c);
+        for (i, r) in self.stage_roots.iter().enumerate() {
+            w += &format!("    transcript.stageRoots[{i}] <== {r};\n");
+        }
+        w += &format!(
+            "    transcript.airvalues <== {};\n    transcript.airgroupvalues <== {};\n",
+            self.airvalues, self.airgroupvalues
+        );
+        w += &format!("    transcript.evals <== {};\n", self.evals);
+        for (i, r) in self.fold_roots.iter().enumerate() {
+            w += &format!("    transcript.foldRoots[{i}] <== {r};\n");
+        }
+        if self.fold_roots.is_empty() {
+            w += &format!("    transcript.foldRoots <== {};\n", self.fold_pad);
+        }
+        w += &format!("    transcript.betas <== {};\n    transcript.hints <== {};\n", self.betas, self.hints);
+        w += &format!(
+            "    transcript.finalPol <== {};\n    transcript.nonce <== {};\n    transcript.enable <== enabled;\n",
+            self.final_pol, self.nonce
+        );
+        w
+    }
+}
+
+/// A blake3 `VerifyTreeOpening` `c` (declared by `decl`) at `ind`; `values` is the statement that fills its values.
+pub(crate) struct TreeOpening<'a> {
+    pub ind: &'a str,
+    pub decl: &'a str,
+    pub c: &'a str,
+    pub args: String,
+    pub keys: String,
+    pub values: String,
+    pub siblings: String,
+    pub last: String,
+    pub root: String,
+}
+
+impl TreeOpening<'_> {
+    pub fn wire(&self) -> String {
+        let (i, c) = (self.ind, self.c);
+        format!(
+            "{i}{}{c} = VerifyTreeOpening({});\n{i}{c}.keys <== {};\n{}{i}{c}.siblings <== {};\n{i}{c}.last <== {};\n{i}{c}.root <== {};\n{i}{c}.enable <== enable;\n",
+            self.decl, self.args, self.keys, self.values, self.siblings, self.last, self.root
+        )
+    }
+}
+
+/// `StarkVerifier{sfx}`: the key's vars, the proof inputs, the library wired around `ConstraintRoots{sfx}`.
 fn stark_verifier(
     sfx: &str,
     si: &StarkInfo,
     key: &KeyData,
+    inputs: &[ProofInput],
     const_root: Option<&[String; 4]>,
     opts: &Pil2CircomOptions,
 ) -> String {
@@ -123,32 +186,13 @@ fn stark_verifier(
     // Committed oracles after f_0's: FRI fold trees s1..s{nf}, STIR trees s1..s{M}.
     let nf = if stir { stir_m } else { ldt.fri().map_or(0, |f| f.log_domain_sizes.len() - 1) };
     let (q_stage, ll) = (si.n_stages + 1, si.stark_struct.last_level_verification);
-    let len = |m: &Option<Vec<proofman_common::PolMap>>| m.as_ref().map_or(0, Vec::len) as u64;
-    let (n_av, n_agv, n_pv) = (len(&si.airvalues_map), len(&si.airgroupvalues_map), len(&si.proofvalues_map));
+    let has = |n: &str| inputs.iter().any(|i| i.name == n);
     let pad3 = "[[0, 0, 0]]";
-    let mut d = key.vars.clone(); // declarations
+    let mut d = key.vars.clone() + "\n"; // declarations
     let mut w = String::new(); // wiring
-    d += "    var L0 = geo_levels0(arity, lastLevels, STEPS);\n";
-    d += "    var sibW = geo_sibW(arity);\n    var lastSize = geo_lastSize(arity, lastLevels);\n\n";
 
-    // ---- Named proof inputs (temporary) ----
     if opts.input_challenges {
         d += "    signal input globalChallenge[3];\n";
-    }
-    if si.n_publics > 0 {
-        d += "    signal input publics[nPublics];\n";
-    }
-    if n_av > 0 {
-        d += "    signal input airvalues[nAirValues][3];\n";
-    }
-    if n_agv > 0 {
-        d += "    signal input airgroupvalues[nAirgroupValues][3];\n";
-    }
-    if n_pv > 0 {
-        d += &format!("    signal input proofvalues[{n_pv}][3];\n");
-    }
-    for st in 1..=q_stage {
-        d += &format!("    signal input root{st}[4];\n");
     }
     let const_root = const_root.map(|r| r.join(",")).unwrap_or_else(|| "0,0,0,0".into());
     d += &if opts.verkey_input {
@@ -158,50 +202,8 @@ fn stark_verifier(
     } else {
         format!("    signal rootC[4] <== [{const_root}];\n")
     };
-    d += "    signal input evals[nEvals][3];\n";
-    for t in &key.trees {
-        d += &format!("    signal input s0_vals{}[nQueries][{}];\n", t.suffix, t.width);
-    }
-    for t in &key.trees {
-        d += &format!("    signal input s0_siblings{}[nQueries][L0][sibW];\n", t.suffix);
-        if ll > 0 {
-            d += &format!("    signal input s0_last_mt_levels{}[lastSize][4];\n", t.suffix);
-        }
-    }
-    for f in 1..=nf {
-        d += &format!("    signal input s{f}_root[4];\n");
-    }
-    // Oracle f's opened cosets, Merkle paths and (lastLevels > 0) levels sent in clear.
-    let last = |f: usize| fold_last(stir, f);
-    for f in 1..=nf {
-        let (t, ex, ml) = if stir {
-            let r = f - 1;
-            let ml = format!("geo_pathLevels(arity, lastLevels, STIR_L[{r}] - STIR_K[{r}])");
-            (format!("STIR_T[{r}]"), format!("(1 << STIR_K[{r}])"), ml)
-        } else {
-            (
-                "nQueries".to_string(),
-                format!("geo_foldExp(STEPS, {f})"),
-                format!("geo_foldLevels(arity, lastLevels, STEPS, {f})"),
-            )
-        };
-        d += &format!("    signal input s{f}_vals[{t}][3 * {ex}];\n");
-        d += &format!("    signal input s{f}_siblings[{t}][{ml}][sibW];\n");
-        if ll > 0 {
-            d += &format!("    signal input {}[lastSize][4];\n", last(f));
-        }
-    }
-    d += "    signal input finalPol[geo_finalPolSize(stir, nSteps, STEPS, stirFinalBits)][3];\n";
-    if stir {
-        if stir_m > 1 {
-            d += "    signal input betas[stirM - 1][3];\n";
-        }
-        d += "    signal input nonces[stirM];\n";
-        for i in 0..stir_m - 1 {
-            d += &format!("    signal input ansCoeffs{i}[STIR_T[{i}] + 1][3];\n    signal input shakeCoeffs{i}[STIR_T[{i}] + 1][3];\n");
-        }
-    } else if pow {
-        d += "    signal input nonce;\n";
+    for i in inputs {
+        d += &format!("    signal input {}{};\n", i.name, i.shape());
     }
     d += "\n    signal {binary} enabled;\n";
     d += if opts.enable_input {
@@ -211,11 +213,11 @@ fn stark_verifier(
     };
 
     // VERIFY-CONSTRAINTS: constant padding of absent inputs (and of the clear levels when there are none) must fold away.
-    let publics = or_pad(si.n_publics, "publics", "[0]");
-    let airvalues = or_pad(n_av, "airvalues", pad3);
-    let airgroupvalues = or_pad(n_agv, "airgroupvalues", pad3);
-    let proofvalues = or_pad(n_pv, "proofvalues", pad3);
-    let betas = or_pad(stir_m.saturating_sub(1) as u64, "betas", pad3);
+    let publics = or_pad(has("publics"), "publics", "[0]");
+    let airvalues = or_pad(has("airvalues"), "airvalues", pad3);
+    let airgroupvalues = or_pad(has("airgroupvalues"), "airgroupvalues", pad3);
+    let proofvalues = or_pad(has("proofvalues"), "proofvalues", pad3);
+    let betas = or_pad(has("betas"), "betas", pad3);
 
     // STIR's Ans/shake hints, flat, once for the transcript and the rounds.
     if stir {
@@ -231,22 +233,6 @@ fn stark_verifier(
     }
 
     // ---- The verifier ----
-    w += &format!("\n    component transcript = {};\n", call("StarkVerifierTranscript"));
-    let global = if opts.input_challenges { "globalChallenge" } else { "[0, 0, 0]" };
-    w += &format!("    transcript.globalChallenge <== {global};\n");
-    w += &format!("    transcript.publics <== {publics};\n    transcript.rootC <== rootC;\n");
-    for st in 1..=q_stage {
-        w += &format!("    transcript.stageRoots[{}] <== root{st};\n", st - 1);
-    }
-    w += &format!("    transcript.airvalues <== {airvalues};\n    transcript.airgroupvalues <== {airgroupvalues};\n");
-    w += "    transcript.evals <== evals;\n";
-    for f in 1..=nf {
-        w += &format!("    transcript.foldRoots[{}] <== s{f}_root;\n", f - 1);
-    }
-    if nf == 0 {
-        w += "    transcript.foldRoots <== [[0, 0, 0, 0]];\n";
-    }
-    let hints = if stir { "stirHints" } else { pad3 };
     let nonce = if stir {
         "nonces[0]"
     } else if pow {
@@ -254,8 +240,22 @@ fn stark_verifier(
     } else {
         "0"
     };
-    w += &format!("    transcript.betas <== {betas};\n    transcript.hints <== {hints};\n");
-    w += &format!("    transcript.finalPol <== finalPol;\n    transcript.nonce <== {nonce};\n    transcript.enable <== enabled;\n");
+    w += &TranscriptIn {
+        global: (if opts.input_challenges { "globalChallenge" } else { "[0, 0, 0]" }).into(),
+        publics: publics.clone(),
+        root_c: "rootC".into(),
+        stage_roots: (1..=q_stage).map(|st| format!("root{st}")).collect(),
+        airvalues: airvalues.clone(),
+        airgroupvalues: airgroupvalues.clone(),
+        evals: "evals".into(),
+        fold_roots: (1..=nf).map(|f| format!("s{f}_root")).collect(),
+        fold_pad: "[[0, 0, 0, 0]]".into(),
+        betas: betas.clone(),
+        hints: (if stir { "stirHints" } else { pad3 }).into(),
+        final_pol: "finalPol".into(),
+        nonce: nonce.into(),
+    }
+    .wire(&call("StarkVerifierTranscript"));
 
     w += &format!(
         "\n    signal roots[nRoots][3] <== ConstraintRoots{sfx}()(evals, transcript.challenges, {publics}, {proofvalues}, {airvalues}, {airgroupvalues});\n"
@@ -272,7 +272,9 @@ fn stark_verifier(
 
     // The L_0 queries in batches; STIR's only fold tree there is T_0 (s1).
     let nq = if stir { 1 } else { nf };
-    let ql = QueryLayout { key, ll, nq, fri: !stir };
+    let sibs = (1..=nq).map(|f| has(&format!("s{f}_siblings"))).collect();
+    let sib_w = (si.stark_struct.merkle_tree_arity - 1) * 4;
+    let ql = QueryLayout { key, ll, nq, fri: !stir, sibs, sib_w };
     w += "\n    var nFull = nQueries \\ batchSize;\n    component batch[geo_len1(nFull)];\n";
     w += &format!("    for (var b = 0; b < nFull; b++) {{\n        batch[b] = QueryBatch{sfx}(batchSize);\n");
     w += &ql.wire_batch("batch[b]", "b * batchSize", "batchSize");
@@ -292,12 +294,12 @@ fn stark_verifier(
         for f in 1..=nq {
             w += &format!(
                 "    VerifyMerkleRoot(lastLevels, arity, 1 << STEPS[{f}])({}, s{f}_root, enabled);\n",
-                last(f)
+                fold_last(stir, f)
             );
         }
     }
     if stir {
-        w += &stir_rounds(stir_m, ll, &betas);
+        w += &stir_rounds(stir_m, ll, &betas, &has);
     } else {
         w += "    VerifyFinalPol(STEPS[nSteps - 1], geo_maxDegSize(nBits, nBitsExt, nSteps, STEPS))(finalPol, enabled);\n";
     }
@@ -325,6 +327,9 @@ struct QueryLayout<'a> {
     /// Fold trees opened at the L_0 queries.
     nq: usize,
     fri: bool,
+    /// Per fold tree 1..=nq: whether it has a Merkle path below the levels sent in clear.
+    sibs: Vec<bool>,
+    sib_w: u64,
 }
 
 impl QueryLayout<'_> {
@@ -339,7 +344,9 @@ impl QueryLayout<'_> {
         }
         for f in 1..=self.nq {
             w += &format!("            {comp}.s{f}_vals[q] <== s{f}_vals[{q0} + q];\n");
-            w += &format!("            {comp}.s{f}_siblings[q] <== s{f}_siblings[{q0} + q];\n");
+            if self.sibs[f - 1] {
+                w += &format!("            {comp}.s{f}_siblings[q] <== s{f}_siblings[{q0} + q];\n");
+            }
         }
         w += "        }\n";
         w += &format!("        {comp}.challengeOut <== transcript.challenges[nChallenges - 3];\n");
@@ -369,9 +376,7 @@ impl QueryLayout<'_> {
     /// `QueryBatch{sfx}(n)`: n queries, the witness-parallel unit.
     fn batch_template(&self, sfx: &str) -> String {
         let pad4 = "[[0, 0, 0, 0]]";
-        let mut d = self.key.vars.clone();
-        d += "    var L0 = geo_levels0(arity, lastLevels, STEPS);\n";
-        d += "    var sibW = geo_sibW(arity);\n    var lastSize = geo_lastSize(arity, lastLevels);\n\n";
+        let mut d = self.key.vars.clone() + "\n";
         d += "    signal input {binary} queriesL0[n][STEPS[0]];\n    signal input challengeOut[3];\n";
         d += "    signal input friConsts[2 + nPols + 2 * nGroups][3];\n";
         // One key split per query, shared by the L_0 trees.
@@ -379,6 +384,7 @@ impl QueryLayout<'_> {
         let mut body = String::from(
             "        keys0[q] = QueryKeys(arity, L0 + lastLevels, STEPS[0], STEPS[0]);\n        keys0[q].queries <== queriesL0[q];\n",
         );
+        let ind = "        ";
         for (k, t) in self.key.trees.iter().enumerate() {
             let (s, width) = (&t.suffix, t.width);
             d += &format!("    signal input s0_vals{s}[n][{width}];\n    signal input s0_siblings{s}[n][L0][sibW];\n");
@@ -389,15 +395,22 @@ impl QueryLayout<'_> {
             } else {
                 pad4.to_string()
             };
+            let c = format!("tree{k}[q]");
             w += &format!("    component tree{k}[n];\n");
-            body += &format!("        tree{k}[q] = VerifyTreeOpening(1, {width}, arity, lastLevels, L0, nBitsExt);\n");
-            body += &format!("        tree{k}[q].keys <== keys0[q].keys;\n");
-            body += &format!(
-                "        for (var i = 0; i < {width}; i++) {{ tree{k}[q].values[i][0] <== s0_vals{s}[q][i]; }}\n"
-            );
-            body += &format!("        tree{k}[q].siblings <== s0_siblings{s}[q];\n");
-            body += &format!("        tree{k}[q].last <== {last};\n        tree{k}[q].root <== s0_root{s};\n");
-            body += &format!("        tree{k}[q].enable <== enable;\n");
+            body += &TreeOpening {
+                ind,
+                decl: "",
+                c: &c,
+                args: format!("1, {width}, arity, lastLevels, L0, nBitsExt"),
+                keys: "keys0[q].keys".into(),
+                values: format!(
+                    "{ind}for (var i = 0; i < {width}; i++) {{ {c}.values[i][0] <== s0_vals{s}[q][i]; }}\n"
+                ),
+                siblings: format!("s0_siblings{s}[q]"),
+                last,
+                root: format!("s0_root{s}"),
+            }
+            .wire();
         }
         // A coset input s{f}_vals[q] is flat, 3 limbs per member.
         let coset = |dst: &str, f: usize| {
@@ -408,24 +421,34 @@ impl QueryLayout<'_> {
         for f in 1..=self.nq {
             let ml = format!("geo_foldLevels(arity, lastLevels, STEPS, {f})");
             d += &format!("    signal input s{f}_vals[n][3 * geo_foldExp(STEPS, {f})];\n");
-            d += &format!("    signal input s{f}_siblings[n][{ml}][sibW];\n    signal input s{f}_root[4];\n");
+            // No path: the Empty variant ignores its one-entry siblings.
+            let siblings = if self.sibs[f - 1] {
+                d += &format!("    signal input s{f}_siblings[n][{ml}][sibW];\n");
+                format!("s{f}_siblings[q]")
+            } else {
+                format!("[[{}]]", vec!["0"; self.sib_w as usize].join(", "))
+            };
+            d += &format!("    signal input s{f}_root[4];\n");
             let last = if self.ll > 0 {
                 d += &format!("    signal input s{f}_last[lastSize][4];\n");
                 format!("s{f}_last")
             } else {
                 pad4.to_string()
             };
+            let c = format!("open{f}[q]");
             w += &format!("    component open{f}[n];\n");
-            body += &format!(
-                "        open{f}[q] = VerifyTreeOpening(3, geo_foldExp(STEPS, {f}), arity, lastLevels, {ml}, STEPS[{f}]);\n"
-            );
-            body += &format!(
-                "        open{f}[q].keys <== QueryKeys(arity, {ml} + lastLevels, STEPS[{f}], STEPS[0])(queriesL0[q]);\n"
-            );
-            body += &coset(&format!("open{f}[q].values"), f);
-            body += &format!("        open{f}[q].siblings <== s{f}_siblings[q];\n");
-            body += &format!("        open{f}[q].last <== {last};\n        open{f}[q].root <== s{f}_root;\n");
-            body += &format!("        open{f}[q].enable <== enable;\n");
+            body += &TreeOpening {
+                ind,
+                decl: "",
+                c: &c,
+                args: format!("3, geo_foldExp(STEPS, {f}), arity, lastLevels, {ml}, STEPS[{f}]"),
+                keys: format!("QueryKeys(arity, {ml} + lastLevels, STEPS[{f}], STEPS[0])(queriesL0[q])"),
+                values: coset(&format!("{c}.values"), f),
+                siblings,
+                last,
+                root: format!("s{f}_root"),
+            }
+            .wire();
             if self.fri {
                 d += &format!("    signal input rFold{f}[3];\n");
                 let next = if f < self.nq { format!("STEPS[{}]", f + 1) } else { "0".into() };
@@ -476,7 +499,7 @@ impl QueryLayout<'_> {
 }
 
 /// STIR's rounds after the L_0 queries: today's per-tree inputs flattened into `StirVerifyRounds`.
-fn stir_rounds(m: usize, ll: u64, betas: &str) -> String {
+fn stir_rounds(m: usize, ll: u64, betas: &str, has: &dyn Fn(&str) -> bool) -> String {
     let mut w = String::from("\n    signal stirVals[stir_valsOff(STIR_T, STIR_K, stirM)][3];\n");
     w += "    signal stirSibs[geo_len1(stir_sibOff(arity, lastLevels, STIR_L, STIR_K, STIR_T, stirM))][sibW];\n";
     for r in 0..m {
@@ -484,7 +507,7 @@ fn stir_rounds(m: usize, ll: u64, betas: &str) -> String {
         w += &format!(
             "    for (var q = 0; q < STIR_T[{r}]; q++) {{ for (var c = 0; c < (1 << STIR_K[{r}]); c++) {{ for (var e = 0; e < 3; e++) {{ stirVals[stir_valsOff(STIR_T, STIR_K, {r}) + (q << STIR_K[{r}]) + c][e] <== s{f}_vals[q][c * 3 + e]; }} }} }}\n"
         );
-        if r > 0 {
+        if r > 0 && has(&format!("s{f}_siblings")) {
             w += &format!(
                 "    for (var q = 0; q < STIR_T[{r}]; q++) {{ var ml = geo_pathLevels(arity, lastLevels, STIR_L[{r}] - STIR_K[{r}]); for (var j = 0; j < ml; j++) {{ stirSibs[stir_sibOff(arity, lastLevels, STIR_L, STIR_K, STIR_T, {r}) + q * ml + j] <== s{f}_siblings[q][j]; }} }}\n"
             );
@@ -577,6 +600,18 @@ pub(crate) mod tests {
         Pil2CircomOptions { hash: hash.to_string(), skip_main: true, ..Default::default() }
     }
 
+    /// Every parameter of each library template `out` instantiates is one of the key's vars.
+    fn params_are_vars(out: &str, templates: &[&str]) {
+        for t in templates {
+            let c = call(t);
+            assert!(out.contains(&c), "{t} is not instantiated:\n{out}");
+            for p in c[t.len() + 1..c.len() - 1].split(", ") {
+                let declared = out.contains(&format!("    var {p} =")) || out.contains(&format!("    var {p}["));
+                assert!(declared, "{t}'s parameter {p} is no var:\n{out}");
+            }
+        }
+    }
+
     /// Per key only data, constraints and the wiring: no generated FRI, transcript or DEEP code.
     #[test]
     fn per_key_output_is_data_constraints_and_wiring() {
@@ -592,15 +627,7 @@ pub(crate) mod tests {
             "{out}"
         );
         assert!(out.contains("    var STEPS[3] = [17, 14, 11];"), "{out}");
-        // Every library parameter is one of the key's vars.
-        for t in ["StarkVerifierTranscript", "VerifyEvaluations", "DeepConstants"] {
-            let c = call(t);
-            assert!(out.contains(&c), "{t} is not instantiated:\n{out}");
-            for p in c[t.len() + 1..c.len() - 1].split(", ") {
-                let declared = out.contains(&format!("    var {p} =")) || out.contains(&format!("    var {p}["));
-                assert!(declared, "{t}'s parameter {p} is no var:\n{out}");
-            }
-        }
+        params_are_vars(&out, &["StarkVerifierTranscript", "VerifyEvaluations", "DeepConstants"]);
         for gone in ["Transcript", "VerifyFRI", "DeepConstants", "VerifyQuery", "Zfirst", "Zlast", "Zframe"] {
             assert!(!out.contains(&format!("template {gone}")), "{gone} is generated:\n{out}");
         }
@@ -614,17 +641,17 @@ pub(crate) mod tests {
     fn glue_keeps_the_proof_input_names() {
         let out = render(&stark_info(), &opts("Poseidon2"));
         for decl in [
-            "signal input publics[nPublics];",
+            "signal input publics[4];",
             "signal input root1[4];",
             "signal input root3[4];",
             "signal rootC[4] <== [0,0,0,0];",
-            "signal input s0_vals1[nQueries][1];",
-            "signal input s0_valsC[nQueries][1];",
-            "signal input s0_vals_rom_0[nQueries][1];",
-            "signal input s0_last_mt_levels_rom_0[lastSize][4];",
+            "signal input s0_vals1[10][1];",
+            "signal input s0_valsC[10][1];",
+            "signal input s0_vals_rom_0[10][1];",
+            "signal input s0_last_mt_levels_rom_0[4][4];",
             "signal input s1_root[4];",
-            "signal input s2_vals[nQueries][3 * geo_foldExp(STEPS, 2)];",
-            "signal input finalPol[geo_finalPolSize(stir, nSteps, STEPS, stirFinalBits)][3];",
+            "signal input s2_vals[10][24];",
+            "signal input finalPol[2048][3];",
             "signal input nonce;",
             "batch[b].s0_root_rom_0 <== [publics[0], publics[1], publics[2], publics[3]];",
         ] {
@@ -649,18 +676,15 @@ pub(crate) mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "nStages")]
-    fn basic_transcript_needs_stage2() {
+    fn basic_transcript_needs_stage2_and_circuit_type() {
+        let o = Pil2CircomOptions { input_challenges: true, ..opts("Poseidon2") };
         let mut si = stark_info();
         si["circuitType"] = json!(37);
         si["nStages"] = json!(1);
-        render(&si, &Pil2CircomOptions { input_challenges: true, ..opts("Poseidon2") });
-    }
-
-    #[test]
-    #[should_panic(expected = "circuitType")]
-    fn basic_transcript_needs_circuit_type() {
-        render(&stark_info(), &Pil2CircomOptions { input_challenges: true, ..opts("Poseidon2") });
+        let err = gen_stark_verifier_gl(None, &si, &verifier_info(), &o).unwrap_err();
+        assert!(err.to_string().contains("nStages"), "{err}");
+        let err = gen_stark_verifier_gl(None, &stark_info(), &verifier_info(), &o).unwrap_err();
+        assert!(err.to_string().contains("circuitType"), "{err}");
     }
 
     #[test]
@@ -715,45 +739,8 @@ pub(crate) mod tests {
         assert!(out.contains("include \"tree/treeselector8.circom\";"), "{out}");
     }
 
-    /// Render a key's verifier with the options and fixed root another render of it used (Task 0 measurement):
-    ///   LIB_SI=<starkinfo> LIB_VI=<verifierinfo> LIB_TODAY=<a .verifier.circom of the key> LIB_OUT=<file>
-    ///   [LIB_AIRGROUP=<id> renames the per-key templates] [LIB_MAIN=1 adds `component main`]
-    ///   cargo test --release -p pil2-stark-recurser render_lib_from_files -- --ignored
-    #[test]
-    #[ignore]
-    fn render_lib_from_files() {
-        let env = |k: &str| std::env::var(k).unwrap_or_else(|_| panic!("{k} not set"));
-        let read = |k: &str| std::fs::read_to_string(env(k)).unwrap_or_else(|e| panic!("{k}: {e}"));
-        let mut si: Value = serde_json::from_str(&read("LIB_SI")).unwrap();
-        let vi: Value = serde_json::from_str(&read("LIB_VI")).unwrap();
-        let today = read("LIB_TODAY");
-        if let Ok(id) = std::env::var("LIB_AIRGROUP") {
-            si["airgroupId"] = json!(id.parse::<u64>().unwrap());
-        }
-        let hash = ["Poseidon1", "Poseidon2", "blake3"]
-            .into_iter()
-            .find(|h| today.contains(&format!("include \"hash/{}/", h.to_lowercase())))
-            .expect("today's render names no hash family");
-        let const_root: Option<[String; 4]> = today.lines().find(|l| l.contains("rootC[4] <== [")).map(|l| {
-            let inner = &l[l.find("<== [").unwrap() + 5..];
-            let parts: Vec<String> =
-                inner[..inner.find(']').unwrap()].split(',').map(|x| x.trim().to_string()).collect();
-            parts.try_into().expect("rootC has 4 words")
-        });
-        let opts = Pil2CircomOptions {
-            hash: hash.to_string(),
-            skip_main: std::env::var("LIB_MAIN").is_err(),
-            verkey_input: !today.contains("rootC[4] <== ["),
-            enable_input: today.lines().any(|l| l.trim() == "signal input enable;"),
-            input_challenges: today.contains("signal input globalChallenge[3];"),
-            fri_queries_batch_size: None,
-        };
-        let out = gen_stark_verifier_gl(const_root.as_ref(), &si, &vi, &opts).unwrap();
-        std::fs::write(env("LIB_OUT"), out).unwrap();
-    }
-
     /// `stark_info()` with a 2-iteration STIR schedule.
-    fn stir_info() -> Value {
+    pub(crate) fn stir_info() -> Value {
         let mut si = stark_info();
         let ss = &mut si["starkStruct"];
         ss["lowDegreeTest"] = json!("STIR");
@@ -779,14 +766,7 @@ pub(crate) mod tests {
             ],
             "{out}"
         );
-        for t in ["StarkVerifierTranscript", "StirVerifyRounds"] {
-            let c = call(t);
-            assert!(out.contains(&c), "{t} is not instantiated:\n{out}");
-            for p in c[t.len() + 1..c.len() - 1].split(", ") {
-                let declared = out.contains(&format!("    var {p} =")) || out.contains(&format!("    var {p}["));
-                assert!(declared, "{t}'s parameter {p} is no var:\n{out}");
-            }
-        }
+        params_are_vars(&out, &["StarkVerifierTranscript", "StirVerifyRounds"]);
         for var in [
             "var stir = 1;",
             "var friFold = 0;",
@@ -800,12 +780,12 @@ pub(crate) mod tests {
         }
         for decl in [
             "signal input s2_root[4];",
-            "signal input s2_vals[STIR_T[1]][3 * (1 << STIR_K[1])];",
-            "signal input s1_last_levels[lastSize][4];",
-            "signal input betas[stirM - 1][3];",
-            "signal input nonces[stirM];",
-            "signal input ansCoeffs0[STIR_T[0] + 1][3];",
-            "signal input shakeCoeffs0[STIR_T[0] + 1][3];",
+            "signal input s2_vals[6][24];",
+            "signal input s1_last_levels[4][4];",
+            "signal input betas[1][3];",
+            "signal input nonces[2];",
+            "signal input ansCoeffs0[11][3];",
+            "signal input shakeCoeffs0[11][3];",
             "batch[b].s1_last <== s1_last_levels;",
             "transcript.nonce <== nonces[0];",
             "rounds.last[1] <== s2_last_levels;",
@@ -840,12 +820,21 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn split_linear_hash_only_with_poseidon2() {
+    fn refuses_split_linear_hash() {
         let mut si = stark_info();
         si["starkStruct"]["splitLinearHash"] = json!(true);
+        let err = gen_stark_verifier_gl(None, &si, &verifier_info(), &opts("Poseidon2")).unwrap_err();
+        assert!(err.to_string().contains("splitLinearHash"), "{err}");
+    }
+
+    /// A fold tree whose whole path is sent in clear has no siblings input (circom T3001 otherwise).
+    #[test]
+    fn empty_fold_tree_has_no_siblings() {
+        let mut si = stark_info();
+        si["starkStruct"]["logDomainSizes"] = json!([17, 14, 2]);
         let out = render(&si, &opts("Poseidon2"));
-        assert!(out.contains("include \"hash/poseidon2/merklehash_gpu.circom\";"), "{out}");
-        let err = gen_stark_verifier_gl(None, &si, &verifier_info(), &opts("blake3")).unwrap_err();
-        assert!(err.to_string().contains("blake3 + splitLinearHash is not supported"), "{err}");
+        assert!(!out.contains("s2_siblings"), "{out}");
+        assert!(out.contains("open2[q].siblings <== [[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]];"), "{out}");
+        assert!(out.contains("s1_siblings"), "{out}");
     }
 }

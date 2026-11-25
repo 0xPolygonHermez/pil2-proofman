@@ -1,46 +1,18 @@
-//! Rust port of `define_stark_inputs.circom.ejs` and `assign_stark_inputs.circom.ejs`.
-//!
-//! These two sub-templates appear inside every circuit template (recursivef,
-//! recursion/final, compressor, recursive1, recursive2, vadcop/final) and declare
-//! / wire all signal inputs for a StarkVerifier component.
+//! The proof inputs a circuit declares (`define_stark_inputs`) and wires into its `StarkVerifier`
+//! (`assign_stark_inputs`), from the verifier's own list (`lib_params::proof_inputs`), whose order
+//! is the flat proof's: the witness fill copies the proof into the inputs in declaration order.
 
+use anyhow::Result;
 use serde_json::Value;
 
-// ── Math helpers ──────────────────────────────────────────────────────────────
+use crate::stark2circom::circom_verifier::lib_params::{proof_inputs, Origin, ProofInput};
 
-/// Integer log2 for powers-of-two (arity is always a power of 2).
-fn log2_usize(x: usize) -> usize {
-    (x as f64).log2() as usize
-}
-
-/// Merkle tree siblings depth for BN128:
-/// `floor((nBits - 1) / log2(arity)) + 1 - lastLevelVerification`
-pub fn siblings_depth_bn128(n_bits: usize, arity: usize, last_level_verification: usize) -> usize {
-    ((n_bits.saturating_sub(1)) / log2_usize(arity) + 1).saturating_sub(last_level_verification)
-}
-
-/// Merkle tree siblings depth for GL:
-/// `ceil(nBits / log2(arity)) - lastLevelVerification`
-pub fn siblings_depth_gl(n_bits: usize, arity: usize, last_level_verification: usize) -> usize {
-    let lg = log2_usize(arity);
-    let ceil = n_bits.div_ceil(lg);
-    ceil.saturating_sub(last_level_verification)
-}
-
-/// `arity ** power` (integer, small exponents only).
-pub fn arity_pow(arity: usize, power: usize) -> usize {
-    arity.pow(power as u32)
-}
-
-// ── define_stark_inputs ───────────────────────────────────────────────────────
-
-/// Options controlling signal generation (mirrors the JS `options` object
-/// passed to the sub-template includes).
+/// Options controlling signal generation.
 #[derive(Debug, Default, Clone)]
 pub struct StarkInputOptions {
     /// Emit `signal input {prefix_}publics[nPublics]` when true.
     pub add_publics: bool,
-    /// Enable `final` mode (BN128 root signal is scalar, not array[4], for final).
+    /// The final circuit's verifier: `StarkVerifier()`, never suffixed with the airgroup id.
     pub is_final: bool,
     /// Emit `parallel` keyword on the `StarkVerifier` component (for recursive2).
     pub parallel: bool,
@@ -50,233 +22,38 @@ pub struct StarkInputOptions {
     pub shared_publics: bool,
 }
 
-/// Generate the signal declarations for a StarkVerifier proof input block.
-///
-/// Ports `define_stark_inputs.circom.ejs`.
-///
-/// * `stark_info` – the full starkInfo JSON Value (from serialized `StarkInfoOutput`).
-/// * `prefix`     – signal name prefix (empty string for the root circuit,
-///   `"a_sv"` etc. for recursive2 multi-instance).
-/// * `opts`       – generation options.
-pub fn define_stark_inputs(stark_info: &Value, prefix: &str, opts: &StarkInputOptions) -> String {
-    let mut out = String::new();
-    let prefix_ = if prefix.is_empty() { String::new() } else { format!("{prefix}_") };
-
-    let ss = &stark_info["starkStruct"];
-    let hash_type = ss["verificationHashType"].as_str().unwrap_or("GL");
-    let is_bn128 = hash_type == "BN128";
-    let arity = ss["merkleTreeArity"].as_u64().unwrap_or(2) as usize;
-    let llv = ss["lastLevelVerification"].as_u64().unwrap_or(0) as usize;
-    // A STIR stark info opens the stage trees at its round-1 queries (t₀); its own proof
-    // section is declared below in the exact flat-buffer order.
-    let is_stir = ss["lowDegreeTest"].as_str() == Some("STIR");
-    assert!(!(is_stir && is_bn128), "STIR is not supported for BN128 proofs");
-    let stir_num_queries: Vec<usize> = if is_stir {
-        ss["numQueries"]
-            .as_array()
-            .map_or(vec![], |a| a.iter().filter_map(|v| v.as_u64().map(|x| x as usize)).collect())
-    } else {
-        vec![]
-    };
-    let stir_folding: Vec<usize> = ss["foldingFactors"]
-        .as_array()
-        .map_or(vec![], |a| a.iter().filter_map(|v| v.as_u64().map(|x| x as usize)).collect());
-    let stir_log_degrees: Vec<usize> = ss["logDegrees"]
-        .as_array()
-        .map_or(vec![], |a| a.iter().filter_map(|v| v.as_u64().map(|x| x as usize)).collect());
-    let n_queries = if is_stir {
-        stir_num_queries.first().copied().unwrap_or(0)
-    } else {
-        ss["numQueries"].as_u64().unwrap_or(0) as usize
-    };
-    let n_constants = stark_info["nConstants"].as_u64().unwrap_or(0) as usize;
-    let n_stages = stark_info["nStages"].as_u64().unwrap_or(0) as usize;
-    let n_publics = stark_info["nPublics"].as_u64().unwrap_or(0) as usize;
-
-    let steps: Vec<u64> =
-        ss["logDomainSizes"].as_array().map_or(vec![], |a| a.iter().filter_map(|v| v.as_u64()).collect());
-
-    let ev_map_len = stark_info["evMap"].as_array().map(|a| a.len()).unwrap_or(0);
-
-    // Helpers for signal arrays (GL/BN128 root shape differs).
-    let root_signal = |name: &str| -> String {
-        if is_bn128 {
-            format!("    signal input {prefix_}{name};\n")
-        } else {
-            format!("    signal input {prefix_}{name}[4];\n")
-        }
-    };
-
-    // ── publics / airgroupvalues / airvalues ──────────────────────────────────
-    if opts.add_publics && n_publics > 0 {
-        out.push_str(&format!("    signal input {prefix_}publics[{n_publics}];\n"));
-    }
-    let agv_len = stark_info["airgroupValuesMap"].as_array().map(|a| a.len()).unwrap_or(0);
-    if agv_len > 0 {
-        out.push_str(&format!("    signal input {prefix_}airgroupvalues[{agv_len}][3];\n"));
-    }
-    let av_len = stark_info["airValuesMap"].as_array().map(|a| a.len()).unwrap_or(0);
-    if av_len > 0 {
-        out.push_str(&format!("    signal input {prefix_}airvalues[{av_len}][3];\n"));
-    }
-
-    // ── roots (one per stage + 1 extra) ──────────────────────────────────────
-    for s in 1..=(n_stages + 1) {
-        out.push_str(&root_signal(&format!("root{s}")));
-    }
-
-    // ── evals / s0 vals and siblings ─────────────────────────────────────────
-    out.push_str(&format!("    signal input {prefix_}evals[{ev_map_len}][3];\n\n"));
-    out.push_str(&format!("    signal input {prefix_}s0_valsC[{n_queries}][{n_constants}];\n"));
-
-    // s0_siblingsC
-    if is_bn128 {
-        let d = siblings_depth_bn128(steps[0] as usize, arity, llv);
-        out.push_str(&format!("    signal input {prefix_}s0_siblingsC[{n_queries}][{d}][{arity}];\n"));
-        if llv > 0 {
-            let last_count = arity_pow(arity, llv);
-            out.push_str(&format!("    signal input {prefix_}s0_last_levelsC[{last_count}];\n"));
-        }
-    } else {
-        let d = siblings_depth_gl(steps[0] as usize, arity, llv);
-        let leaf_w = (arity - 1) * 4;
-        out.push_str(&format!("    signal input {prefix_}s0_siblingsC[{n_queries}][{d}][{leaf_w}];\n"));
-        if llv > 0 {
-            let last_count = arity_pow(arity, llv);
-            out.push_str(&format!("    signal input {prefix_}s0_last_mt_levelsC[{last_count}][4];\n"));
-        }
-    }
-
-    // custom commits
-    let custom_commits = stark_info["customCommits"].as_array().cloned().unwrap_or_default();
-    for cc in &custom_commits {
-        let cc_name = cc["name"].as_str().unwrap_or("");
-        let width = cc["stageWidths"].as_array().and_then(|a| a.first()).and_then(|v| v.as_u64()).unwrap_or(0) as usize;
-        out.push_str(&format!("    signal input {prefix_}s0_vals_{cc_name}_0[{n_queries}][{width}];\n"));
-        if is_bn128 {
-            let d = siblings_depth_bn128(steps[0] as usize, arity, llv);
-            out.push_str(&format!("    signal input {prefix_}s0_siblings_{cc_name}_0[{n_queries}][{d}][{arity}];\n"));
-            if llv > 0 {
-                let last_count = arity_pow(arity, llv);
-                out.push_str(&format!("    signal input {prefix_}s0_last_levels_{cc_name}_0[{last_count}];\n"));
-            }
-        } else {
-            let d = siblings_depth_gl(steps[0] as usize, arity, llv);
-            let leaf_w = (arity - 1) * 4;
-            out.push_str(&format!("    signal input {prefix_}s0_siblings_{cc_name}_0[{n_queries}][{d}][{leaf_w}];\n"));
-            if llv > 0 {
-                let last_count = arity_pow(arity, llv);
-                out.push_str(&format!("    signal input {prefix_}s0_last_mt_levels_{cc_name}_0[{last_count}][4];\n"));
-            }
-        }
-    }
-
-    // per-stage cm vals/siblings
-    let map_sections = &stark_info["mapSectionsN"];
-    for s in 1..=(n_stages + 1) {
-        let key = format!("cm{s}");
-        let width = map_sections[&key].as_u64().unwrap_or(0) as usize;
-        if width > 0 {
-            out.push_str(&format!("    signal input {prefix_}s0_vals{s}[{n_queries}][{width}];\n"));
-            if is_bn128 {
-                let d = siblings_depth_bn128(steps[0] as usize, arity, llv);
-                out.push_str(&format!("    signal input {prefix_}s0_siblings{s}[{n_queries}][{d}][{arity}];\n"));
-                if llv > 0 {
-                    let last_count = arity_pow(arity, llv);
-                    out.push_str(&format!("    signal input {prefix_}s0_last_levels{s}[{last_count}];\n"));
-                }
-            } else {
-                let d = siblings_depth_gl(steps[0] as usize, arity, llv);
-                let leaf_w = (arity - 1) * 4;
-                out.push_str(&format!("    signal input {prefix_}s0_siblings{s}[{n_queries}][{d}][{leaf_w}];\n"));
-                if llv > 0 {
-                    let last_count = arity_pow(arity, llv);
-                    out.push_str(&format!("    signal input {prefix_}s0_last_mt_levels{s}[{last_count}][4];\n"));
-                }
-            }
-        }
-    }
-
-    if is_stir {
-        // The STIR proof section, in the exact order Proofs::proof2pointer writes it:
-        // T_i roots, per tree {cosets, siblings, last level}, β, p's coefficients, the
-        // per-round nonces, and the zero-padded Âns and shake-polynomial coefficients.
-        let m = stir_folding.len();
-        for i in 0..m {
-            out.push_str(&root_signal(&format!("s{}_root", i + 1)));
-        }
-        for i in 0..m {
-            let t = stir_num_queries[i];
-            let coset_w = (1usize << stir_folding[i]) * 3;
-            let log_leaves = steps[i] as usize - stir_folding[i];
-            let d = siblings_depth_gl(log_leaves, arity, llv);
-            let leaf_w = (arity - 1) * 4;
-            let tree = i + 1;
-            out.push_str(&format!("    signal input {prefix_}s{tree}_vals[{t}][{coset_w}];\n"));
-            out.push_str(&format!("    signal input {prefix_}s{tree}_siblings[{t}][{d}][{leaf_w}];\n"));
-            if llv > 0 {
-                let last_count = arity_pow(arity, llv);
-                out.push_str(&format!("    signal input {prefix_}s{tree}_last_levels[{last_count}][4];\n"));
-            }
-        }
-        if m > 1 {
-            out.push_str(&format!("    signal input {prefix_}betas[{}][3];\n", m - 1));
-        }
-        let final_pol_len = 1usize << stir_log_degrees.last().copied().unwrap_or(0);
-        out.push_str(&format!("    signal input {prefix_}finalPol[{final_pol_len}][3];\n"));
-        out.push_str(&format!("    signal input {prefix_}nonces[{m}];\n"));
-        for (i, &t) in stir_num_queries.iter().enumerate().take(m.saturating_sub(1)) {
-            let n_g_max = 1 + t;
-            out.push_str(&format!("    signal input {prefix_}ansCoeffs{i}[{n_g_max}][3];\n"));
-        }
-        for (i, &t) in stir_num_queries.iter().enumerate().take(m.saturating_sub(1)) {
-            let n_g_max = 1 + t;
-            out.push_str(&format!("    signal input {prefix_}shakeCoeffs{i}[{n_g_max}][3];\n"));
-        }
-    } else {
-        // FRI step roots and vals/siblings for steps 1..
-        for s in 1..steps.len() {
-            out.push_str(&root_signal(&format!("s{s}_root")));
-        }
-        for s in 1..steps.len() {
-            let fold_vals = (1usize << (steps[s - 1] as usize - steps[s] as usize)) * 3;
-            out.push_str(&format!("    signal input {prefix_}s{s}_vals[{n_queries}][{fold_vals}];\n"));
-            if is_bn128 {
-                let d = siblings_depth_bn128(steps[s] as usize, arity, llv);
-                if d > 0 {
-                    out.push_str(&format!("    signal input {prefix_}s{s}_siblings[{n_queries}][{d}][{arity}];\n"));
-                }
-                if llv > 0 {
-                    let last_count = arity_pow(arity, llv);
-                    out.push_str(&format!("    signal input {prefix_}s{s}_last_levels[{last_count}];\n"));
-                }
-            } else {
-                let d = siblings_depth_gl(steps[s] as usize, arity, llv);
-                let leaf_w = (arity - 1) * 4;
-                out.push_str(&format!("    signal input {prefix_}s{s}_siblings[{n_queries}][{d}][{leaf_w}];\n"));
-                if llv > 0 {
-                    let last_count = arity_pow(arity, llv);
-                    out.push_str(&format!("    signal input {prefix_}s{s}_last_mt_levels[{last_count}][4];\n"));
-                }
-            }
-        }
-
-        // Final polynomial
-        let last_bits = steps.last().copied().unwrap_or(0) as usize;
-        let final_pol_len = 1usize << last_bits;
-        out.push_str(&format!("    signal input {prefix_}finalPol[{final_pol_len}][3];\n"));
-
-        // Proof-of-work nonce (optional)
-        let pow_bits = ss["grindingBitsQueries"].as_u64().unwrap_or(0);
-        if pow_bits > 0 {
-            out.push_str(&format!("    signal input {prefix_}nonce;\n"));
-        }
-    }
-
-    out
+fn inputs(stark_info: &Value) -> Result<Vec<ProofInput>> {
+    let info = serde_json::from_value(stark_info.clone())?;
+    proof_inputs(&info)
 }
 
-// ── assign_stark_inputs ───────────────────────────────────────────────────────
+fn prefix_(prefix: &str) -> String {
+    if prefix.is_empty() {
+        String::new()
+    } else {
+        format!("{prefix}_")
+    }
+}
+
+/// The signal declarations of a StarkVerifier's proof inputs, named `{prefix}_<input>`.
+pub fn define_stark_inputs(stark_info: &Value, prefix: &str, opts: &StarkInputOptions) -> Result<String> {
+    let p = prefix_(prefix);
+    let mut out = String::new();
+    for i in inputs(stark_info)? {
+        let declared = match i.origin {
+            Origin::Proof => true,
+            Origin::Publics => opts.add_publics,
+            Origin::ProofValues => false,
+        };
+        if declared {
+            out += &format!("    signal input {p}{}{};\n", i.name, i.shape());
+        }
+        if i.name == "evals" {
+            out += "\n";
+        }
+    }
+    Ok(out)
+}
 
 /// Options for the `enable` signal injection into the StarkVerifier component.
 #[derive(Debug, Default, Clone)]
@@ -292,285 +69,116 @@ pub enum EnableInput {
     Expr(String),
 }
 
-/// Generate the StarkVerifier component instantiation and signal wiring.
-///
-/// Ports `assign_stark_inputs.circom.ejs`.
-///
-/// * `component_name` – e.g. `"sV"`, `"vA"`, `"vB"`, `"vC"`.
-/// * `prefix`         – signal name prefix.
-/// * `stark_info`     – starkInfo JSON value.
-/// * `opts`           – generation options (same as `define_stark_inputs`).
-/// * `enable`         – optional `enable` signal injection.
+/// The StarkVerifier component `component_name` and its inputs wired from `{prefix}_<input>`.
 pub fn assign_stark_inputs(
     component_name: &str,
     prefix: &str,
     stark_info: &Value,
     opts: &StarkInputOptions,
     enable: &EnableInput,
-) -> String {
-    let mut out = String::new();
-    let prefix_ = if prefix.is_empty() { String::new() } else { format!("{prefix}_") };
-
-    let ss = &stark_info["starkStruct"];
-    let llv = ss["lastLevelVerification"].as_u64().unwrap_or(0) as usize;
-    let is_bn128 = ss["verificationHashType"].as_str().unwrap_or("GL") == "BN128";
-    let arity = ss["merkleTreeArity"].as_u64().unwrap_or(2) as usize;
-    let n_stages = stark_info["nStages"].as_u64().unwrap_or(0) as usize;
-    let n_publics = stark_info["nPublics"].as_u64().unwrap_or(0) as usize;
-    let airgroup_id = stark_info["airgroupId"].as_u64();
-    let steps: Vec<u64> =
-        ss["logDomainSizes"].as_array().map_or(vec![], |a| a.iter().filter_map(|v| v.as_u64()).collect());
-    let custom_commits = stark_info["customCommits"].as_array().cloned().unwrap_or_default();
-    let map_sections = &stark_info["mapSectionsN"];
-
-    // Component declaration
-    let comp_type = match (airgroup_id, opts.is_final) {
-        (Some(id), false) => {
-            if opts.parallel {
-                format!("parallel StarkVerifier{id}()")
-            } else {
-                format!("StarkVerifier{id}()")
+) -> Result<String> {
+    let p = prefix_(prefix);
+    let c = component_name;
+    let parallel = if opts.parallel { "parallel " } else { "" };
+    let id = stark_info["airgroupId"].as_u64().filter(|_| !opts.is_final).map(|id| id.to_string()).unwrap_or_default();
+    let mut out = format!("    component {c} = {parallel}StarkVerifier{id}();\n");
+    for i in inputs(stark_info)? {
+        let n = &i.name;
+        match i.origin {
+            Origin::Proof => out += &format!("    {c}.{n} <== {p}{n};\n"),
+            Origin::ProofValues => out += &format!("    {c}.{n} <== proofValues;\n"),
+            Origin::Publics if opts.add_publics => {
+                let source = if opts.shared_publics { "publics".to_string() } else { format!("{p}publics") };
+                out += &format!(
+                    "    for (var i=0; i< {}; i++) {{\n        {c}.publics[i] <== {source}[i];\n    }}\n",
+                    i.dims[0]
+                );
             }
-        }
-        _ => {
-            if opts.parallel {
-                "parallel StarkVerifier()".into()
-            } else {
-                "StarkVerifier()".into()
-            }
-        }
-    };
-    out.push_str(&format!("    component {component_name} = {comp_type};\n"));
-
-    if opts.add_publics && n_publics > 0 {
-        let source = if opts.shared_publics { "publics".to_string() } else { format!("{prefix_}publics") };
-        out.push_str(&format!(
-            "    for (var i=0; i< {n_publics}; i++) {{\n        \
-             {component_name}.publics[i] <== {source}[i];\n    }}\n"
-        ));
-    }
-
-    // airgroupvalues / airvalues / proofvalues
-    let agv_len = stark_info["airgroupValuesMap"].as_array().map(|a| a.len()).unwrap_or(0);
-    if agv_len > 0 {
-        out.push_str(&format!("    {component_name}.airgroupvalues <== {prefix_}airgroupvalues;\n"));
-    }
-    let av_len = stark_info["airValuesMap"].as_array().map(|a| a.len()).unwrap_or(0);
-    if av_len > 0 {
-        out.push_str(&format!("    {component_name}.airvalues <== {prefix_}airvalues;\n"));
-    }
-    let pv_len = stark_info["proofValuesMap"].as_array().map(|a| a.len()).unwrap_or(0);
-    if pv_len > 0 {
-        out.push_str(&format!("    {component_name}.proofvalues <== proofValues;\n"));
-    }
-
-    // roots
-    for s in 1..=(n_stages + 1) {
-        out.push_str(&format!("    {component_name}.root{s} <== {prefix_}root{s};\n"));
-    }
-
-    out.push_str(&format!("    {component_name}.evals <== {prefix_}evals;\n"));
-
-    // s0_valsC / s0_siblingsC
-    out.push_str(&format!("    {component_name}.s0_valsC <== {prefix_}s0_valsC;\n"));
-    out.push_str(&format!("    {component_name}.s0_siblingsC <== {prefix_}s0_siblingsC;\n"));
-    if llv > 0 {
-        if is_bn128 {
-            out.push_str(&format!("    {component_name}.s0_last_levelsC <== {prefix_}s0_last_levelsC;\n"));
-        } else {
-            out.push_str(&format!("    {component_name}.s0_last_mt_levelsC <== {prefix_}s0_last_mt_levelsC;\n"));
+            Origin::Publics => {}
         }
     }
-
-    // custom commits
-    for cc in &custom_commits {
-        let cc_name = cc["name"].as_str().unwrap_or("");
-        out.push_str(&format!("    {component_name}.s0_vals_{cc_name}_0 <== {prefix_}s0_vals_{cc_name}_0;\n"));
-        out.push_str(&format!("    {component_name}.s0_siblings_{cc_name}_0 <== {prefix_}s0_siblings_{cc_name}_0;\n"));
-        if llv > 0 {
-            if is_bn128 {
-                out.push_str(&format!(
-                    "    {component_name}.s0_last_levels_{cc_name}_0 <== {prefix_}s0_last_levels_{cc_name}_0;\n"
-                ));
-            } else {
-                out.push_str(&format!(
-                    "    {component_name}.s0_last_mt_levels_{cc_name}_0 <== {prefix_}s0_last_mt_levels_{cc_name}_0;\n"
-                ));
-            }
-        }
-    }
-
-    // per-stage cm
-    for s in 1..=(n_stages + 1) {
-        let key = format!("cm{s}");
-        let width = map_sections[&key].as_u64().unwrap_or(0);
-        if width > 0 {
-            out.push_str(&format!("    {component_name}.s0_vals{s} <== {prefix_}s0_vals{s};\n"));
-            out.push_str(&format!("    {component_name}.s0_siblings{s} <== {prefix_}s0_siblings{s};\n"));
-            if llv > 0 {
-                if is_bn128 {
-                    out.push_str(&format!("    {component_name}.s0_last_levels{s} <== {prefix_}s0_last_levels{s};\n"));
-                } else {
-                    out.push_str(&format!(
-                        "    {component_name}.s0_last_mt_levels{s} <== {prefix_}s0_last_mt_levels{s};\n"
-                    ));
-                }
-            }
-        }
-    }
-
-    let is_stir = ss["lowDegreeTest"].as_str() == Some("STIR");
-    if is_stir {
-        let m = ss["foldingFactors"].as_array().map_or(0, |a| a.len());
-        for i in 0..m {
-            out.push_str(&format!("    {component_name}.s{0}_root <== {prefix_}s{0}_root;\n", i + 1));
-        }
-        for i in 0..m {
-            out.push_str(&format!("    {component_name}.s{0}_vals <== {prefix_}s{0}_vals;\n", i + 1));
-            out.push_str(&format!("    {component_name}.s{0}_siblings <== {prefix_}s{0}_siblings;\n", i + 1));
-            if llv > 0 {
-                out.push_str(&format!("    {component_name}.s{0}_last_levels <== {prefix_}s{0}_last_levels;\n", i + 1));
-            }
-        }
-        if m > 1 {
-            out.push_str(&format!("    {component_name}.betas <== {prefix_}betas;\n"));
-        }
-        out.push_str(&format!("    {component_name}.finalPol <== {prefix_}finalPol;\n"));
-        out.push_str(&format!("    {component_name}.nonces <== {prefix_}nonces;\n"));
-        for i in 0..m.saturating_sub(1) {
-            out.push_str(&format!("    {component_name}.ansCoeffs{i} <== {prefix_}ansCoeffs{i};\n"));
-            out.push_str(&format!("    {component_name}.shakeCoeffs{i} <== {prefix_}shakeCoeffs{i};\n"));
-        }
-    } else {
-        // FRI step roots
-        for s in 1..steps.len() {
-            out.push_str(&format!("    {component_name}.s{s}_root <== {prefix_}s{s}_root;\n"));
-        }
-        // FRI step vals/siblings
-        for (s, step) in steps.iter().enumerate().skip(1) {
-            out.push_str(&format!("    {component_name}.s{s}_vals <== {prefix_}s{s}_vals;\n"));
-            let skip_siblings = is_bn128 && siblings_depth_bn128(*step as usize, arity, llv) == 0;
-            if !skip_siblings {
-                out.push_str(&format!("    {component_name}.s{s}_siblings <== {prefix_}s{s}_siblings;\n"));
-            }
-            if llv > 0 {
-                if is_bn128 {
-                    out.push_str(&format!("    {component_name}.s{s}_last_levels <== {prefix_}s{s}_last_levels;\n"));
-                } else {
-                    out.push_str(&format!(
-                        "    {component_name}.s{s}_last_mt_levels <== {prefix_}s{s}_last_mt_levels;\n"
-                    ));
-                }
-            }
-        }
-
-        // finalPol
-        out.push_str(&format!("    {component_name}.finalPol <== {prefix_}finalPol;\n"));
-
-        // Proof-of-work nonce
-        let pow_bits = ss["grindingBitsQueries"].as_u64().unwrap_or(0);
-        if pow_bits > 0 {
-            out.push_str(&format!("    {component_name}.nonce <== {prefix_}nonce;\n"));
-        }
-    }
-
-    // Optional enable signal
     match enable {
         EnableInput::None => {}
-        EnableInput::One => out.push_str(&format!("    {component_name}.enable <== 1;\n")),
-        EnableInput::Value(n) => out.push_str(&format!("    {component_name}.enable <== {n};\n")),
-        EnableInput::Expr(e) => out.push_str(&format!("    {component_name}.enable <== {e};\n")),
+        EnableInput::One => out += &format!("    {c}.enable <== 1;\n"),
+        EnableInput::Value(n) => out += &format!("    {c}.enable <== {n};\n"),
+        EnableInput::Expr(e) => out += &format!("    {c}.enable <== {e};\n"),
     }
-
-    out
+    Ok(out)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::stark2circom::circom_verifier::lib_bn128::tests as bn;
+    use crate::stark2circom::circom_verifier::lib_gl::tests as gl;
+    use crate::stark2circom::circom_verifier::{gen_stark_verifier, gen_stark_verifier_bn128_blake3, Pil2CircomOptions};
     use serde_json::json;
 
-    fn bn128_stark_info(llv: u64) -> Value {
-        json!({
-            "starkStruct": {
-                "verificationHashType": "BN128",
-                "merkleTreeArity": 4,
-                "lastLevelVerification": llv,
-                "numQueries": 4,
-                "grindingBitsQueries": 0,
-                "logDomainSizes": [10, 6]
-            },
-            "nStages": 2,
-            "nPublics": 0,
-            "nConstants": 3,
-            "evMap": [],
-            "airgroupValuesMap": [],
-            "airValuesMap": [],
-            "proofValuesMap": [],
-            "customCommits": [],
-            "mapSectionsN": {"cm1": 2, "cm2": 2, "cm3": 2}
-        })
+    /// `signal input` name -> shape of a render.
+    fn declared(src: &str) -> std::collections::HashMap<String, String> {
+        src.lines()
+            .filter_map(|l| l.trim().strip_prefix("signal input ")?.strip_suffix(';'))
+            .map(|d| {
+                let at = d.find('[').unwrap_or(d.len());
+                (d[..at].to_string(), d[at..].to_string())
+            })
+            .collect()
+    }
+
+    /// Every input the circuit wires into `sV` is one the verifier declares, of the shape the
+    /// circuit declares it with; the publics too.
+    fn cross_check(si: &serde_json::Value, vi: &serde_json::Value, blake3: bool) {
+        let opts = Pil2CircomOptions {
+            skip_main: true,
+            hash: if blake3 { "blake3" } else { "Poseidon2" }.into(),
+            ..Default::default()
+        };
+        let root = ["1".to_string(), "0".into(), "0".into(), "0".into()];
+        let verifier = if blake3 {
+            gen_stark_verifier_bn128_blake3(Some(&root), si, vi, &opts)
+        } else {
+            gen_stark_verifier(Some(&root), si, vi, &opts)
+        }
+        .unwrap();
+        let body = &verifier[verifier.find("template StarkVerifier").unwrap()..];
+        let vdecl = declared(&body[..body[1..].find("\ntemplate ").map_or(body.len(), |e| e + 1)]);
+        let o = StarkInputOptions { add_publics: true, is_final: true, ..Default::default() };
+        let cdecl = declared(&define_stark_inputs(si, "", &o).unwrap());
+        let assign = assign_stark_inputs("sV", "", si, &o, &EnableInput::None).unwrap();
+        let mut wired = 0;
+        for l in assign.lines() {
+            let Some(x) = l.trim().strip_prefix("sV.").and_then(|r| r.split([' ', '[']).next()) else { continue };
+            let shape = vdecl.get(x).unwrap_or_else(|| panic!("sV.{x} is no input of the verifier:\n{verifier}"));
+            if let Some(c) = cdecl.get(x) {
+                assert_eq!(c, shape, "{x}");
+            }
+            wired += 1;
+        }
+        assert_eq!(wired, vdecl.len(), "the verifier declares inputs no circuit wires:\n{assign}");
     }
 
     #[test]
-    fn bn128_depth_subtracts_llv() {
-        assert_eq!(siblings_depth_bn128(10, 4, 0), 5);
-        assert_eq!(siblings_depth_bn128(10, 4, 2), 3);
-        assert_eq!(siblings_depth_bn128(3, 4, 2), 0);
-    }
-
-    #[test]
-    fn bn128_define_emits_last_levels() {
-        let si = bn128_stark_info(2);
-        let out = define_stark_inputs(
-            &si,
-            "",
-            &StarkInputOptions { add_publics: false, is_final: true, parallel: false, shared_publics: false },
-        );
-        assert!(out.contains("signal input s0_siblingsC[4][3][4];"), "out:\n{out}");
-        assert!(out.contains("signal input s0_last_levelsC[16];"), "out:\n{out}");
-        assert!(out.contains("signal input s0_last_levels1[16];"), "out:\n{out}");
-        assert!(out.contains("signal input s1_last_levels[16];"), "out:\n{out}");
-    }
-
-    #[test]
-    fn bn128_define_llv_zero_unchanged() {
-        let si = bn128_stark_info(0);
-        let out = define_stark_inputs(
-            &si,
-            "",
-            &StarkInputOptions { add_publics: false, is_final: true, parallel: false, shared_publics: false },
-        );
-        assert!(out.contains("signal input s0_siblingsC[4][5][4];"), "out:\n{out}");
-        assert!(!out.contains("last_levels"), "out:\n{out}");
-    }
-
-    #[test]
-    fn bn128_assign_wires_last_levels() {
-        let si = bn128_stark_info(2);
-        let out = assign_stark_inputs(
-            "sV",
-            "",
-            &si,
-            &StarkInputOptions { add_publics: false, is_final: true, parallel: false, shared_publics: false },
-            &EnableInput::None,
-        );
-        assert!(out.contains("sV.s0_last_levelsC <== s0_last_levelsC;"), "out:\n{out}");
-        assert!(out.contains("sV.s0_last_levels1 <== s0_last_levels1;"), "out:\n{out}");
-        assert!(out.contains("sV.s1_last_levels <== s1_last_levels;"), "out:\n{out}");
-        // GL naming must NOT appear for BN128
-        assert!(!out.contains("last_mt_levels"), "out:\n{out}");
+    fn circuits_wire_the_verifiers_own_inputs() {
+        let (vi, bvi) = (gl::verifier_info(), bn::verifier_info());
+        cross_check(&gl::stark_info(), &vi, false); // FRI, custom commit, last levels
+        cross_check(&gl::stir_info(), &vi, false);
+        for ll in [0, 2] {
+            cross_check(&bn::stark_info(false, ll), &bvi, false);
+        }
+        let mut b3 = bn::stark_info(true, 2);
+        b3["starkStruct"]["verificationHashType"] = json!("GL");
+        b3["starkStruct"]["merkleTreeArity"] = json!(2);
+        cross_check(&b3, &bvi, true);
     }
 
     /// A recursive1 folding k proofs of one air shares the template's publics; the ZisK recurser
     /// verifies two unrelated proofs and must read each one's own.
     #[test]
     fn publics_are_shared_only_when_asked() {
-        let mut si = bn128_stark_info(0);
-        si["nPublics"] = json!(3);
+        let si = bn::stark_info(false, 0);
         let assign = |shared| {
             let opts = StarkInputOptions { add_publics: true, shared_publics: shared, ..Default::default() };
-            assign_stark_inputs("vA", "a_sv", &si, &opts, &EnableInput::None)
+            assign_stark_inputs("vA", "a_sv", &si, &opts, &EnableInput::None).unwrap()
         };
         assert!(assign(false).contains("vA.publics[i] <== a_sv_publics[i];"), "{}", assign(false));
         assert!(assign(true).contains("vA.publics[i] <== publics[i];"), "{}", assign(true));

@@ -59,13 +59,6 @@ template GLVals3(n) {
 }
 
 // Goldilocks power and inverse, for constants computed at compile time.
-function bn_glpow(b, e) {
-    var p = 0xFFFFFFFF00000001;
-    var r = 1;
-    for (var i = 0; i < e; i++) { r = (r * b) % p; }
-    return r;
-}
-
 // 1 / shift^(2^(nBitsExt - prevBits)) (and times w[prevBits] for e1): the fold step's coset offsets.
 function bn_e0(nBitsExt, prevBits) {
     var p = 0xFFFFFFFF00000001;
@@ -251,8 +244,7 @@ template DeepQueryBN128(nGroups, nPols, nColGroups, nSums, bits0, nextBits, s0Wi
     signal {maxNum} inb;
     ina.maxNum = q;
     inb.maxNum = q;
-    // One entry more than assigned, as the Tera verifier declared it.
-    signal {maxNum} inp[bits0 - 1];
+    signal {maxNum} inp[geo_len1(bits0 - 2)];
     inp.maxNum = q;
     ina <== queriesL0[0] * (geo_shift() * roots(bits0) - geo_shift()) + geo_shift();
     inb <== queriesL0[1] * (roots(bits0 - 1) - 1) + 1;

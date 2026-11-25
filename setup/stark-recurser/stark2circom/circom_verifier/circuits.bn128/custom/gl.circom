@@ -212,19 +212,6 @@ function _inv1(a) {
     return t;
 }
 
-// Given an integer a != 0, computes a⁻¹ % GL
-template GLInv() {
-    signal input {maxNum} in;
-    signal output {maxNum} out;
-
-    signal inv <-- _inv1(in);
-
-    out <== LessThan64Bits()(inv);
-
-    signal {maxNum} check <== GLMul()(in, out);
-    check === 1;
-}
-
 // Given an array of three integers a = (a₁, a₂, a₃), computes a⁻¹ % GL³
 template GLCInv() {
     signal input {maxNum} in[3];

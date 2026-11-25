@@ -8,7 +8,8 @@ use proofman_common::StarkInfo;
 use serde_json::Value;
 
 use super::constraint_roots::constraint_eval_bn128;
-use super::lib_params::KeyData;
+use super::lib_gl::{TranscriptIn, TreeOpening};
+use super::lib_params::{parse_stark_info, proof_inputs, KeyData};
 use super::Pil2CircomOptions;
 
 /// The library templates `StarkVerifier` instantiates by name, with the key's vars as parameters.
@@ -19,14 +20,6 @@ const LIB: [&str; 2] = [
 
 fn call(name: &str) -> String {
     super::lib_gl::call_in(&LIB, name)
-}
-
-/// Whether the BN128 verifier of `stark_info` is written with circom custom templates, the ones of
-/// `circuits.bn128/custom/`: exactly when its Merkle trees are custom. circom then wants
-/// `pragma custom_templates;` in every file on the include path to it, the circuit that includes
-/// the verifier as well.
-pub(crate) fn uses_custom_templates(stark_info: &Value) -> bool {
-    stark_info["starkStruct"]["merkleTreeCustom"].as_bool().unwrap_or(false)
 }
 
 /// The BN128 verifier of a BN128 STARK (Poseidon trees, `verificationHashType` BN128).
@@ -60,26 +53,13 @@ pub fn gen_stark_verifier_bn128_blake3(
     if ss["merkleTreeArity"].as_u64() != Some(2) {
         bail!("gen_stark_verifier_bn128_blake3: blake3 trees are binary");
     }
-    // Its transcript absorbs none of them, so they would be free after the challenges.
-    for map in ["airValuesMap", "proofValuesMap"] {
-        if stark_info[map].as_array().is_some_and(|a| !a.is_empty()) {
-            bail!("gen_stark_verifier_bn128_blake3: {map} is not supported: the transcript does not absorb it");
-        }
-    }
     if !opts.skip_main {
         bail!("gen_stark_verifier_bn128_blake3: the verifier has no Main of its own (skip_main)");
     }
-    if !uses_custom_templates(stark_info) {
+    if !ss["merkleTreeCustom"].as_bool().unwrap_or(false) {
         bail!("gen_stark_verifier_bn128_blake3: the blake3 gates are custom templates (merkleTreeCustom)");
     }
     gen(const_root, stark_info, verifier_info, opts, true)
-}
-
-/// The key's Merkle levels below the ones sent in clear, of a tree over 2^bits leaves (geometry.circom's
-/// geo_pathLevels): 0 is an Empty fold tree, whose path the Poseidon proof does not carry.
-fn path_levels(arity: u64, last_levels: u64, bits: u64) -> u64 {
-    let nba = u64::from(arity.trailing_zeros());
-    bits.div_ceil(nba).saturating_sub(last_levels)
 }
 
 fn gen(
@@ -89,33 +69,36 @@ fn gen(
     opts: &Pil2CircomOptions,
     blake3: bool,
 ) -> Result<String> {
-    let info: StarkInfo = serde_json::from_value(si.clone()).context("starkinfo")?;
+    let info = parse_stark_info(si)?;
     let ss = &info.stark_struct;
     let custom = ss.merkle_tree_custom;
     let fri = ss.low_degree_test.fri().context("the BN128 verifier checks FRI, and this STARK opens with STIR")?;
-    if info.ev_map.is_empty() {
-        bail!("evMap has no evaluations, so the DEEP polynomial is undefined");
-    }
-    // The Tera verifier did not support them either (its BN128 render did not compile).
     if !info.custom_commits.is_empty() {
         bail!("the BN128 verifier does not support custom commits");
     }
-    // Only the GL transcript binds airgroupvalues.
-    if info.airgroupvalues_map.as_ref().is_some_and(|m| !m.is_empty()) {
-        bail!("BN128 verifier does not support airgroupvalues (they are not bound to the transcript)");
+    // Its transcript absorbs none of them, so they would be free after the challenges.
+    for (name, map) in [
+        ("airvalues", &info.airvalues_map),
+        ("airgroupvalues", &info.airgroupvalues_map),
+        ("proofvalues", &info.proofvalues_map),
+    ] {
+        if map.as_ref().is_some_and(|m| !m.is_empty()) {
+            bail!("the BN128 verifier does not support {name}: its transcript does not absorb them");
+        }
     }
     let ll = ss.last_level_verification;
     if !blake3 && custom && ll > 0 {
         bail!("lastLevelVerification > 0 with merkleTreeCustom: circuits.bn128/custom/merklehash.circom has no last-level templates");
     }
     let key = KeyData::new(&info, false, None, None)?;
+    let inputs = proof_inputs(&info)?;
+    let has = |n: &str| inputs.iter().any(|i| i.name == n);
     let steps = &fri.log_domain_sizes;
     let (q_stage, nf) = (info.n_stages + 1, steps.len() - 1);
     let pow = fri.grinding_bits_queries > 0;
-    // Root, Merkle node and sibling shapes: blake3 words of four, Poseidon single elements.
-    let (rd, sw, ll_name, lld) =
-        if blake3 { ("[4]", "sibW", "last_mt_levels", "[4]") } else { ("", "arity", "last_levels", "") };
-    let empty = |f: usize| !blake3 && ll > 0 && path_levels(ss.merkle_tree_arity, ll, steps[f]) == 0;
+    // Root and clear-level names: blake3 words of four (GL names), Poseidon single elements.
+    let (rd, ll_name) = if blake3 { ("[4]", "last_mt_levels") } else { ("", "last_levels") };
+    let sibs: Vec<bool> = (1..=nf).map(|f| has(&format!("s{f}_siblings"))).collect();
 
     let mut out = String::from("pragma circom 2.1.0;\n");
     if custom {
@@ -144,17 +127,9 @@ fn gen(
 
     // ---- StarkVerifier: the key's vars, the proof inputs, the library ----
     let mut d = key.vars.clone();
-    d += "    var L0 = geo_levels0(arity, lastLevels, STEPS);\n";
-    d += "    var sibW = geo_sibW(arity);\n    var lastSize = geo_lastSize(arity, lastLevels);\n";
     d += "    var q = 0xFFFFFFFFFFFFFFFF;\n\n";
     if blake3 {
         d += "    // circuits.bn128's b3_field and selectval, not circuits.gl's: their pick is the include path's.\n    assert(b3_field_is_gl() == 0);\n";
-    }
-    if info.n_publics > 0 {
-        d += "    signal input publics[nPublics];\n";
-    }
-    for st in 1..=q_stage {
-        d += &format!("    signal input root{st}{rd};\n");
     }
     d += &if opts.verkey_input {
         format!("    signal input rootC{rd};\n")
@@ -164,35 +139,8 @@ fn gen(
         // A BN128 verkey is one element, in slot 0.
         format!("    signal rootC <== {};\n", const_root.map(|r| r[0].clone()).unwrap_or_else(|| "0".into()))
     };
-    d += "    signal input evals[nEvals][3];\n";
-    for t in &key.trees {
-        d += &format!("    signal input s0_vals{}[nQueries][{}];\n", t.suffix, t.width);
-    }
-    for t in &key.trees {
-        d += &format!("    signal input s0_siblings{}[nQueries][L0][{sw}];\n", t.suffix);
-    }
-    if ll > 0 {
-        for t in &key.trees {
-            d += &format!("    signal input s0_{ll_name}{}[lastSize]{lld};\n", t.suffix);
-        }
-    }
-    for f in 1..=nf {
-        d += &format!("    signal input s{f}_root{rd};\n");
-    }
-    for f in 1..=nf {
-        d += &format!("    signal input s{f}_vals[nQueries][3 * geo_foldExp(STEPS, {f})];\n");
-        if !empty(f) {
-            d += &format!(
-                "    signal input s{f}_siblings[nQueries][geo_foldLevels(arity, lastLevels, STEPS, {f})][{sw}];\n"
-            );
-        }
-        if ll > 0 {
-            d += &format!("    signal input s{f}_{ll_name}[lastSize]{lld};\n");
-        }
-    }
-    d += "    signal input finalPol[geo_finalSize(nSteps, STEPS)][3];\n";
-    if pow {
-        d += "    signal input nonce;\n";
+    for i in &inputs {
+        d += &format!("    signal input {}{};\n", i.name, i.shape());
     }
     d += "\n    signal {binary} enabled;\n";
     d += if opts.enable_input {
@@ -211,26 +159,22 @@ fn gen(
     // The GL verifier's transcript over this key's engine; its challenges reduced Goldilocks values.
     let root = |r: String| if blake3 { r } else { format!("[{r}]") };
     let pad3 = "[[0, 0, 0]]";
-    w += &format!("\n    component transcript = {};\n", call("StarkVerifierTranscript"));
-    w += "    transcript.globalChallenge <== [0, 0, 0];\n";
-    w += &format!("    transcript.publics <== {};\n", if info.n_publics > 0 { "publicsGL" } else { "[0]" });
-    w += &format!("    transcript.rootC <== {};\n", root("rootC".into()));
-    for st in 1..=q_stage {
-        w += &format!("    transcript.stageRoots[{}] <== {};\n", st - 1, root(format!("root{st}")));
+    w += &TranscriptIn {
+        global: "[0, 0, 0]".into(),
+        publics: (if info.n_publics > 0 { "publicsGL" } else { "[0]" }).into(),
+        root_c: root("rootC".into()),
+        stage_roots: (1..=q_stage).map(|st| root(format!("root{st}"))).collect(),
+        airvalues: pad3.into(),
+        airgroupvalues: pad3.into(),
+        evals: "evalsGL".into(),
+        fold_roots: (1..=nf).map(|f| root(format!("s{f}_root"))).collect(),
+        fold_pad: (if blake3 { "[[0, 0, 0, 0]]" } else { "[[0]]" }).into(),
+        betas: pad3.into(),
+        hints: pad3.into(),
+        final_pol: "finalPolGL".into(),
+        nonce: (if pow { "nonce" } else { "0" }).into(),
     }
-    w += &format!("    transcript.airvalues <== {pad3};\n    transcript.airgroupvalues <== {pad3};\n");
-    w += "    transcript.evals <== evalsGL;\n";
-    for f in 1..=nf {
-        w += &format!("    transcript.foldRoots[{}] <== {};\n", f - 1, root(format!("s{f}_root")));
-    }
-    if nf == 0 {
-        w += &format!("    transcript.foldRoots <== [{}];\n", if blake3 { "[0, 0, 0, 0]" } else { "[0]" });
-    }
-    w += &format!("    transcript.betas <== {pad3};\n    transcript.hints <== {pad3};\n");
-    w += &format!(
-        "    transcript.finalPol <== finalPolGL;\n    transcript.nonce <== {};\n    transcript.enable <== enabled;\n",
-        if pow { "nonce" } else { "0" }
-    );
+    .wire(&call("StarkVerifierTranscript"));
     w += "    signal {maxNum} challenges[nChallenges][3];\n    challenges.maxNum = q;\n    challenges <== transcript.challenges;\n";
     w += "    signal {maxNum} rFold[geo_len1(nSteps - 1)][3];\n    rFold.maxNum = q;\n";
     w += if nf > 0 {
@@ -269,7 +213,7 @@ fn gen(
     }
     for f in 1..=nf {
         w += &format!("        query[i].s{f}_vals <== s{f}_vals[i];\n");
-        if !empty(f) {
+        if sibs[f - 1] {
             w += &format!("        query[i].s{f}_siblings <== s{f}_siblings[i];\n");
         }
         w += &if ll > 0 {
@@ -295,19 +239,17 @@ fn gen(
     w += "    VerifyFinalPolBN128(STEPS[nSteps - 1], geo_maxDegSize(nBits, nBitsExt, nSteps, STEPS))(finalPolGL, enabled);\n";
 
     out += &format!("\n// Verifies one STARK proof on the BN128 library; the inputs keep the final circuit's names.\ntemplate StarkVerifier() {{\n{d}{w}}}\n");
-    out += &single_query(&info, &key, blake3, &empty);
+    out += &single_query(&info, &key, blake3, &sibs);
     Ok(out)
 }
 
 /// `VerifySingleQuery`: one query's L_0 rows and fold-tree cosets, reduced and opened against their
 /// trees, then DEEP and every folding step (library).
-fn single_query(info: &StarkInfo, key: &KeyData, blake3: bool, empty: &dyn Fn(usize) -> bool) -> String {
+fn single_query(info: &StarkInfo, key: &KeyData, blake3: bool, sibs: &[bool]) -> String {
     let ll = info.stark_struct.last_level_verification;
     let nf = info.stark_struct.low_degree_test.fri().map_or(0, |f| f.log_domain_sizes.len() - 1);
     let (sw, ll_name, lld) = if blake3 { ("sibW", "last_mt_levels", "[4]") } else { ("arity", "last_levels", "") };
     let mut d = key.vars.clone();
-    d += "    var L0 = geo_levels0(arity, lastLevels, STEPS);\n";
-    d += "    var sibW = geo_sibW(arity);\n    var lastSize = geo_lastSize(arity, lastLevels);\n";
     d += "    var q = 0xFFFFFFFFFFFFFFFF;\n\n";
     d += "    signal input {binary} queriesL0[STEPS[0]];\n    signal input {maxNum} challengeOut[3];\n";
     d += "    signal input {maxNum} friConsts[2 + nPols + 2 * nGroups][3];\n    signal input {maxNum} rFold[geo_len1(nSteps - 1)][3];\n";
@@ -334,10 +276,21 @@ fn single_query(info: &StarkInfo, key: &KeyData, blake3: bool, empty: &dyn Fn(us
         if blake3 {
             let (last, root) =
                 if ll > 0 { (last, "[0, 0, 0, 0]".to_string()) } else { ("[[0, 0, 0, 0]]".into(), last) };
-            merkle +=
-                &format!("    component tree{k} = VerifyTreeOpening(1, {width}, arity, lastLevels, L0, nBitsExt);\n");
-            merkle += &format!("    tree{k}.keys <== keys0.keys;\n    for (var i = 0; i < {width}; i++) {{ tree{k}.values[i][0] <== leaves[S0[{k}] + i]; }}\n");
-            merkle += &format!("    tree{k}.siblings <== s0_siblings{s};\n    tree{k}.last <== {last};\n    tree{k}.root <== {root};\n    tree{k}.enable <== enable;\n");
+            let c = format!("tree{k}");
+            merkle += &TreeOpening {
+                ind: "    ",
+                decl: "component ",
+                c: &c,
+                args: format!("1, {width}, arity, lastLevels, L0, nBitsExt"),
+                keys: "keys0.keys".into(),
+                values: format!(
+                    "    for (var i = 0; i < {width}; i++) {{ {c}.values[i][0] <== leaves[S0[{k}] + i]; }}\n"
+                ),
+                siblings: format!("s0_siblings{s}"),
+                last,
+                root,
+            }
+            .wire();
         } else {
             merkle += &format!("    signal v{k}[{width}][1];\n    for (var i = 0; i < {width}; i++) {{ v{k}[i][0] <== leaves[S0[{k}] + i]; }}\n");
             merkle += &if ll > 0 {
@@ -353,7 +306,8 @@ fn single_query(info: &StarkInfo, key: &KeyData, blake3: bool, empty: &dyn Fn(us
     for f in 1..=nf {
         let ml = format!("geo_foldLevels(arity, lastLevels, STEPS, {f})");
         d += &format!("    signal input s{f}_vals[3 * geo_foldExp(STEPS, {f})];\n");
-        if !empty(f) {
+        let empty = !sibs[f - 1];
+        if !empty {
             d += &format!("    signal input s{f}_siblings[{ml}][{sw}];\n");
         }
         let last = if ll > 0 {
@@ -369,18 +323,24 @@ fn single_query(info: &StarkInfo, key: &KeyData, blake3: bool, empty: &dyn Fn(us
         if blake3 {
             let (last, root) =
                 if ll > 0 { (last, "[0, 0, 0, 0]".to_string()) } else { ("[[0, 0, 0, 0]]".into(), last) };
-            w += &format!("    component open{f} = VerifyTreeOpening(3, geo_foldExp(STEPS, {f}), arity, lastLevels, {ml}, STEPS[{f}]);\n");
-            w += &format!(
-                "    open{f}.keys <== QueryKeys(arity, {ml} + lastLevels, STEPS[{f}], STEPS[0])(queriesL0);\n"
-            );
-            w += &format!("    open{f}.values <== s{f}_vals_p;\n    open{f}.siblings <== s{f}_siblings;\n");
-            w += &format!(
-                "    open{f}.last <== {last};\n    open{f}.root <== {root};\n    open{f}.enable <== enable;\n"
-            );
+            let c = format!("open{f}");
+            w += &TreeOpening {
+                ind: "    ",
+                decl: "component ",
+                c: &c,
+                args: format!("3, geo_foldExp(STEPS, {f}), arity, lastLevels, {ml}, STEPS[{f}]"),
+                keys: format!("QueryKeys(arity, {ml} + lastLevels, STEPS[{f}], STEPS[0])(queriesL0)"),
+                values: format!("    {c}.values <== s{f}_vals_p;\n"),
+                // No path: the Empty variant ignores its one-entry siblings.
+                siblings: if empty { "[[0, 0, 0, 0]]".into() } else { format!("s{f}_siblings") },
+                last,
+                root,
+            }
+            .wire();
         } else {
             w += &format!("    signal {{binary}} s{f}_keys[STEPS[{f}]];\n    for (var i = 0; i < STEPS[{f}]; i++) {{ s{f}_keys[i] <== queriesL0[i]; }}\n");
             let args = format!("3, geo_foldExp(STEPS, {f}), 1 << STEPS[{f}], arity");
-            w += &if empty(f) {
+            w += &if empty {
                 format!("    VerifyMerkleHashUntilLevelEmpty({args}, lastLevels)(s{f}_vals_p, s{f}_keys, {last}, enable);\n")
             } else if ll > 0 {
                 format!("    VerifyMerkleHashUntilLevel({args}, lastLevels)(s{f}_vals_p, s{f}_siblings, s{f}_keys, {last}, enable);\n")
@@ -408,11 +368,11 @@ fn single_query(info: &StarkInfo, key: &KeyData, blake3: bool, empty: &dyn Fn(us
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use serde_json::json;
 
-    fn stark_info(custom: bool, ll: u64) -> Value {
+    pub(crate) fn stark_info(custom: bool, ll: u64) -> Value {
         json!({
             "starkStruct": {
                 "verificationHashType": "BN128", "numQueries": 4, "nBits": 6, "nBitsExt": 10, "grindingBitsQueries": 0,
@@ -432,7 +392,7 @@ mod tests {
         })
     }
 
-    fn verifier_info() -> Value {
+    pub(crate) fn verifier_info() -> Value {
         json!({ "constraintDag": { "version": 1, "field": "gl", "extDim": 3, "nodes": [[5, 1, 0, 0]], "roots": [[0, 0, "c"]] } })
     }
 
@@ -468,9 +428,9 @@ mod tests {
     #[test]
     fn last_levels_keep_the_final_circuits_inputs() {
         let out = render(&stark_info(false, 2)).unwrap();
-        assert!(out.contains("    signal input s0_siblingsC[nQueries][L0][arity];\n"), "out:\n{out}");
-        assert!(out.contains("    signal input s0_last_levelsC[lastSize];\n"), "out:\n{out}");
-        assert!(out.contains("    signal input s1_last_levels[lastSize];\n"), "out:\n{out}");
+        assert!(out.contains("    signal input s0_siblingsC[4][3][4];\n"), "out:\n{out}");
+        assert!(out.contains("    signal input s0_last_levelsC[16];\n"), "out:\n{out}");
+        assert!(out.contains("    signal input s1_last_levels[16];\n"), "out:\n{out}");
         assert!(
             out.contains("VerifyMerkleRoot(lastLevels, arity, 1 << STEPS[1])(s1_last_levels, s1_root, enabled);"),
             "out:\n{out}"

@@ -52,12 +52,6 @@ template Bits2NumT(n) {
 }
 
 
-template Bits2Num_strictT() {
-    signal input {binary} in[254];
-    signal output out;
-
-    out <== Bits2NumT(254)(in);
-}
 // A transcript word's bits (verifier/transcript.circom): a Goldilocks word below 2^64, or a BN128 element.
 template TranscriptWordBits(n) {
     signal input in;

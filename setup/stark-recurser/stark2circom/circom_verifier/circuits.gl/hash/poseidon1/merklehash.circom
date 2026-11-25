@@ -46,25 +46,6 @@ template VerifyMerkleHash(eSize, elementsInLinear, arity, nLevels) {
     enable * (merkleRoot[3] - root[3]) === 0;
 }
 
-template VerifyMerkleHashBatch(queries, eSize, elementsInLinear, arity, nLevels) {
-    var nBits = log2(arity);
-    signal input values[queries][elementsInLinear][eSize]; // Values that are contained in a leaf
-    signal input siblings[queries][nLevels][(arity - 1) * 4]; // Sibling path to calculate the merkle root given a set of values
-    signal input {binary} key[queries][nLevels][nBits]; // Defines either each element of the sibling path is the left or right one
-    signal input root[4]; // Root of the merkle tree
-    signal input {binary} enable; // Boolean that determines either we want to check that roots matches or not
-
-    signal merkleRoot[queries][4];
-    
-    for (var i = 0; i < queries; i++) {
-        merkleRoot[i] <== MerkleHash(eSize, elementsInLinear, arity, nLevels)(values[i], siblings[i], key[i]);
-        enable * (merkleRoot[i][0] - root[0]) === 0;
-        enable * (merkleRoot[i][1] - root[1]) === 0;
-        enable * (merkleRoot[i][2] - root[2]) === 0;
-        enable * (merkleRoot[i][3] - root[3]) === 0;
-    }
-}
-
 template VerifyMerkleHashUntilLevel(eSize, elementsInLinear, arity, nLevels, nLastLevels, height) {
     var nBits = log2(arity);
     signal input values[elementsInLinear][eSize]; // Values that are contained in a leaf
@@ -99,49 +80,6 @@ template VerifyMerkleHashUntilLevel(eSize, elementsInLinear, arity, nLevels, nLa
     enable * (calculatedVal[1] - expectedVal[1]) === 0;
     enable * (calculatedVal[2] - expectedVal[2]) === 0;
     enable * (calculatedVal[3] - expectedVal[3]) === 0;
-}
-
-template VerifyMerkleHashUntilLevelBatch(queries, eSize, elementsInLinear, arity, nLevels, nLastLevels, height) {
-    var nBits = log2(arity);
-    signal input values[queries][elementsInLinear][eSize]; // Values that are contained in a leaf
-    signal input siblings[queries][nLevels][(arity - 1) * 4]; // Sibling path to calculate the merkle root given a set of values
-    signal input {binary} key[queries][nLevels + nLastLevels][nBits]; // Defines either each element of the sibling path is the left or right one
-    signal input last_mt_levels[arity**nLastLevels][4]; // The last two levels of the merkle tree, used to optimize the verification process
-    signal input {binary} enable; // Boolean that determines either we want to check that roots matches or not
-
-    signal {binary} keys_merkle[queries][nLevels][nBits];
-    signal {binary} last_levels_keys[queries][nLastLevels][nBits];
-    signal calculatedVal[queries][4];
-    signal expectedVal[queries][4];
-    for (var q=0; q<queries; q++) {
-        for (var i=0; i<nLevels; i++) {
-            for (var j=0; j<nBits; j++) {
-                keys_merkle[q][i][j] <== key[q][i][j];
-            }
-        }
-        calculatedVal[q] <== MerkleHash(eSize, elementsInLinear, arity, nLevels)(values[q], siblings[q], keys_merkle[q]);
-        
-        
-        for (var i=0; i<nLastLevels; i++) {
-            for (var j=0; j<nBits; j++) {
-                last_levels_keys[q][i][j] <== key[q][nLevels + i][j];
-            }
-        }
-
-        var num_nodes_level = height;
-        while (num_nodes_level > arity ** nLastLevels) {
-            num_nodes_level = (num_nodes_level + (arity - 1)) \ arity;
-        }
-
-
-        expectedVal[q] <== SelectValue(arity, nLastLevels, num_nodes_level)(last_mt_levels, last_levels_keys[q]);
-
-        // If enable is set to 1, check that the expectedRoot being calculated matches with the one sent as input
-        enable * (calculatedVal[q][0] - expectedVal[q][0]) === 0;
-        enable * (calculatedVal[q][1] - expectedVal[q][1]) === 0;
-        enable * (calculatedVal[q][2] - expectedVal[q][2]) === 0;
-        enable * (calculatedVal[q][3] - expectedVal[q][3]) === 0;
-    }
 }
 
 template VerifyMerkleHashUntilLevelEmpty(eSize, elementsInLinear, arity, nLastLevels, height) {

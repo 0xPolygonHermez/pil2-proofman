@@ -84,7 +84,6 @@ mod render_reference {
     #[ignore]
     fn render_bn128_final() {
         use crate::stark2circom::circuit_templates::templates::gen_recursion_final;
-        use crate::stark2circom::circuit_templates::CircomGenOptions;
         let env = |k: &str| std::env::var(k).unwrap_or_else(|_| panic!("{k} not set"));
         let read = |k: &str| std::fs::read_to_string(env(k)).unwrap_or_else(|e| panic!("{k}: {e}"));
         let si: serde_json::Value = serde_json::from_str(&read("BN_SI")).unwrap();
@@ -105,19 +104,10 @@ mod render_reference {
             super::gen_stark_verifier(Some(&root), &si, &vi, &opts)
         }
         .unwrap();
-        let o = CircomGenOptions {
-            airgroup_id: None,
-            has_compressor: false,
-            has_recursion: false,
-            is_final: true,
-            agg_arity: 0,
-            batch_size: 1,
-        };
         let f = gen_recursion_final(
             &si,
             &["recursivef.verifier.circom".to_string()],
             Some(&serde_json::from_str(&read("BN_PUB")).unwrap()),
-            &o,
         )
         .unwrap();
         let dir = std::path::PathBuf::from(env("BN_OUT"));

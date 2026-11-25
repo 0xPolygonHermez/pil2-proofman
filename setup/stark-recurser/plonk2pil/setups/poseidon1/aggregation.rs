@@ -6,7 +6,7 @@
 use crate::plonk2pil::r1cs::to_plonk::{ckey, filter_fft4_gate_uses, filter_gate_uses, get_custom_gates_info};
 use crate::plonk2pil::r1cs::types::{GateBand, GateBandKind, PlonkOptions, R1csFile, SetupResult};
 use crate::plonk2pil::utils::{
-    bind_public_signals, build_fixed_pols, build_s_polynomials, fft4_constants, log2, public_rows, rand_hex,
+    PlonkBand, bind_public_signals, build_fixed_pols, build_s_polynomials, fft4_constants, log2, public_rows, rand_hex,
 };
 use crate::plonk2pil::merge_copies::{apply_remap_to_s_map, r1cs2plonk_merged, verify_merge_soundness};
 use super::{gen_pil_str, PilTemplateParams};
@@ -354,6 +354,13 @@ pub fn aggregation_compressor(r1cs: &R1csFile<Goldilocks>, options: &PlonkOption
         r += 1;
     }
 
+    // The gates aggregator.pil's selectors fire on, per tier; `band.put` refuses any other.
+    let mut band = PlonkBand::new(n);
+    for (rows, mask) in [(&five_extra, 0x1F), (&three_extra, 0x07), (&cmul_extra, 0xC0), (&ev_extra, 0x80)] {
+        for &row in rows.iter() {
+            band.allow(row, mask);
+        }
+    }
     // ── Plonk constraints ─────────────────────────────────────────────────────
     tracing::info!("Placing {} plonk constraints...", plonk_constraints.len());
     let mut partial: HashMap<String, PR> = HashMap::new();
@@ -371,9 +378,7 @@ pub fn aggregation_compressor(r1cs: &R1csFile<Goldilocks>, options: &PlonkOption
         if let Some(pr) = partial.get_mut(&k) {
             let n = pr.1;
             let row = pr.0;
-            s_map[n * 3][row] = c.wires[0];
-            s_map[n * 3 + 1][row] = c.wires[1];
-            s_map[n * 3 + 2][row] = c.wires[2];
+            band.put(&mut s_map, row, n, c);
             pr.1 += 1;
             if pr.1 == pr.2 {
                 partial.remove(&k);
@@ -392,9 +397,7 @@ pub fn aggregation_compressor(r1cs: &R1csFile<Goldilocks>, options: &PlonkOption
             cv[8][row] = c.coeffs[3];
             cv[9][row] = c.coeffs[4];
             for i in pr.1..pr.2 {
-                s_map[3 * i][row] = c.wires[0];
-                s_map[3 * i + 1][row] = c.wires[1];
-                s_map[3 * i + 2][row] = c.wires[2];
+                band.put(&mut s_map, row, i, c);
             }
             // Opener took gate pr.1; only keep the slot open if a later gate can coalesce.
             pr.1 += 1;
@@ -414,12 +417,8 @@ pub fn aggregation_compressor(r1cs: &R1csFile<Goldilocks>, options: &PlonkOption
             cv[2][row] = c.coeffs[2];
             cv[3][row] = c.coeffs[3];
             cv[4][row] = c.coeffs[4];
-            s_map[0][row] = c.wires[0];
-            s_map[1][row] = c.wires[1];
-            s_map[2][row] = c.wires[2];
-            s_map[3][row] = c.wires[0];
-            s_map[4][row] = c.wires[1];
-            s_map[5][row] = c.wires[2];
+            band.put(&mut s_map, row, 0, c);
+            band.put(&mut s_map, row, 1, c);
             partial.insert(k.clone(), (row, 1, 2));
             half.push((row, 2, 5));
             plonk_in_custom += 1;
@@ -431,12 +430,8 @@ pub fn aggregation_compressor(r1cs: &R1csFile<Goldilocks>, options: &PlonkOption
             cv[2][row] = c.coeffs[2];
             cv[3][row] = c.coeffs[3];
             cv[4][row] = c.coeffs[4];
-            s_map[0][row] = c.wires[0];
-            s_map[1][row] = c.wires[1];
-            s_map[2][row] = c.wires[2];
-            s_map[3][row] = c.wires[0];
-            s_map[4][row] = c.wires[1];
-            s_map[5][row] = c.wires[2];
+            band.put(&mut s_map, row, 0, c);
+            band.put(&mut s_map, row, 1, c);
             partial.insert(k.clone(), (row, 1, 2));
             half.push((row, 2, 3));
             plonk_in_custom += 1;
@@ -449,9 +444,7 @@ pub fn aggregation_compressor(r1cs: &R1csFile<Goldilocks>, options: &PlonkOption
             cv[8][row] = c.coeffs[3];
             cv[9][row] = c.coeffs[4];
             for i in 6..8 {
-                s_map[3 * i][row] = c.wires[0];
-                s_map[3 * i + 1][row] = c.wires[1];
-                s_map[3 * i + 2][row] = c.wires[2];
+                band.put(&mut s_map, row, i, c);
             }
             partial.insert(k, (row, 7, 8));
             plonk_in_custom += 1;
@@ -463,12 +456,11 @@ pub fn aggregation_compressor(r1cs: &R1csFile<Goldilocks>, options: &PlonkOption
             cv[7][row] = c.coeffs[2];
             cv[8][row] = c.coeffs[3];
             cv[9][row] = c.coeffs[4];
-            s_map[21][row] = c.wires[0];
-            s_map[22][row] = c.wires[1];
-            s_map[23][row] = c.wires[2];
+            band.put(&mut s_map, row, 7, c);
             plonk_in_custom += 1;
         } else {
             // Pure-plonk row: q0 gates 0,1 (dup) now; q1 gates 2..7 queued.
+            band.allow(r, 0xFF);
             pure_plonk_rows.insert(r);
             plonk_in_pure += 1;
             cv[0][r] = c.coeffs[0];
@@ -476,12 +468,8 @@ pub fn aggregation_compressor(r1cs: &R1csFile<Goldilocks>, options: &PlonkOption
             cv[2][r] = c.coeffs[2];
             cv[3][r] = c.coeffs[3];
             cv[4][r] = c.coeffs[4];
-            s_map[0][r] = c.wires[0];
-            s_map[1][r] = c.wires[1];
-            s_map[2][r] = c.wires[2];
-            s_map[3][r] = c.wires[0];
-            s_map[4][r] = c.wires[1];
-            s_map[5][r] = c.wires[2];
+            band.put(&mut s_map, r, 0, c);
+            band.put(&mut s_map, r, 1, c);
             partial.insert(k.clone(), (r, 1, 2));
             half.push((r, 2, 8));
             r += 1;

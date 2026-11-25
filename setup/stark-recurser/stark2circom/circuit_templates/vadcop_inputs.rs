@@ -4,10 +4,15 @@
 //! - `init_vadcop_inputs.circom.ejs`
 //! - `agg_vadcop_inputs.circom.ejs`
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use serde_json::Value;
 
 use super::parse_num_proof_values;
+
+/// The airgroup's `aggTypes` entries (none when absent).
+pub(crate) fn agg_types(vadcop_info: &Value, airgroup_id: usize) -> &[Value] {
+    vadcop_info["aggTypes"].get(airgroup_id).and_then(Value::as_array).map_or(&[], Vec::as_slice)
+}
 
 // ── define_vadcop_inputs ──────────────────────────────────────────────────────
 
@@ -39,12 +44,7 @@ pub fn define_vadcop_inputs(
         VadcopSignals::Internal => "",
     };
 
-    let agg_types_len = vadcop_info["aggTypes"]
-        .as_array()
-        .and_then(|a| a.get(airgroup_id))
-        .and_then(|v| v.as_array())
-        .map(|a| a.len())
-        .unwrap_or(0);
+    let agg_types_len = agg_types(vadcop_info, airgroup_id).len();
 
     let curve = vadcop_info["curve"].as_str().unwrap_or("None");
     let lattice_size = vadcop_info["latticeSize"].as_u64().unwrap_or(0) as usize;
@@ -93,9 +93,6 @@ pub struct AssignVadcopOptions {
     pub add_prefix_agg_types: bool,
     /// Emit `IsZero()` enable wire (for recursive2 / vadcop final with multiple air groups).
     pub set_enable_input: bool,
-    /// Emit `parallel` keyword (for recursive2).
-    #[allow(dead_code)]
-    pub parallel: bool,
 }
 
 /// Port of `main_templates/vadcop/assign_vadcop_inputs.circom.ejs`.
@@ -106,18 +103,12 @@ pub fn assign_vadcop_inputs(
     vadcop_info: &Value,
     airgroup_id: usize,
     prefix: &str,
-    _prefix_stark: &str,
     opts: &AssignVadcopOptions,
 ) -> String {
     let mut out = String::new();
     let prefix_ = if prefix.is_empty() { String::new() } else { format!("{prefix}_") };
 
-    let agg_types_len = vadcop_info["aggTypes"]
-        .as_array()
-        .and_then(|a| a.get(airgroup_id))
-        .and_then(|v| v.as_array())
-        .map(|a| a.len())
-        .unwrap_or(0);
+    let agg_types_len = agg_types(vadcop_info, airgroup_id).len();
     let n_publics = vadcop_info["nPublics"].as_u64().unwrap_or(0) as usize;
     let num_proof_values = parse_num_proof_values(&vadcop_info["numProofValues"]);
     let curve = vadcop_info["curve"].as_str().unwrap_or("None");
@@ -193,16 +184,16 @@ pub fn assign_vadcop_inputs(
 }
 
 /// The air's `var airgroupId/airId/circuitType`; circom computes the type, which a basic starkinfo must agree with.
-pub fn air_id_vars(stark_info: &Value) -> String {
-    let airgroup_id = stark_info["airgroupId"].as_u64().expect("starkInfo.airgroupId");
-    let air_id = stark_info["airId"].as_u64().expect("starkInfo.airId");
+pub fn air_id_vars(stark_info: &Value) -> Result<String> {
+    let airgroup_id = stark_info["airgroupId"].as_u64().context("starkInfo has no airgroupId")?;
+    let air_id = stark_info["airId"].as_u64().context("starkInfo has no airId")?;
     let circuit_type = proofman_common::circuit_type_of(airgroup_id, air_id + 1);
-    if let Some(recorded) = stark_info["circuitType"].as_u64() {
-        assert_eq!(recorded, circuit_type, "starkInfo.circuitType disagrees with ({airgroup_id}, {air_id})");
+    if let Some(recorded) = stark_info["circuitType"].as_u64().filter(|&r| r != circuit_type) {
+        bail!("starkInfo.circuitType {recorded} disagrees with ({airgroup_id}, {air_id})");
     }
-    format!(
+    Ok(format!(
         "    var airgroupId = {airgroup_id};\n    var airId = {air_id};\n    var circuitType = circuitTypeOf(airgroupId, airId + 1);\n"
-    )
+    ))
 }
 
 /// `aggregationTypes` from slot 0, every slot required to agree; slot 0 is never empty (batches fill from it).
@@ -212,12 +203,7 @@ pub fn agg_types_consistency(
     slot_prefixes: &[String],
     skip_empty_slots: bool,
 ) -> String {
-    let n = vadcop_info["aggTypes"]
-        .as_array()
-        .and_then(|a| a.get(airgroup_id))
-        .and_then(|v| v.as_array())
-        .map(|a| a.len())
-        .unwrap_or(0);
+    let n = agg_types(vadcop_info, airgroup_id).len();
     if n == 0 {
         return String::new();
     }
@@ -260,12 +246,7 @@ pub fn init_vadcop_inputs(
     let prefix_ = if prefix.is_empty() { String::new() } else { format!("{prefix}_") };
     let prefix_stark_ = if prefix_stark.is_empty() { String::new() } else { format!("{prefix_stark}_") };
 
-    let agg_types_len = vadcop_info["aggTypes"]
-        .as_array()
-        .and_then(|a| a.get(airgroup_id))
-        .and_then(|v| v.as_array())
-        .map(|a| a.len())
-        .unwrap_or(0);
+    let agg_types_len = agg_types(vadcop_info, airgroup_id).len();
 
     let curve = vadcop_info["curve"].as_str().unwrap_or("None");
 
@@ -285,12 +266,10 @@ pub fn init_vadcop_inputs(
 
     if agg_types_len > 0 {
         // aggregationTypes — constant values from vadcop_info
-        let agg_type_vals: Vec<String> = vadcop_info["aggTypes"]
-            .as_array()
-            .and_then(|a| a.get(airgroup_id))
-            .and_then(|v| v.as_array())
-            .map(|a| a.iter().map(|v| v["aggType"].as_u64().unwrap_or(0).to_string()).collect())
-            .unwrap_or_default();
+        let agg_type_vals: Vec<String> = agg_types(vadcop_info, airgroup_id)
+            .iter()
+            .map(|v| v["aggType"].as_u64().unwrap_or(0).to_string())
+            .collect();
         out.push_str(&format!("    {prefix_}aggregationTypes <== [{}];\n", agg_type_vals.join(",")));
 
         // airgroupvalues — pass through from stark component
@@ -364,12 +343,7 @@ pub fn agg_vadcop_inputs(
         p[..k].iter().filter_map(|q| q.chars().next()).map(|c| c.to_ascii_uppercase()).collect()
     };
 
-    let agg_types_len = vadcop_info["aggTypes"]
-        .as_array()
-        .and_then(|a| a.get(airgroup_id))
-        .and_then(|v| v.as_array())
-        .map(|a| a.len())
-        .unwrap_or(0);
+    let agg_types_len = agg_types(vadcop_info, airgroup_id).len();
 
     let air_groups_len = vadcop_info["air_groups"].as_array().map(|a| a.len()).unwrap_or(0);
     let airs_0_len =
@@ -586,13 +560,13 @@ mod fold_tests {
     /// A compressor's starkinfo carries the basic air's ids but no circuitType.
     #[test]
     fn air_id_vars_compute_the_circuit_type_from_the_ids() {
-        let out = air_id_vars(&serde_json::json!({ "airgroupId": 0, "airId": 1 }));
+        let out = air_id_vars(&serde_json::json!({ "airgroupId": 0, "airId": 1 })).unwrap();
         assert!(out.contains("var circuitType = circuitTypeOf(airgroupId, airId + 1);"), "{out}");
     }
 
     #[test]
-    #[should_panic(expected = "circuitType")]
     fn air_id_vars_reject_a_circuit_type_that_disagrees_with_the_ids() {
-        air_id_vars(&serde_json::json!({ "airgroupId": 0, "airId": 1, "circuitType": 99 }));
+        let err = air_id_vars(&serde_json::json!({ "airgroupId": 0, "airId": 1, "circuitType": 99 })).unwrap_err();
+        assert!(err.to_string().contains("circuitType"), "{err}");
     }
 }
