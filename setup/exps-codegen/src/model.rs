@@ -28,7 +28,7 @@ pub struct CmPol {
     pub dim: u64,
 }
 
-/// An entry of `airValuesMap` / `airgroupValuesMap`. Only `stage` is read
+/// An entry of `airValuesMap` / `airgroupValuesMap` / `proofValuesMap`. Only `stage` is read
 /// (absent => treated as stage 1).
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -49,6 +49,8 @@ pub struct StarkInfo {
     pub air_values_map: Vec<ValueMapEntry>,
     #[serde(default)]
     pub airgroup_values_map: Vec<ValueMapEntry>,
+    #[serde(default)]
+    pub proof_values_map: Vec<ValueMapEntry>,
     pub c_exp_id: i64,
     pub airgroup_id: i64,
     pub air_id: i64,

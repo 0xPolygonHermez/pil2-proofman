@@ -294,7 +294,7 @@ fn load(o: &Operand, ir: &Ir, nums: &Bn128Numbers) -> String {
         Operand::Num(h) => num_expr(nums, *h),
         Operand::Pow { base, j, .. } => format!("pw[{}]", ir.pow_offset(*base) + j),
         Operand::Tab { idx, .. } => format!("pw[{}]", ir.pow_words() + idx),
-        Operand::Tmp { .. } | Operand::Custom { .. } => unreachable!("not a bn128 load"),
+        Operand::Tmp { .. } | Operand::Custom { .. } | Operand::Pv { .. } => unreachable!("not a bn128 load"),
     }
 }
 
@@ -321,7 +321,7 @@ fn body(instrs: &[Instr], ir: &Ir, nums: &Bn128Numbers, indent: &str) -> String 
     l.join("\n")
 }
 
-const HEADER: &str = r#"#include "pilfflonk/pilfflonk_cuda.cuh"
+pub(crate) const HEADER: &str = r#"#include "pilfflonk/pilfflonk_cuda.cuh"
 #include "pilfflonk/pilfflonk_expressions_kernels.hpp"
 #include <cstdio>
 using PilFflonk::ExpressionLaunch;

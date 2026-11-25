@@ -130,6 +130,12 @@ inline ExpsKernel expsOpenForAir(SetupCtx& sc) {
     if (::stat(path.c_str(), &st) != 0) return r;
     void* h = dlopen(path.c_str(), RTLD_NOW | RTLD_LOCAL);
     if (!h) { fprintf(stderr, "[EXPS] dlopen failed: %s\n", dlerror()); return r; }
+    auto abi = (unsigned long long (*)())dlsym(h, "exps_abi");
+    if (!abi || abi() != EXPS_ABI) {
+        fprintf(stderr, "[EXPS] %s was built for another prover ABI; using the interpreter (regenerate it with gen-exps)\n", path.c_str());
+        dlclose(h);
+        return r;
+    }
     auto qLaunch = (ExpsQLaunchFn)dlsym(h, "exps_launch");
     auto minf = (unsigned long long (*)())dlsym(h, "exps_min_scratch");
     if (!qLaunch || !minf) { fprintf(stderr, "[EXPS] missing symbols in %s\n", path.c_str()); dlclose(h); return r; }

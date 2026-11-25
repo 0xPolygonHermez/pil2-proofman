@@ -127,6 +127,7 @@ fn operand_ptrs(cst_field: &str) -> String {
         "  const gl64_t* __restrict__ aux=(const gl64_t*)P->aux_trace; const gl64_t* __restrict__ cst=(const gl64_t*)P->{cst_field};
   const gl64_t* __restrict__ ch=(const gl64_t*)P->challenges; const gl64_t* __restrict__ av=(const gl64_t*)P->airValues;
   const gl64_t* __restrict__ agv=(const gl64_t*)P->airgroupValues; const gl64_t* __restrict__ pub=(const gl64_t*)P->publicInputs;
+  [[maybe_unused]] const gl64_t* __restrict__ pv=(const gl64_t*)P->proofValues;
   [[maybe_unused]] const gl64_t* __restrict__ ccf=(const gl64_t*)P->pCustomCommitsFixed;"
     )
 }
@@ -169,8 +170,12 @@ fn load_lines(opnd: &Operand, name: &str, ir: &Ir) -> Vec<String> {
                 vec![format!("  g3 {name}; {name}.a=pw[{i}]; {name}.b=pw[{}]; {name}.c=pw[{}];", i + 1, i + 2)]
             }
         }
-        Operand::Av { pos, dim } | Operand::Agv { pos, dim } => {
-            let arr = if matches!(opnd, Operand::Av { .. }) { "av" } else { "agv" };
+        Operand::Av { pos, dim } | Operand::Agv { pos, dim } | Operand::Pv { pos, dim } => {
+            let arr = match opnd {
+                Operand::Av { .. } => "av",
+                Operand::Agv { .. } => "agv",
+                _ => "pv",
+            };
             let i = *pos;
             if *dim == 1 {
                 vec![format!("  gl64_t {name} = {arr}[{i}];")]
@@ -300,7 +305,7 @@ fn scratch_guard(sym: &str, table_words: u64, total_slots: u64) -> String {
     )
 }
 
-/// The fixed C-ABI the loader dlsym's from each `.exps.so`. `exps_min_scratch`
+/// The fixed C-ABI the loader dlsym's from each `.exps.so`; `exps_abi` lets it refuse a stale one. `exps_min_scratch`
 /// covers one wave of cross-chunk temps plus the per-launch table (powers +
 /// hoisted invariants).
 fn c_abi_exports(sym: &str, n_slots: u64, ir: &Ir) -> String {
@@ -315,7 +320,8 @@ extern "C" void exps_launch_step(StepsParams* d_params, gl64_t* q, gl64_t* scrat
     uint64_t off_cm1, uint64_t off_cm2, uint64_t off_cm3, uint64_t off_zi, uint32_t qs, cudaStream_t stream) {{
     launch_gen_{sym}(d_params, q, scratch, scratchElems, NExt, off_cm1, off_cm2, off_cm3, off_zi, qs, stream);
 }}
-extern "C" unsigned long long exps_min_scratch() {{ return {}ull; }}"#,
+extern "C" unsigned long long exps_min_scratch() {{ return {}ull; }}
+extern "C" unsigned long long exps_abi() {{ return EXPS_ABI; }}"#,
         q_min_scratch(ir, sym, n_slots)
     )
 }
@@ -447,6 +453,7 @@ pub fn emit_pow_tu(sym: &str, ir: &Ir) -> Vec<(String, String)> {
         .join("\n");
     let ptrs = r#"  const gl64_t* __restrict__ ch=(const gl64_t*)P->challenges; const gl64_t* __restrict__ av=(const gl64_t*)P->airValues;
   const gl64_t* __restrict__ agv=(const gl64_t*)P->airgroupValues; const gl64_t* __restrict__ pub=(const gl64_t*)P->publicInputs;
+  [[maybe_unused]] const gl64_t* __restrict__ pv=(const gl64_t*)P->proofValues;
   [[maybe_unused]] const gl64_t* __restrict__ aux=(const gl64_t*)P->aux_trace; [[maybe_unused]] const gl64_t* __restrict__ cst=(const gl64_t*)P->pConstPolsExtendedTreeAddress;"#;
 
     // Slice bodies: one (the whole program) without a plan, else one per plan chunk with the

@@ -33,7 +33,7 @@ mod model;
 mod opt;
 mod toolchain;
 
-pub use toolchain::nvcc_present;
+pub use toolchain::{nvcc_present, CompileFailed};
 
 use anyhow::{Context, Result};
 use ir::{plan_chunks, UnhandledOperand};
@@ -249,6 +249,7 @@ pub fn generate_all(proving_key: &Path, cfg: &GenConfig) -> Result<GenSummary> {
         match generate_pilfflonk(&tc, work.path(), &info, cfg) {
             Ok(Some(_)) => summary.placed += 1,
             Ok(None) => {}
+            Err(e) if e.downcast_ref::<CompileFailed>().is_some() => return Err(e),
             Err(e) => skipped.push((name, format!("pilfflonk: {e:#}"))),
         }
     }
@@ -341,10 +342,7 @@ fn generate_pilfflonk(tc: &Toolchain, work: &Path, info_path: &Path, cfg: &GenCo
     }
     let obj = cu.with_extension("o");
     let t0 = std::time::Instant::now();
-    let (ok, log) = tc.compile_tu(&cu, &obj, Some(work))?;
-    if !ok {
-        anyhow::bail!("nvcc failed for {}:\n{log}", cu.display());
-    }
+    tc.compile_tu(&cu, &obj, Some(work))?;
     eprintln!(
         "[exps-codegen] {sym}: compiled in {:.1}s, stack {} bytes",
         t0.elapsed().as_secs_f64(),
@@ -480,9 +478,8 @@ fn run_pipeline(
                 }
                 let verdict = match (pow, tuned) {
                     (Err(e), _) | (_, Err(e)) => return Some(Err(e)),
-                    (Ok(Some(why)), _) => Err(why),
-                    (Ok(None), Ok(Some(ck))) => Ok(ck),
-                    (Ok(None), Ok(None)) => {
+                    (Ok(()), Ok(Some(ck))) => Ok(ck),
+                    (Ok(()), Ok(None)) => {
                         Err(format!("{} ops: still spills at chunk {}", c.n_ops, autotune::q_chunk_floor(c.n_ops)))
                     }
                 };
@@ -577,23 +574,15 @@ fn run_pipeline(
         // outer parallel bridges).
         let par = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(8);
         for batch in jobs.chunks(par) {
-            let errs: Vec<String> = std::thread::scope(|scope| {
+            let errs: Vec<anyhow::Error> = std::thread::scope(|scope| {
                 let handles: Vec<_> = batch
                     .iter()
-                    .map(|(cu, obj)| {
-                        scope.spawn(move || -> Option<String> {
-                            match tc.compile_tu(cu, obj, Some(work)) {
-                                Ok((true, _)) => None,
-                                Ok((false, log)) => Some(format!("nvcc failed for {}: {log}", cu.display())),
-                                Err(e) => Some(format!("nvcc spawn failed for {}: {e}", cu.display())),
-                            }
-                        })
-                    })
+                    .map(|(cu, obj)| scope.spawn(move || tc.compile_tu(cu, obj, Some(work)).err()))
                     .collect();
                 handles.into_iter().filter_map(|h| h.join().ok().flatten()).collect()
             });
             if let Some(e) = errs.into_iter().next() {
-                anyhow::bail!(e);
+                return Err(e);
             }
         }
     }
@@ -728,10 +717,11 @@ fn build_exprs_tus(
                 .par_iter()
                 .map(|cu| -> Result<_> {
                     let obj = cu.with_extension("o");
-                    match tc.compile_tu(cu, &obj, Some(work))? {
-                        (true, _) if read_usage => autotune::resource_usage(&obj),
-                        (true, _) => Ok(Default::default()),
-                        (false, log) => anyhow::bail!("nvcc failed for {}: {log}", cu.display()),
+                    tc.compile_tu(cu, &obj, Some(work))?;
+                    if read_usage {
+                        autotune::resource_usage(&obj)
+                    } else {
+                        Ok(Default::default())
                     }
                 })
                 .collect::<Result<Vec<_>>>()?;
@@ -789,25 +779,14 @@ fn build_exprs_tus(
 }
 
 /// Emit the per-launch table TU of one AIR (if it has one) into `work` and compile it.
-/// `Ok(None)` = compiled or not needed; `Ok(Some(why))` = nvcc rejected it (skip the AIR).
-fn build_pow_tu(tc: &Toolchain, work: &Path, sym: &str, ir: &ir::Ir) -> Result<Option<String>> {
-    let files = emit::emit_pow_tu(sym, ir);
-    let mut cus: Vec<PathBuf> = Vec::with_capacity(files.len());
-    for (fname, text) in &files {
+fn build_pow_tu(tc: &Toolchain, work: &Path, sym: &str, ir: &ir::Ir) -> Result<()> {
+    let mut cus: Vec<PathBuf> = Vec::new();
+    for (fname, text) in emit::emit_pow_tu(sym, ir) {
         let cu = work.join(fname);
         std::fs::write(&cu, text)?;
         cus.push(cu);
     }
-    let results: Vec<(bool, String)> =
-        cus.par_iter().map(|cu| tc.compile_tu(cu, &cu.with_extension("o"), Some(work))).collect::<Result<Vec<_>>>()?;
-    match results.iter().find(|(ok, _)| !ok) {
-        None => Ok(None),
-        Some((_, log)) => {
-            let last = log.trim().lines().last().unwrap_or("").to_string();
-            eprintln!("  [pow] {sym} table TU COMPILE FAILED: {last}");
-            Ok(Some(format!("table TU compile failed: {last}")))
-        }
-    }
+    cus.par_iter().try_for_each(|cu| tc.compile_tu(cu, &cu.with_extension("o"), Some(work)))
 }
 
 /// `gen_<sym>.<ext>` + `gen_<sym>_pow*.<ext>` (table kernel and its slices) + `gen_<sym>_c*.<ext>`

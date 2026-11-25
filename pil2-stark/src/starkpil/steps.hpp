@@ -24,4 +24,8 @@ struct StepsParams
     uint64_t witnessOps;
 };
 
+// Stamped into every generated .exps.so (exps_abi); bump on any StepsParams or exps_* launcher change.
+#define EXPS_ABI_VERSION 1ull
+#define EXPS_ABI ((EXPS_ABI_VERSION << 32) | sizeof(StepsParams))
+
 #endif
