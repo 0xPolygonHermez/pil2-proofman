@@ -110,7 +110,6 @@ else
 endif
 
 TARGET_BCT := bctree
-TARGET_BIN_FILE := binfile
 TARGET_STARKS_LIB := libstarks.a
 TARGET_SETUP := fflonkSetup
 TARGET_STARKS_LIB_GPU := libstarksgpu.a
@@ -257,38 +256,29 @@ else
 endif
 OBJS_BCT := $(SRCS_BCT:%=$(BUILD_DIR)/%.o)
 
-# STIR prover/verifier round-trip tests (gtest). The STIR argument only needs the Merkle trees,
-# the transcript and goldilocks, so this links a small subset rather than the whole library.
-SRCS_STIR_TEST := $(shell find ./src/starkpil/stir/tests ./src/starkpil/merkleTree/merkleTreeGL.cpp ./src/starkpil/transcript/transcriptGL.cpp ./src/goldilocks/src ./src/utils ./src/rapidsnark/logger.cpp -name "*.cpp" -or -name "*.c" -or -name "*.cc")
-OBJS_STIR_TEST := $(SRCS_STIR_TEST:%=$(BUILD_DIR)/%.o)
-DEPS_STIR_TEST := $(OBJS_STIR_TEST:.o=.d)
-
-# DEEP host core tests (gtest). deep.hpp is header-only over StarkInfo's public fields.
-SRCS_DEEP_TEST := $(shell find ./src/starkpil/deep/tests ./src/goldilocks/src ./src/utils ./src/rapidsnark/logger.cpp -name "*.cpp" -or -name "*.c" -or -name "*.cc")
-OBJS_DEEP_TEST := $(SRCS_DEEP_TEST:%=$(BUILD_DIR)/%.o)
-DEPS_DEEP_TEST := $(OBJS_DEEP_TEST:.o=.d)
-
-# Constraint DAG verifier tests (gtest). constraint_dag.hpp is header-only over StarkInfo's public fields.
-SRCS_CONSTRAINT_DAG_TEST := $(shell find ./src/starkpil/constraint_dag/tests ./src/goldilocks/src ./src/utils ./src/rapidsnark/logger.cpp -name "*.cpp" -or -name "*.c" -or -name "*.cc")
-OBJS_CONSTRAINT_DAG_TEST := $(SRCS_CONSTRAINT_DAG_TEST:%=$(BUILD_DIR)/%.o)
-DEPS_CONSTRAINT_DAG_TEST := $(OBJS_CONSTRAINT_DAG_TEST:.o=.d)
 DEPS_BCT := $(OBJS_BCT:.o=.d)
+
+# The gtest rules below come before `all`.
+.DEFAULT_GOAL := all
+# CPU gtest binary: $(1) = target, $(2) = sources. Links a subset, not the whole library.
+define GTEST
+OBJS_$(1) := $$(patsubst %,$$(BUILD_DIR)/%.o,$(2))
+$$(BUILD_DIR)/$(1): $$(OBJS_$(1))
+	$$(CXX) $$^ $$(CXXFLAGS) -o $$@ $$(LDFLAGS) $$(CFLAGS) $$(CPPFLAGS) -lgtest -lgtest_main
+-include $$(OBJS_$(1):.o=.d)
+endef
+GTEST_CORE := $(shell find ./src/goldilocks/src ./src/utils -name "*.cpp" -or -name "*.c" -or -name "*.cc") ./src/rapidsnark/logger.cpp
+# STIR round trips need only the Merkle trees, the transcript and goldilocks.
+$(eval $(call GTEST,$(TARGET_STIR_TEST),$(shell find ./src/starkpil/stir/tests -name "*.cpp") ./src/starkpil/merkleTree/merkleTreeGL.cpp ./src/starkpil/transcript/transcriptGL.cpp $(GTEST_CORE)))
+# deep.hpp and constraint_dag.hpp are header-only over StarkInfo's public fields.
+$(eval $(call GTEST,$(TARGET_DEEP_TEST),$(shell find ./src/starkpil/deep/tests -name "*.cpp") $(GTEST_CORE)))
+$(eval $(call GTEST,$(TARGET_CONSTRAINT_DAG_TEST),$(shell find ./src/starkpil/constraint_dag/tests -name "*.cpp") $(GTEST_CORE)))
+$(eval $(call GTEST,$(TARGET_STARK_INFO_TEST),./src/starkpil/tests/stark_info_test.cpp ./src/starkpil/stark_info.cpp ./src/starkpil/merkleTree/merkleTreeGL.cpp $(GTEST_CORE)))
 
 # rapidsnark Polynomial tests (gtest). The polynomials are header-only templates over ffiasm's
 # BN128 engine, so this links ffiasm and the Keccak of the tests' digests rather than the library.
-SRCS_POLYNOMIAL_TEST := $(shell find ./src/rapidsnark/polynomial/tests ./src/rapidsnark/keccak_wrapper.cpp ./src/XKCP -name "*.cpp")
-SRCS_POLYNOMIAL_TEST += $(addprefix $(SETUP_DPNDS_DIR)/, alt_bn128.cpp fr.cpp fq.cpp misc.cpp naf.cpp splitparstr.cpp fr.asm fq.asm)
-OBJS_POLYNOMIAL_TEST := $(SRCS_POLYNOMIAL_TEST:%=$(BUILD_DIR)/%.o)
-DEPS_POLYNOMIAL_TEST := $(OBJS_POLYNOMIAL_TEST:.o=.d)
-
-SRCS_BINFILE := $(shell find ./src/binfile/main.cpp ./src/goldilocks/src ./src/starkpil/expressions/expressions_bin.cpp ./src/starkpil/expressions/expressions_info.cpp ./src/starkpil/merkleTree/merkleTreeGL.cpp ./src/starkpil/stark_info.cpp ./src/rapidsnark/logger.* ./src/rapidsnark/binfile_utils.* ./src/rapidsnark/binfile_writer.* ./src/utils/* -name "*.cpp" -or -name "*.c" -or -name "*.cc")
-OBJS_BINFILE := $(SRCS_BINFILE:%=$(BUILD_DIR)/%.o)
-DEPS_BINFILE := $(OBJS_BINFILE:.o=.d)
-
-# starkinfo loader tests (gtest): the binfile tool's sources around stark_info.cpp.
-SRCS_STARK_INFO_TEST := ./src/starkpil/tests/stark_info_test.cpp $(filter-out ./src/binfile/main.cpp,$(SRCS_BINFILE))
-OBJS_STARK_INFO_TEST := $(SRCS_STARK_INFO_TEST:%=$(BUILD_DIR)/%.o)
-DEPS_STARK_INFO_TEST := $(OBJS_STARK_INFO_TEST:.o=.d)
+$(eval $(call GTEST,$(TARGET_POLYNOMIAL_TEST),$(shell find ./src/rapidsnark/polynomial/tests ./src/rapidsnark/keccak_wrapper.cpp ./src/XKCP -name "*.cpp") \
+    $(addprefix $(SETUP_DPNDS_DIR)/, alt_bn128.cpp fr.cpp fq.cpp misc.cpp naf.cpp splitparstr.cpp fr.asm fq.asm)))
 
 SRCS_SETUP := $(shell find $(SETUP_DIRS) ! -path "./src/sm/*" ! -path "./src/main_sm/*" ! -path "./src/rapidsnark/polynomial/tests/*" -name "*.cpp")
 SRCS_SETUP += $(shell find src/XKCP -name "*.cpp")
@@ -341,8 +331,6 @@ starks_lib: $(LIB_DIR)/$(TARGET_STARKS_LIB)
 starks_lib_gpu: LDFLAGS := $(LDFLAGS_GPU)
 starks_lib_gpu: $(LIB_DIR_GPU)/$(TARGET_STARKS_LIB_GPU)
 
-binfile: $(BUILD_DIR)/$(TARGET_BINFILE)
-
 bctree: $(BUILD_DIR)/$(TARGET_BCT)
 
 fflonk_setup: $(BUILD_DIR)/$(TARGET_SETUP)
@@ -379,6 +367,10 @@ stir_test_gpu: starks_lib_gpu $(BUILD_DIR_GPU)/$(TARGET_STIR_TEST_GPU)
 TARGET_INTERP_TEST_GPU := interpreterTestsGpu
 interp_test_gpu: starks_lib_gpu $(BUILD_DIR_GPU)/$(TARGET_INTERP_TEST_GPU)
 
+# DEEP kernels against deep.hpp, the host DEEP (gtest).
+TARGET_DEEP_TEST_GPU := deepTestsGpu
+deep_test_gpu: starks_lib_gpu $(BUILD_DIR_GPU)/$(TARGET_DEEP_TEST_GPU)
+
 # Low-degree-test benchmarks (all DISABLED_; run with --gtest_also_run_disabled_tests).
 TARGET_STIR_BENCH_GPU := stirBenchGpu
 stir_bench_gpu: starks_lib_gpu $(BUILD_DIR_GPU)/$(TARGET_STIR_BENCH_GPU)
@@ -412,26 +404,14 @@ $(BUILD_DIR_GPU)/$(TARGET_STIR_TEST_GPU): $(BUILD_DIR_GPU)/./src/starkpil/stir/t
 $(BUILD_DIR_GPU)/$(TARGET_INTERP_TEST_GPU): $(BUILD_DIR_GPU)/./src/starkpil/expressions/tests/test_interpreter_gpu.cu.o $(LIB_DIR_GPU)/$(TARGET_STARKS_LIB_GPU)
 	$(NVCC) $(NVCCFLAGS) -o $@ $< -lgtest_main -lgtest -L$(LIB_DIR_GPU) -lstarksgpu -lgomp $(LDFLAGS_GPU) -Lexternal/blst -lblst -L/usr/lib/x86_64-linux-gnu/openmpi/lib -lmpi -lgmpxx -lcrypto -ldl -lrt
 
+$(BUILD_DIR_GPU)/$(TARGET_DEEP_TEST_GPU): $(BUILD_DIR_GPU)/./src/starkpil/deep/tests/test_fri_expression_gpu.cu.o $(LIB_DIR_GPU)/$(TARGET_STARKS_LIB_GPU)
+	$(NVCC) $(NVCCFLAGS) -o $@ $< -lgtest_main -lgtest -L$(LIB_DIR_GPU) -lstarksgpu -lgomp $(LDFLAGS_GPU) -Lexternal/blst -lblst -L/usr/lib/x86_64-linux-gnu/openmpi/lib -lmpi -lgmpxx -lcrypto -ldl -lrt
+
 $(BUILD_DIR_GPU)/$(TARGET_STIR_BENCH_GPU): $(BUILD_DIR_GPU)/./src/starkpil/stir/tests/bench_stir_gpu.cu.o $(LIB_DIR_GPU)/$(TARGET_STARKS_LIB_GPU)
 	$(NVCC) $(NVCCFLAGS) -o $@ $< -lgtest_main -lgtest -L$(LIB_DIR_GPU) -lstarksgpu -lgomp $(LDFLAGS_GPU) -Lexternal/blst -lblst -L/usr/lib/x86_64-linux-gnu/openmpi/lib -lmpi -lgmpxx -lcrypto -ldl -lrt
 
 $(BUILD_DIR)/$(TARGET_BCT): $(OBJS_BCT)
 	$(CXX) $(OBJS_BCT) $(CXXFLAGS) -o $@ $(LDFLAGS) $(CFLAGS) $(CPPFLAGS)
-
-$(BUILD_DIR)/$(TARGET_STIR_TEST): $(OBJS_STIR_TEST)
-	$(CXX) $(OBJS_STIR_TEST) $(CXXFLAGS) -o $@ $(LDFLAGS) $(CFLAGS) $(CPPFLAGS) -lgtest -lgtest_main
-
-$(BUILD_DIR)/$(TARGET_DEEP_TEST): $(OBJS_DEEP_TEST)
-	$(CXX) $(OBJS_DEEP_TEST) $(CXXFLAGS) -o $@ $(LDFLAGS) $(CFLAGS) $(CPPFLAGS) -lgtest -lgtest_main
-
-$(BUILD_DIR)/$(TARGET_CONSTRAINT_DAG_TEST): $(OBJS_CONSTRAINT_DAG_TEST)
-	$(CXX) $(OBJS_CONSTRAINT_DAG_TEST) $(CXXFLAGS) -o $@ $(LDFLAGS) $(CFLAGS) $(CPPFLAGS) -lgtest -lgtest_main
-
-$(BUILD_DIR)/$(TARGET_STARK_INFO_TEST): $(OBJS_STARK_INFO_TEST)
-	$(CXX) $(OBJS_STARK_INFO_TEST) $(CXXFLAGS) -o $@ $(LDFLAGS) $(LDFLAGS_EXT) $(CFLAGS) $(CPPFLAGS) -lgtest -lgtest_main
-
-$(BUILD_DIR)/$(TARGET_POLYNOMIAL_TEST): $(OBJS_POLYNOMIAL_TEST)
-	$(CXX) $(OBJS_POLYNOMIAL_TEST) $(CXXFLAGS) -o $@ $(LDFLAGS) $(CFLAGS) $(CPPFLAGS) -lgtest -lgtest_main
 
 $(BUILD_DIR)/$(TARGET_SETUP): $(OBJS_SETUP)
 	$(CXX) $(OBJS_SETUP) $(CXXFLAGS) -o $@ $(LDFLAGS) $(CFLAGS) $(CPPFLAGS)
@@ -475,10 +455,6 @@ $(BUILD_DIR_GPU)/%.cc.o: %.cc
 	$(MKDIR_P) $(dir $@)
 	$(CXX) -D__USE_CUDA__ $(CFLAGS) $(CPPFLAGS) $(CXXFLAGS) -c $< -o $@
 
-
-$(BUILD_DIR)/$(TARGET_BINFILE): $(OBJS_BINFILE)
-	$(CXX) $(OBJS_BINFILE) $(CXXFLAGS) -o $(BUILD_DIR)/$(TARGET_BIN_FILE) $(LDFLAGS) $(LDFLAGS_EXT) $(CFLAGS) $(CPPFLAGS) $(CXXFLAGS) 
-
 # cuda source
 $(BUILD_DIR_GPU)/./src/goldilocks/src/ntt_goldilocks.cu.o: ./src/goldilocks/src/ntt_goldilocks.cu
 	$(MKDIR_P) $(dir $@)
@@ -493,7 +469,7 @@ $(SPPARK_GPU_OBJ): ./external/sppark/util/all_gpus.cpp
 	$(MKDIR_P) $(dir $@)
 	$(NVCC) -D__USE_CUDA__ $(NVCCFLAGS) $(CPPFLAGS) -x cu -c $< -o $@
 
-.PHONY: clean clean_cpu clean_gpu pilfflonk_test pilfflonk_gpu_test stir_test deep_test constraint_dag_test stark_info_test stir_test_gpu stir_bench_gpu polynomial_test interp_test_gpu
+.PHONY: clean clean_cpu clean_gpu pilfflonk_test pilfflonk_gpu_test stir_test deep_test constraint_dag_test stark_info_test stir_test_gpu stir_bench_gpu polynomial_test interp_test_gpu deep_test_gpu
 
 clean:
 	$(RM) -r $(BUILD_DIR) $(BUILD_DIR_GPU)
@@ -514,10 +490,6 @@ clean_gpu:
 -include $(DEPS_STARKS_LIB)
 -include $(DEPS_STARKS_LIB_GPU)
 -include $(DEPS_STIR_GPU)
--include $(DEPS_STIR_TEST)
--include $(DEPS_DEEP_TEST)
--include $(DEPS_CONSTRAINT_DAG_TEST)
--include $(DEPS_STARK_INFO_TEST)
--include $(DEPS_POLYNOMIAL_TEST)
+
 
 MKDIR_P ?= mkdir -p

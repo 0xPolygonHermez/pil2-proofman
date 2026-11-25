@@ -48,6 +48,27 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
       - name: Set up Rust Toolchain
         run: curl https://sh.rustup.rs -sSf | sh -s -- -y
+  test-stark-cpp:
+    # pil2-stark's CPU gtests: DEEP, the constraint-DAG verifier and the starkinfo loader.
+    name: Test pil2-stark (C++ gtests)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt install -y build-essential libgmp-dev nlohmann-json3-dev nasm libsodium-dev libgtest-dev
+          sudo apt-get install -y openmpi-bin openmpi-common libopenmpi-dev
+      - name: Build
+        run: make -C pil2-stark -j"$(nproc)" deep_test constraint_dag_test stark_info_test
+      - name: Run
+        run: |
+          pil2-stark/build/deepTests
+          pil2-stark/build/constraintDagTests
+          pil2-stark/build/starkInfoTests
   cargo-fmt:
     name: cargo fmt
     runs-on: ubuntu-latest

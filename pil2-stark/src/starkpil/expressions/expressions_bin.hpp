@@ -4,8 +4,6 @@
 #include <string>
 #include <map>
 #include "binfile_utils.hpp"
-#include "binfile_writer.hpp"
-#include "expressions_info.hpp"
 #include "goldilocks_base_field.hpp"
 #include "goldilocks_base_field_avx.hpp"
 #include "goldilocks_base_field_avx512.hpp"
@@ -86,8 +84,6 @@ public:
     uint32_t  nOpsDebug = 0;
     uint32_t  nArgsDebug = 0;
 
-    bool write = false;
-
     std::string binFile;
 
     std::map<uint64_t, ParserParams> expressionsInfo;
@@ -107,38 +103,20 @@ public:
     uint64_t maxOps = 0;
 
     ~ExpressionsBin() {
-        if (!write) {
-            if (expressionsBinArgsExpressions.ops) delete[] expressionsBinArgsExpressions.ops;
-            if (expressionsBinArgsExpressions.args) delete[] expressionsBinArgsExpressions.args;
-            if (expressionsBinArgsExpressions.numbers) delete[] expressionsBinArgsExpressions.numbers;
-
-            if (expressionsBinArgsConstraints.ops) delete[] expressionsBinArgsConstraints.ops;
-            if (expressionsBinArgsConstraints.args) delete[] expressionsBinArgsConstraints.args;
-            if (expressionsBinArgsConstraints.numbers) delete[] expressionsBinArgsConstraints.numbers;
-        }        
+        delete[] expressionsBinArgsExpressions.ops;
+        delete[] expressionsBinArgsExpressions.args;
+        delete[] expressionsBinArgsExpressions.numbers;
+        delete[] expressionsBinArgsConstraints.ops;
+        delete[] expressionsBinArgsConstraints.args;
+        delete[] expressionsBinArgsConstraints.numbers;
     };
 
     /* Constructor */
     ExpressionsBin(string file, bool globalBin = false);
 
-    ExpressionsBin(string starkInfoFile, string expressionsInfoFile, string expressionsBinFile, bool globalBin = false);
-
     void loadExpressionsBin(BinFileUtils::BinFile *expressionsBin);
 
     void loadGlobalBin(BinFileUtils::BinFile *globalBin);
-
-    void writeGlobalExpressionsBin(string binFile, ExpressionsInfo& expsInfo);
-
-    void writeExpressionsBin(string binFile, ExpressionsInfo& expsInfo);
-
-    void writeExpressionsSection(BinFileUtils::BinFileWriter &binFile, int section, std::vector<ExpInfoBin> expressionsInfo, std::vector<uint64_t> numbersExps, uint64_t maxTmp1, uint64_t maxTmp3, uint64_t maxArgs, uint64_t maxOps);
-    
-    void writeGlobalConstraintsSection(BinFileUtils::BinFileWriter &binFile, int section, std::vector<ExpInfoBin> constraintsInfo, std::vector<uint64_t> numbersConstraints);
-    void writeGlobalHintsSection(BinFileUtils::BinFileWriter &binFile, int section, std::vector<HintInfo> hintsInfo);
-
-    void writeConstraintsSection(BinFileUtils::BinFileWriter &binFile, int section, std::vector<ExpInfoBin> constraintsInfo, std::vector<uint64_t> numbersConstraints);
-
-    void writeHintsSection(BinFileUtils::BinFileWriter &binFile, int section, std::vector<HintInfo> hintsInfo);
 
     uint64_t getNumberHintIdsByName(std::string name);
 

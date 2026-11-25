@@ -1,13 +1,13 @@
-// Equivalence tests for the DEEP polynomial kernels (starkpil/deep_expression.cuh), against a host
-// reference written straight from the definition: it inverts every x[r] - xi_o itself, so it also checks
-// the shifted-denominator identity the kernels rely on.
+// Equivalence tests for the DEEP polynomial kernels (starkpil/deep_expression.cuh) against deep/deep.hpp, the
+// host DEEP: it inverts every x[r] - xi_o itself, so it also checks the shifted-denominator identity the kernels use.
 #include <gtest/gtest.h>
 #include <algorithm>
 #include <random>
 #include <tuple>
 #include <vector>
 #include "cuda_utils.cuh"
-#include "../../starkpil/deep_expression.cuh"
+#include "deep_expression.cuh"
+#include "deep.hpp"
 
 namespace {
 
@@ -27,7 +27,7 @@ struct FriCase {
 
     std::vector<FriTerm> terms;   // opening-major
     std::vector<uint64_t> termStart;
-    std::vector<Goldilocks::Element> cm, custom, fixed, evals, xi, xis, x, vf1, vf2;   // xis, x: reference only
+    std::vector<Goldilocks::Element> cm, custom, fixed, evals, xi, x, vf1, vf2;   // x: reference only
 
     void build(uint64_t seed)
     {
@@ -37,19 +37,13 @@ struct FriCase {
         cm.resize(buf); custom.resize(buf); fixed.resize(buf);
         for (uint64_t i = 0; i < buf; i++) { cm[i] = rnd(); custom[i] = rnd(); fixed[i] = rnd(); }
 
-        const Goldilocks::Element wExt = Goldilocks::w(nBitsExt), w = Goldilocks::w(nBitsExt - extendBits);
+        const Goldilocks::Element wExt = Goldilocks::w(nBitsExt);
         x.resize(n);
         x[0] = Goldilocks::shift();
         for (uint64_t r = 1; r < n; r++) x[r] = Goldilocks::mul(x[r - 1], wExt);
         if (openings.empty())
             for (uint64_t o = 0; o < nOpenings(); o++) openings.push_back((int64_t)o - 2);
         xi = {rnd(), rnd(), rnd()};
-        xis.resize(nOpenings() * FIELD_EXTENSION);
-        for (uint64_t o = 0; o < nOpenings(); o++) {
-            Goldilocks::Element wo = Goldilocks::pow(w, (uint64_t)std::abs(openings[o]));
-            if (openings[o] < 0) wo = Goldilocks::inv(wo);
-            for (uint64_t k = 0; k < FIELD_EXTENSION; k++) xis[o * FIELD_EXTENSION + k] = Goldilocks::mul(xi[k], wo);
-        }
 
         vf1 = {rnd(), rnd(), rnd()};
         vf2 = {rnd(), rnd(), rnd()};
@@ -70,38 +64,30 @@ struct FriCase {
         for (auto &e : evals) e = rnd();
     }
 
-    // fri[r] = SUM_o vf1^e_o / (x[r] - xi_o) * SUM_j vf2^(c_j) * (p_j[r] - e_j), e_o counting later openings with terms.
+    // deep.hpp's host DEEP (the CPU prover's and verifier's) over the same terms: GPU against CPU.
     std::vector<Goldilocks::Element> reference() const
     {
-        const uint64_t n = domainSize();
+        const uint64_t n = domainSize(), O = nOpenings();
+        DeepTables t{0, 1, 2, 0, openings, {}, termStart};
+        for (const FriTerm &m : terms) {
+            t.terms.push_back(DeepTerm{m.evalPos, m.vf2Exp, EvMap::eType::cm, 0, 0, 0, 0, m.dim});
+            t.nPols = std::max<uint32_t>(t.nPols, m.vf2Exp + 1);
+        }
+        std::vector<Goldilocks::Element> ch(xi);
+        ch.insert(ch.end(), vf1.begin(), vf1.end());
+        ch.insert(ch.end(), vf2.begin(), vf2.end());
+        const DeepConsts k = deepConstants(t, ch.data(), evals.data(), nBitsExt - extendBits);
         std::vector<Goldilocks::Element> out(n * FIELD_EXTENSION);
-        F3::Element vf1e = {vf1[0], vf1[1], vf1[2]}, vf2e = {vf2[0], vf2[1], vf2[2]};
+        DeepF3Vec inv(O);
         for (uint64_t r = 0; r < n; r++) {
-            F3::Element fri;
-            F3::zero(fri);
-            for (uint64_t o = 0; o < nOpenings(); o++) {
-                F3::Element accum;
-                F3::zero(accum);
-                for (uint64_t t = termStart[o]; t < termStart[o + 1]; t++) {
-                    const FriTerm &m = terms[t];
-                    const Goldilocks::Element *pol = (m.src == 0 ? cm : m.src == 1 ? custom : fixed).data() + m.col + r;
-                    F3::Element term = {pol[0], m.dim == 1 ? Goldilocks::zero() : pol[n],
-                                        m.dim == 1 ? Goldilocks::zero() : pol[2 * n]};
-                    F3::sub(term, term, *(F3::Element *)&evals[m.evalPos * FIELD_EXTENSION]);
-                    F3::Element p = {Goldilocks::one(), Goldilocks::zero(), Goldilocks::zero()};
-                    for (uint32_t e = 0; e < m.vf2Exp; e++) F3::mul(p, p, vf2e);
-                    F3::mul(term, term, p);
-                    F3::add(accum, accum, term);
-                }
-                F3::Element den = {x[r], Goldilocks::zero(), Goldilocks::zero()}, inv;
-                F3::sub(den, den, *(F3::Element *)&xis[o * FIELD_EXTENSION]);
-                F3::inv(inv, den);
-                F3::mul(accum, accum, inv);
-                if (termStart[o + 1] == termStart[o]) continue;   // deep.hpp skips openings without evaluations
-                F3::mul(fri, fri, vf1e);
-                F3::add(fri, fri, accum);
-            }
-            for (uint64_t k = 0; k < FIELD_EXTENSION; k++) out[r * FIELD_EXTENSION + k] = fri[k];
+            deepDenominators(k, x[r], &inv[0]);
+            for (uint64_t o = 0; o < O; o++) F3::inv(inv[o], inv[o]);
+            auto get = [&](uint64_t j, Goldilocks::Element *v) {
+                const FriTerm &m = terms[j];
+                const Goldilocks::Element *pol = (m.src == 0 ? cm : m.src == 1 ? custom : fixed).data() + m.col + r;
+                for (uint64_t d = 0; d < m.dim; d++) v[d] = pol[d * n];
+            };
+            deepEvalPoint(t, k, &inv[0], get, *(F3::Element *)&out[r * FIELD_EXTENSION]);
         }
         return out;
     }
