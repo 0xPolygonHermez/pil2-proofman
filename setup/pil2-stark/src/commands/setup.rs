@@ -34,7 +34,7 @@ pub struct SetupOptions {
     /// Optional path to write per-AIR stats (same format as `proofman-setup stats`).
     /// If None, no stats file is written.
     pub stats_output_path: Option<String>,
-    pub hash: String,
+    pub hash: proofman_common::hash_family::HashFamily,
     /// Proofs each recursive2 circuit aggregates: 2, 3 or 4.
     pub agg_arity: usize,
     /// Build the `vadcop_final_compressed` stage. Defaults per family -- see
@@ -82,7 +82,7 @@ pub(crate) fn nvcc_present() -> bool {
 
 /// Run the non-recursive setup pipeline.
 pub fn run_setup(opts: &SetupOptions) -> Result<()> {
-    proofman_starks_lib_c::set_hash_family_c(&opts.hash);
+    proofman_starks_lib_c::set_hash_family_c(opts.hash.as_str());
     let pilout_data = fs::read(&opts.airout_path)?;
     let pilout = pb::PilOut::decode(pilout_data.as_slice())?;
     let pilout_name = pilout.name.clone().unwrap_or_else(|| "pilout".to_string());
@@ -149,7 +149,7 @@ pub fn run_setup(opts: &SetupOptions) -> Result<()> {
     let build_dir = opts.build_dir.clone();
     let fixed_dir = opts.fixed_dir.clone();
     let pilout_name_shared = pilout_name.clone();
-    let family: proofman_common::hash_family::HashFamily = opts.hash.parse().map_err(anyhow::Error::msg)?;
+    let family = opts.hash;
 
     // Always write globalConstraints first — run_recursive_setup reads them from disk.
     // globalInfo.json is written now only for the non-recursive path; for recursive it is
@@ -161,7 +161,7 @@ pub fn run_setup(opts: &SetupOptions) -> Result<()> {
             &pilout_name,
             &opts.build_dir,
             &settings_map,
-            &opts.hash,
+            opts.hash.as_str(),
             opts.agg_arity,
             opts.compressed_final,
             opts.setup_version.as_deref(),
@@ -185,12 +185,13 @@ pub fn run_setup(opts: &SetupOptions) -> Result<()> {
                 // every line pil_info, the const-tree builder and the expression codegen emit from
                 // inside here would otherwise be unattributable. Entering it prefixes them all.
                 let _span = tracing::info_span!("air", name = %item.air_name).entered();
-                let n_bits = log2_usize(item.num_rows);
+                let n_bits = crate::proving_key::util::exact_log2(item.num_rows as u64)
+                    .with_context(|| format!("air '{}' row count", item.air_name))?;
                 tracing::info!("Computing setup for air '{}'", item.air_name);
 
                 let air_settings = settings_map.resolve(&item.airgroup_name, &item.air_name);
 
-                let stark_struct = generate_basic_stark_struct(&air_settings, n_bits, &opts.hash);
+                let stark_struct = generate_basic_stark_struct(&air_settings, n_bits, opts.hash.as_str());
 
                 let files_dir = PathBuf::from(&build_dir)
                     .join("provingKey")
@@ -259,7 +260,7 @@ pub fn run_setup(opts: &SetupOptions) -> Result<()> {
             &pilout,
             &pilout_name,
             &settings_map,
-            &opts.hash,
+            opts.hash.as_str(),
             opts.agg_arity,
             opts.compressed_final,
             opts.setup_version.as_deref(),
@@ -279,7 +280,7 @@ pub fn run_setup(opts: &SetupOptions) -> Result<()> {
             &pilout_name,
             &opts.build_dir,
             &final_settings,
-            &opts.hash,
+            opts.hash.as_str(),
             opts.agg_arity,
             opts.compressed_final,
             opts.setup_version.as_deref(),
@@ -296,21 +297,12 @@ pub fn run_setup(opts: &SetupOptions) -> Result<()> {
             chunk: opts.exps_chunk,
             stark_src: opts.exps_stark_src.clone().map(std::path::PathBuf::from),
         };
-        // Non-fatal: setup itself succeeded and the provingKey is valid; the
-        // prover falls back to the interpreter for any AIR without a .so.
-        if let Err(e) = crate::commands::gen_exps::run_gen_exps(&gen_opts) {
-            tracing::error!("Expression kernel codegen failed (continuing): {:#}", e);
-        }
+        // A kernel that does not compile is a generator or toolchain bug; skips are only warned.
+        crate::commands::gen_exps::run_gen_exps(&gen_opts).context("expression kernel codegen")?;
     }
 
     tracing::info!("Setup complete");
     Ok(())
-}
-
-/// Compute floor(log2(n)) for a nonzero usize.
-fn log2_usize(n: usize) -> usize {
-    assert!(n > 0, "log2_usize: n must be positive");
-    (usize::BITS - 1 - n.leading_zeros()) as usize
 }
 
 #[cfg(test)]
@@ -331,7 +323,7 @@ mod tests {
             recursive_jobs: 1,
             setup_jobs: 1,
             stats_output_path: None,
-            hash: "Poseidon2".to_string(),
+            hash: proofman_common::hash_family::HashFamily::Poseidon2,
             agg_arity: 3,
             recursive_n_bits: None,
             compressed_final: true,
@@ -390,7 +382,7 @@ mod tests {
             recursive_jobs: 1,
             setup_jobs: 1,
             stats_output_path: None,
-            hash: "Poseidon2".to_string(),
+            hash: proofman_common::hash_family::HashFamily::Poseidon2,
             agg_arity: 3,
             recursive_n_bits: None,
             compressed_final: true,
@@ -509,7 +501,7 @@ mod tests {
             recursive_jobs: 1,
             setup_jobs: 1,
             stats_output_path: None,
-            hash: "Poseidon2".to_string(),
+            hash: proofman_common::hash_family::HashFamily::Poseidon2,
             agg_arity: 3,
             recursive_n_bits: None,
             compressed_final: true,
@@ -558,7 +550,7 @@ mod tests {
             recursive_jobs: 1,
             setup_jobs: 1,
             stats_output_path: None,
-            hash: "Poseidon2".to_string(),
+            hash: proofman_common::hash_family::HashFamily::Poseidon2,
             agg_arity: 3,
             recursive_n_bits: None,
             compressed_final: true,

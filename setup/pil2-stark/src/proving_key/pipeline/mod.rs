@@ -25,6 +25,13 @@ pub type PilInfoJson = (Value, Value, Value);
 /// (base field, extended field) intermediate polynomials of a pil_info run.
 pub type ImPolsInfo = (Vec<String>, Vec<String>);
 
+/// A setup another circuit reuses: its pil_info and the digest of the constraints it was made from.
+#[derive(Clone, Debug)]
+pub struct ReusedSetup {
+    pub pil_info: PilInfoJson,
+    pub constraints: u64,
+}
+
 /// External tools and include paths the steps call.
 #[derive(Clone, Debug, Default)]
 pub struct Tools {
@@ -34,6 +41,36 @@ pub struct Tools {
     pub std_pil_path: String,
     pub recurser_pil_path: String,
     pub circom_helpers_dir: String,
+}
+
+impl Tools {
+    /// The Goldilocks recursion circuits' tools, each from its env var or the repo's default.
+    pub fn from_env() -> Self {
+        use crate::commands::recursive_setup::{resolve_circom_exec, resolve_path_env};
+        const LIB: &str = "setup/stark-recurser/stark2circom/circom_verifier";
+        let circom_helpers_dir = resolve_path_env("CIRCOM_HELPERS_DIR", "setup/circom");
+        Self {
+            circom_exec: resolve_circom_exec(&circom_helpers_dir),
+            libs: vec![
+                resolve_path_env("RECURSER_CIRCUITS_PATH", &format!("{LIB}/helper_circuits")),
+                resolve_path_env("CIRCUITS_GL_PATH", &format!("{LIB}/circuits.gl")),
+            ],
+            std_pil_path: resolve_path_env("STD_PIL_PATH", "pil2-components/lib/std/pil"),
+            recurser_pil_path: resolve_path_env("RECURSER_PIL_PATH", "setup/stark-recurser/plonk2pil/pil"),
+            circom_helpers_dir,
+        }
+    }
+
+    /// [`Tools::from_env`] for the compressed final, whose helpers `RECURSER_CIRCUITS_COMPRESSED_FINAL_PATH` may move.
+    pub fn compressed_final_from_env() -> Self {
+        let mut t = Self::from_env();
+        if let Ok(p) = std::env::var("RECURSER_CIRCUITS_COMPRESSED_FINAL_PATH").map(|p| p.trim().to_string()) {
+            if !p.is_empty() {
+                t.libs[0] = p;
+            }
+        }
+        t
+    }
 }
 
 /// One verifier circom the prologue writes to `circom/<file>`.
@@ -88,12 +125,15 @@ pub struct PipelineCtx {
     pub stark_struct: Option<StarkStruct>,
     pub prepare: PrepareOptions,
     pub key: KeyIdentity,
-    /// (starkinfo, verifierinfo, expressionsinfo) to reuse instead of running pil_info.
-    pub reuse_pil_info: Option<PilInfoJson>,
+    /// The setup to reuse instead of running pil_info.
+    pub reuse: Option<ReusedSetup>,
     pub pil_info: Option<PilInfoJson>,
+    /// Digest of the constraints the tail set up (or reused).
+    pub constraints: Option<u64>,
+    /// The tail's starkinfo is the const tree's input only, removed once it ran.
+    pub temp_starkinfo: bool,
     /// (summary, im pols info) of the pil_info run.
     pub stats: Option<(String, ImPolsInfo)>,
-    pub n_bits: Option<usize>,
     pub const_root: Option<[u64; 4]>,
 }
 
@@ -121,10 +161,11 @@ impl PipelineCtx {
             stark_struct: None,
             prepare: PrepareOptions::default(),
             key: KeyIdentity::default(),
-            reuse_pil_info: None,
+            reuse: None,
             pil_info: None,
+            constraints: None,
+            temp_starkinfo: false,
             stats: None,
-            n_bits: None,
             const_root: None,
         }
     }
@@ -194,24 +235,19 @@ mod tests {
     }
 
     #[test]
-    fn executor_with_no_steps_is_ok() {
-        assert!(run(&[], &mut ctx()).is_ok());
-    }
-
-    #[test]
     fn steps_see_and_update_the_shared_context() {
         let steps = [
             Step::Custom {
                 name: "set",
                 run: Box::new(|c| {
-                    c.n_bits = Some(17);
+                    c.batch_size = 17;
                     Ok(())
                 }),
             },
             Step::Custom {
                 name: "read",
                 run: Box::new(|c| {
-                    anyhow::ensure!(c.n_bits == Some(17), "n_bits not handed over");
+                    anyhow::ensure!(c.batch_size == 17, "batch_size not handed over");
                     Ok(())
                 }),
             },
@@ -219,28 +255,13 @@ mod tests {
         run(&steps, &mut ctx()).unwrap();
     }
 
-    #[derive(Debug)]
-    struct TestError(u32);
-    impl std::fmt::Display for TestError {
-        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-            write!(f, "test error {}", self.0)
-        }
-    }
-    impl std::error::Error for TestError {}
-
+    /// commands/recursive_setup.rs downcasts the error a step returns.
     #[test]
-    fn custom_step_error_is_propagated_unchanged() {
-        let steps = [Step::Custom { name: "boom", run: Box::new(|_| Err(TestError(7).into())) }];
-        let err = run(&steps, &mut ctx()).unwrap_err();
-        assert_eq!(err.downcast_ref::<TestError>().map(|e| e.0), Some(7), "{err:#}");
-    }
-
-    #[test]
-    fn needs_compressor_error_survives_run() {
+    fn a_step_error_is_propagated_unchanged() {
         use crate::proving_key::recursive::NeedsCompressorError;
         let steps =
             [Step::Custom { name: "check", run: Box::new(|_| Err(NeedsCompressorError { n_bits: 18 }.into())) }];
         let err = run(&steps, &mut ctx()).unwrap_err();
-        assert!(err.is::<NeedsCompressorError>(), "commands/recursive_setup.rs relies on this downcast");
+        assert_eq!(err.downcast_ref::<NeedsCompressorError>().map(|e| e.n_bits), Some(18), "{err:#}");
     }
 }

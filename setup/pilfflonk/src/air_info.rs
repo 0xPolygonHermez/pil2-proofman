@@ -48,7 +48,7 @@ use std::collections::BTreeMap;
 use pil2_pilout::pilout as pb;
 use pil_info::core::ir::{Boundary as PassesBoundary, ColType};
 use pil_info::types::pilout_info::SymbolInfo;
-use pil_info::PilInfoResult;
+use pil_info::ShplonkResult;
 use proofman_pilfflonk::layout::{q_pieces, split_max_q_degree};
 use proofman_pilfflonk::names::column_name;
 pub use proofman_pilfflonk::names::q_piece_name;
@@ -143,7 +143,7 @@ fn column(symbol: &SymbolInfo, what: &str, i: usize) -> Result<(u64, u64), Setup
 }
 
 /// `constPolsMap`: every fixed column of `air`, each with its symbol.
-fn const_pols_map(result: &PilInfoResult, air: &pb::Air) -> Result<Vec<PolMapEntry>, SetupError> {
+fn const_pols_map(result: &ShplonkResult, air: &pb::Air) -> Result<Vec<PolMapEntry>, SetupError> {
     let map = &result.setup.const_pols_map;
     if map.len() != air.fixed_cols.len() || map.iter().any(|s| s.sym_type != "fixed") {
         return Err(SetupError::InvalidPilout(format!(
@@ -179,7 +179,7 @@ fn const_pols_map(result: &PilInfoResult, air: &pb::Air) -> Result<Vec<PolMapEnt
 
 /// `cmPolsMap`: the columns and im pols of `pil-info`'s, the columns named alike indexed, then the
 /// pieces of `Q` (see [the module](self)).
-fn cm_pols_map(result: &PilInfoResult, air: &pb::Air, q_pieces: u64) -> Result<Vec<PolMapEntry>, SetupError> {
+fn cm_pols_map(result: &ShplonkResult, air: &pb::Air, q_pieces: u64) -> Result<Vec<PolMapEntry>, SetupError> {
     let setup = &result.setup;
     let q_stage = setup.n_stages + 1;
     let n_columns = setup.cm_pols_map.iter().take_while(|s| s.stage != Some(q_stage)).count();
@@ -261,7 +261,7 @@ fn name_stage_entries(map: &[SymbolInfo], what: &str) -> Result<Vec<NameStageEnt
         .collect()
 }
 
-fn challenges_map(result: &PilInfoResult) -> Result<Vec<ChallengeMapEntry>, SetupError> {
+fn challenges_map(result: &ShplonkResult) -> Result<Vec<ChallengeMapEntry>, SetupError> {
     result
         .setup
         .challenges_map
@@ -290,7 +290,7 @@ fn boundary(b: &PassesBoundary) -> Boundary {
     }
 }
 
-fn ev_map(result: &PilInfoResult) -> Result<Vec<EvMapEntry>, SetupError> {
+fn ev_map(result: &ShplonkResult) -> Result<Vec<EvMapEntry>, SetupError> {
     (result.ev_map.iter().enumerate())
         .map(|(i, e)| {
             let pol_type = match (e.pol.col, e.pol.commit_id) {
@@ -310,7 +310,7 @@ fn ev_map(result: &PilInfoResult) -> Result<Vec<EvMapEntry>, SetupError> {
 /// (`JsonFile::validate`) before it is returned, so that nothing is written for a pilfflonkinfo
 /// that cannot be.
 pub fn air_setup(
-    result: &PilInfoResult,
+    result: &ShplonkResult,
     air_ref: AirRef,
     air: &pb::Air,
     max_q_degree: u64,

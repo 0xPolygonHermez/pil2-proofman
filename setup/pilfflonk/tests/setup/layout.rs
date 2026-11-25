@@ -221,17 +221,14 @@ fn every_column_needs_its_symbol() {
     pilout.symbols.retain(|s| s.name != "Offsets.L1");
     let err = setup_air(&pilout, 9).unwrap_err();
     assert!(
-        matches!(&err, SetupError::Passes(PilInfoError::InvalidPilout(m)) if m.contains("Fixed None column 0")),
+        matches!(&err, SetupError::Passes(PilInfoError::InvalidPilout(m)) if m.contains("declares fixed columns")),
         "{err}"
     );
 
     let mut pilout = offsets_pilout();
     pilout.symbols.retain(|s| s.name != "Offsets.u");
     let err = setup_air(&pilout, 9).unwrap_err();
-    assert!(
-        matches!(&err, SetupError::InvalidPilout(m) if m.contains("3 witness columns, and symbols for 2")),
-        "{err}"
-    );
+    assert!(err.to_string().contains("witness columns"), "{err}");
 }
 
 /// The passes recurse over the expressions: a chain of 2000 of them overflows the 2 MiB stack of

@@ -11,7 +11,7 @@ use proofman_starks_lib_c::{generate_fflonk_zkey_c, generate_plonk_zkey_c, get_p
 
 use crate::commands::compile_pil::{run_compile_pil, CompilePilOptions};
 use pil2_stark_recurser::stark2circom::templates::{gen_solidity, gen_iverifier, SnarkVerifier};
-use pil2_stark_recurser::stark2circom::{gen_circom_circuit, CircomGenOptions, GenCircomCircuitInput, StarkVerifierOptions};
+use pil2_stark_recurser::stark2circom::{CircomGenOptions, CircuitTemplate, StarkVerifierOptions};
 use crate::output::witness_gen::WitnessTracker;
 use pil2_stark_recurser::plonk2pil::r1cs_types::PlonkOptions;
 use pil2_stark_recurser::plonk2pil::setups::blake3_bn128::wrap as blake3_wrap;
@@ -23,7 +23,8 @@ use pilfflonk_setup::{run_setup_pilfflonk_with_external_fixed, ExternalFixedColu
 use proofman_common::hash_family::{HashFamily, BLAKE3_BN128_WRAP_FAMILY, BN128_WRAP_FAMILY};
 use proofman_fields::Bn128;
 use proofman_pilfflonk::{CalldataLayout, FrBytes, JsonFile, PilfflonkGlobalInfo, Vkey};
-use crate::proving_key::pipeline::steps::VerifierGen;
+use crate::commands::common::parse_root_strings;
+use crate::proving_key::pipeline::steps::{CircomOpt, Prime, Step, VerifierGen};
 use crate::proving_key::pipeline::{self, kinds, kinds::RecursivefCfg, CircuitInput, PipelineCtx, Tools, VerifierInput};
 use crate::types::stark_struct::StarkSettings;
 
@@ -117,21 +118,14 @@ pub struct SnarkSetupConfig<'a> {
     pub build_dir: &'a str,
     /// Circuit name (from globalInfo.name).
     pub name: &'a str,
-    /// Hash family (from globalInfo.hash, e.g. "Poseidon1"/"Poseidon2"). The
-    /// recursivef plonk2pil and circom verifier must use the same family the
-    /// proving key was set up with — never a hardcoded default.
-    pub hash: &'a str,
-    /// Tool paths (same sources as recursive setup).
-    pub circom_exec: &'a str,
-    pub circuits_gl_path: &'a str,
-    /// BN128 circuit library path (node_modules/stark-recurser/src/pil2circom/circuits.bn128).
+    /// The proving key's family (globalInfo.hash): the recursivef must use it.
+    pub hash: HashFamily,
+    /// The Goldilocks recursion's tools; the final circuit swaps `circuits.gl` for the next two.
+    pub tools: &'a Tools,
+    /// The BN128 circuit library (`circuits.bn128`).
     pub circuits_bn128_path: &'a str,
     /// Circomlib circuits path (node_modules/circomlib/circuits).
     pub circomlib_path: &'a str,
-    pub recurser_circuits_path: &'a str,
-    pub std_pil_path: &'a str,
-    pub recurser_pil_path: &'a str,
-    pub circom_helpers_dir: &'a str,
     /// Directory containing BN128 fr.cpp/fr.asm and Makefile for the `final` SNARK witness library.
     /// Corresponds to `final_snark_circom/`
     pub final_snark_circom_helpers_dir: &'a str,
@@ -182,7 +176,7 @@ pub fn gen_snark_setup(
     // ── Phase 1: recursivef ───────────────────────────────────────────────────
     // blake3's recursivef is one more Goldilocks layer (setup-recursivef), which proofman proves:
     // the final circuit verifies it as it is. The poseidon families' is the BN128 bridge, set up here.
-    let blake3 = !proofman_common::hash_family::has_bn128_recursivef(config.hash);
+    let blake3 = !proofman_common::hash_family::has_bn128_recursivef(config.hash.as_str());
     let recursivef_dir = snark_dir.join("recursivef");
     let starkinfo_rf_json = if blake3 {
         let path = recursivef_dir.join("recursivef.starkinfo.json");
@@ -212,16 +206,7 @@ fn gen_bn128_recursivef(
     verifier_info: &Value,
     recursivef_dir: &Path,
 ) -> Result<String> {
-    let rf_config = RecursivefSetupConfig {
-        build_dir: config.build_dir,
-        hash: config.hash,
-        circom_exec: config.circom_exec,
-        circuits_gl_path: config.circuits_gl_path,
-        recurser_circuits_path: config.recurser_circuits_path,
-        std_pil_path: config.std_pil_path,
-        recurser_pil_path: config.recurser_pil_path,
-        circom_helpers_dir: config.circom_helpers_dir,
-    };
+    let rf_config = RecursivefSetupConfig { build_dir: config.build_dir, hash: config.hash, tools: config.tools };
     gen_recursivef_setup(
         &rf_config,
         witness_tracker,
@@ -246,136 +231,71 @@ fn gen_final_snark(
     blake3: bool,
 ) -> Result<()> {
     let build_dir = PathBuf::from(config.build_dir);
-    let circom_dir = build_dir.join("circom");
     let build_path = build_dir.join("build");
     let pil_dir = build_dir.join("pil");
     let snark_dir = build_dir.join("provingKeySnark");
-
-    // ── Phase 2: final SNARK ──────────────────────────────────────────────────
     let final_dir = snark_dir.join("final");
-    fs::create_dir_all(&final_dir)?;
 
-    let rf_const_root_json: Value = serde_json::from_str(
-        &fs::read_to_string(verkey_rf_path)
-            .with_context(|| format!("Failed to read recursivef.verkey.json: {}", verkey_rf_path.display()))?,
+    // A GL recursivef's verkey is 4 limbs, a BN128 one's a single element (in slot 0 here).
+    let rf_root: Value = serde_json::from_str(
+        &fs::read_to_string(verkey_rf_path).with_context(|| format!("reading {}", verkey_rf_path.display()))?,
     )?;
-    // The verkey.json format depends on the hash type:
-    //   GL      → [u64, u64, u64, u64]  (4-element JSON array)
-    //   BN128   → "<decimal_string>"    (single BN128 field element as JSON string)
-    // Either way we store as [String; 4], putting the scalar in [0] for BN128.
-    let rf_const_root_str: [String; 4] = {
-        if let Some(arr) = rf_const_root_json.as_array() {
-            // GL case
-            if arr.len() < 4 {
-                bail!("recursivef verkey has fewer than 4 elements");
-            }
-            [
-                arr[0]
-                    .as_u64()
-                    .map(|v| v.to_string())
-                    .unwrap_or_else(|| arr[0].to_string().trim_matches('"').to_string()),
-                arr[1]
-                    .as_u64()
-                    .map(|v| v.to_string())
-                    .unwrap_or_else(|| arr[1].to_string().trim_matches('"').to_string()),
-                arr[2]
-                    .as_u64()
-                    .map(|v| v.to_string())
-                    .unwrap_or_else(|| arr[2].to_string().trim_matches('"').to_string()),
-                arr[3]
-                    .as_u64()
-                    .map(|v| v.to_string())
-                    .unwrap_or_else(|| arr[3].to_string().trim_matches('"').to_string()),
-            ]
-        } else if let Some(s) = rf_const_root_json.as_str() {
-            // BN128 case: single scalar; store in slot 0, zeros in the rest
-            [s.to_string(), "0".into(), "0".into(), "0".into()]
-        } else {
-            bail!("recursivef verkey.json has unexpected format: {}", rf_const_root_json);
-        }
+    let rf_const_root = match rf_root.as_str() {
+        Some(s) => [s.to_string(), "0".into(), "0".into(), "0".into()],
+        None => parse_root_strings(&rf_root).context("recursivef.verkey.json")?,
     };
+    let vi_path = recursivef_dir.join("recursivef.verifierinfo.json");
+    let verifier_info: Value =
+        serde_json::from_str(&fs::read_to_string(&vi_path).with_context(|| format!("reading {}", vi_path.display()))?)?;
+    let stark_info: Value = serde_json::from_str(starkinfo_rf_json)?;
 
-    let starkinfo_rf_val: Value = serde_json::from_str(starkinfo_rf_json)?;
-    let verifierinfo_json_path = recursivef_dir.join("recursivef.verifierinfo.json");
-    let verifierinfo_rf_val: Value =
-        serde_json::from_str(&fs::read_to_string(&verifierinfo_json_path).with_context(|| {
-            format!("Failed to read recursivef.verifierinfo.json: {}", verifierinfo_json_path.display())
-        })?)?;
-
-    // pil2circom: generate recursivef.verifier.circom (verkeyInput=false for final).
-    let verifier_name_final = "recursivef.verifier.circom";
-    let opts_final = StarkVerifierOptions {
+    // The final circuit: the recursivef's BN128 verifier and the publics hash, over BN128.
+    let opts = StarkVerifierOptions {
         skip_main: true,
         verkey_input: false,
         enable_input: false,
         input_challenges: false,
         fri_queries_batch_size: None,
-        hash: config.hash.to_string(),
+        hash: config.hash.as_str().to_string(),
     };
-    let verifier_gen = if blake3 { VerifierGen::Bn128Blake3(opts_final) } else { VerifierGen::Gl(opts_final) };
-    let verifier_circom_final = verifier_gen
-        .generate(&rf_const_root_str, &starkinfo_rf_val, &verifierinfo_rf_val)
-        .context("pil2circom failed for final")?;
-    fs::write(circom_dir.join(verifier_name_final), &verifier_circom_final)?;
-
-    // gen_circom: generate final.circom using final.circom.ejs template.
-    let publics_vec: Vec<Value> =
-        if let Some(ref pi) = config.publics_info { vec![pi.clone()] } else { vec![Value::Null] };
-    // The snark final circuit wraps a single recursivef proof: the template never reads
-    // `agg_arity`, and 0 is rejected outright by `gen_recursive2`.
-    let gen_opts_final = CircomGenOptions {
-        airgroup_id: None,
-        has_compressor: false,
-        has_recursion: false,
-        is_final: true,
-        agg_arity: 0,
-        batch_size: 1,
+    let verifier = if blake3 { VerifierGen::Bn128Blake3(opts) } else { VerifierGen::Gl(opts) };
+    let mut ctx = PipelineCtx::new(build_dir.clone(), final_dir.clone(), "final", config.hash);
+    ctx.tools = Tools {
+        libs: vec![
+            config.tools.libs[0].clone(),
+            config.circuits_bn128_path.to_string(),
+            config.circomlib_path.to_string(),
+        ],
+        ..config.tools.clone()
     };
-    let gen_input_final = GenCircomCircuitInput {
-        template_name: "src/recursion/templates/final.circom.ejs",
-        stark_infos: std::slice::from_ref(&starkinfo_rf_val),
-        vadcop_info: &Value::Null,
-        verifier_filenames: &[verifier_name_final.to_string()],
-        basic_vk: &[],
-        agg_vk: &[],
-        publics: &publics_vec,
-        options: &gen_opts_final,
+    ctx.verifiers = vec![VerifierInput {
+        file: "recursivef.verifier.circom".into(),
+        const_root: rf_const_root,
+        stark_info: stark_info.clone(),
+        verifier_info,
+    }];
+    // A single recursivef proof: the template never reads `agg_arity`.
+    ctx.circuit_input = Some(CircuitInput {
+        stark_infos: vec![stark_info],
+        vadcop_info: Value::Null,
+        basic_vk: vec![],
+        agg_vk: vec![],
+        publics: vec![config.publics_info.clone().unwrap_or(Value::Null)],
+        opts: CircomGenOptions {
+            airgroup_id: None,
+            has_compressor: false,
+            has_recursion: false,
+            agg_arity: 0,
+            batch_size: 1,
+        },
+    });
+    let prologue = Step::CircomPrologue {
+        verifier: Some(verifier),
+        circom_template: Some(CircuitTemplate::Final),
+        opt: CircomOpt::O1,
+        prime: Prime::Bn128,
     };
-    let circom_final = gen_circom_circuit(&gen_input_final).context("gen_circom failed for final")?;
-    let circom_final_path = circom_dir.join("final.circom");
-    fs::write(&circom_final_path, &circom_final)?;
-
-    // Compile final with BN128 circuits.
-    tracing::info!("Compiling final...");
-    let compile_final = std::process::Command::new(config.circom_exec)
-        .args([
-            "--O1",
-            "--r1cs",
-            "--inspect",
-            "--wasm",
-            "--c",
-            "--verbose",
-            "-l",
-            config.recurser_circuits_path,
-            "-l",
-            config.circuits_bn128_path,
-            "-l",
-            config.circomlib_path,
-        ])
-        .arg(circom_final_path.to_str().unwrap())
-        .arg("-o")
-        .arg(build_path.to_str().unwrap())
-        .output()
-        .context("Failed to execute circom for final")?;
-    if !compile_final.status.success() {
-        bail!("Circom compilation failed for final: {}", String::from_utf8_lossy(&compile_final.stderr));
-    }
-
-    // Copy .dat file.
-    let dat_src_final = build_path.join("final_cpp").join("final.dat");
-    if dat_src_final.exists() {
-        fs::copy(&dat_src_final, final_dir.join("final.dat"))?;
-    }
+    pipeline::run(&[prologue], &mut ctx).context("the final circuit")?;
 
     let r1cs_final = build_path.join("final.r1cs");
     if !r1cs_final.exists() {
@@ -411,13 +331,8 @@ fn gen_final_snark(
 /// The tools and paths [`gen_recursivef_setup`] needs, from setup-snark's or setup-recursivef's.
 pub struct RecursivefSetupConfig<'a> {
     pub build_dir: &'a str,
-    pub hash: &'a str,
-    pub circom_exec: &'a str,
-    pub circuits_gl_path: &'a str,
-    pub recurser_circuits_path: &'a str,
-    pub std_pil_path: &'a str,
-    pub recurser_pil_path: &'a str,
-    pub circom_helpers_dir: &'a str,
+    pub hash: HashFamily,
+    pub tools: &'a Tools,
 }
 
 /// The recursivef, the STARK that verifies one vadcop_final proof of root `const_root` (an input
@@ -436,16 +351,10 @@ pub fn gen_recursivef_setup(
     settings: &StarkSettings,
     blake3_lanes: Option<usize>,
 ) -> Result<String> {
-    let family: HashFamily = config.hash.parse().map_err(anyhow::Error::msg)?;
+    let family = config.hash;
     let const_root_str: [String; 4] = const_root.map(|v| v.to_string());
     let mut ctx = PipelineCtx::new(config.build_dir.into(), recursivef_dir.to_path_buf(), "recursivef", family);
-    ctx.tools = Tools {
-        circom_exec: config.circom_exec.into(),
-        libs: vec![config.recurser_circuits_path.into(), config.circuits_gl_path.into()],
-        std_pil_path: config.std_pil_path.into(),
-        recurser_pil_path: config.recurser_pil_path.into(),
-        circom_helpers_dir: config.circom_helpers_dir.into(),
-    };
+    ctx.tools = config.tools.clone();
     ctx.witness = Some(witness_tracker.clone());
     ctx.verifiers = vec![VerifierInput {
         file: "vadcop_final.verifier.circom".into(),
@@ -464,7 +373,6 @@ pub fn gen_recursivef_setup(
             airgroup_id: None,
             has_compressor: false,
             has_recursion: false,
-            is_final: false,
             agg_arity: 0,
             batch_size: 1,
         },
@@ -625,7 +533,7 @@ fn gen_pilfflonk_key(
         pilout: build_path.join("final.pilout"),
         exec: final_dir.join(WRAP_EXEC_FILE),
     };
-    let includes = [config.recurser_pil_path.to_string(), config.std_pil_path.to_string()];
+    let includes = [config.tools.recurser_pil_path.clone(), config.tools.std_pil_path.clone()];
     let key = set_up_wrap_air(
         &build_path.join("final.r1cs"),
         &files,
@@ -634,7 +542,7 @@ fn gen_pilfflonk_key(
         final_dir,
         family,
     )?;
-    gen_wrap_exps(&final_dir.join(PROVING_KEY_DIR), config.exps_arch);
+    gen_wrap_exps(&final_dir.join(PROVING_KEY_DIR), config.exps_arch)?;
     let verifier = key.snark_verifier()?;
 
     witness_tracker.await_all()?;
@@ -642,16 +550,20 @@ fn gen_pilfflonk_key(
 }
 
 /// The wrap's Q kernel (`<air>.exps.so`), as `setup --gen-exps` makes the recursion's: without it the
-/// GPU interprets Q (measured 0.24 s against 0.12 s a proof on the blake3 wrap).
-fn gen_wrap_exps(proving_key: &Path, archspec: &str) {
+/// GPU interprets Q (measured 0.24 s against 0.12 s a proof on the blake3 wrap). A kernel that does
+/// not compile is an error; a skip only a warning.
+fn gen_wrap_exps(proving_key: &Path, archspec: &str) -> Result<()> {
     if !crate::commands::setup::nvcc_present() {
         tracing::warn!("nvcc not found: the wrap's Q stays on the GPU's interpreter (gen-exps makes its kernel)");
-        return;
+        return Ok(());
     }
-    match proofman_exps_codegen::generate_all(proving_key, &crate::commands::setup::exps_config(archspec)) {
-        Ok(summary) => tracing::info!("the wrap's Q kernel: {summary:?}"),
-        Err(e) => tracing::error!("the wrap's Q kernel codegen failed (it stays on the interpreter): {e:#}"),
+    let summary = proofman_exps_codegen::generate_all(proving_key, &crate::commands::setup::exps_config(archspec))
+        .context("the wrap's Q kernel")?;
+    for (air, why) in &summary.skipped {
+        tracing::warn!("the wrap's Q kernel of {air} skipped (it stays on the interpreter): {why}");
     }
+    tracing::info!("the wrap's Q kernel: {} generated", summary.generated.len());
+    Ok(())
 }
 
 /// The plonk2pil family of the pilfflonk wrap's AIR, and the knobs its pilfflonk setup takes.
@@ -747,7 +659,7 @@ fn set_up_wrap_air(
         .with_context(|| format!("plonk2pil failed for {}", r1cs.display()))?;
     drop(r1cs_data);
     fs::write(&files.pil, pil_str)?;
-    write_exec(&files.exec, &exec)?;
+    crate::proving_key::pipeline::steps::write_exec(&files.exec, &exec)?;
     drop(exec);
 
     tracing::info!("Compiling {} over BN128...", files.pil.display());
@@ -799,11 +711,6 @@ fn required_powers_of_tau<'a>(config: &SnarkSetupConfig<'a>) -> Result<&'a str> 
 
 /// Writes plonk2pil's exec buffer at `path`, its words little-endian
 /// (`proofman_common::exec_format`).
-fn write_exec(path: &Path, words: &[u64]) -> Result<()> {
-    let bytes: Vec<u8> = words.iter().flat_map(|w| w.to_le_bytes()).collect();
-    fs::write(path, bytes).with_context(|| format!("Failed to write {}", path.display()))
-}
-
 /// The project's Solidity verifier, `<Name>Verifier.sol`, which extends `verifier`, and its
 /// interface, `I<Name>Verifier.sol`, in `final_dir` (pure Rust — no Node.js required).
 fn write_project_verifier(
@@ -845,44 +752,9 @@ fn run_final_witness_library_generation(
     );
 }
 
-/// Find the snarkjs package root, checking (in order):
-///   1. `SNARKJS_PATH` environment variable
-///   2. `node_modules/snarkjs` relative to cwd
-///   3. Walk up from the executable's location to find `node_modules/snarkjs`
-///
-/// Install via: `npm install`  (reads package.json in the setup crate)
-fn resolve_snarkjs_root() -> Option<PathBuf> {
-    if let Ok(p) = std::env::var("SNARKJS_PATH") {
-        let pb = PathBuf::from(&p);
-        if pb.is_dir() {
-            return Some(pb);
-        }
-    }
-    let local = PathBuf::from("node_modules/snarkjs");
-    if local.is_dir() {
-        return local.canonicalize().ok();
-    }
-    if let Ok(exe) = std::env::current_exe() {
-        let mut dir = exe.parent();
-        while let Some(d) = dir {
-            let candidate = d.join("node_modules/snarkjs");
-            if candidate.is_dir() {
-                return candidate.canonicalize().ok();
-            }
-            dir = d.parent();
-        }
-    }
-    None
-}
-
-/// [`resolve_snarkjs_root`], but self-bootstrapping: when snarkjs is missing,
-/// install the Node deps (see [`crate::proving_key::node_deps`]) and look again.
+/// The snarkjs package root (`SNARKJS_PATH`, else an npm install).
 fn ensure_snarkjs_root() -> Option<PathBuf> {
-    if let Some(root) = resolve_snarkjs_root() {
-        return Some(root);
-    }
-    let root = crate::proving_key::node_deps::ensure_node_deps("snarkjs")?;
-    root.join("node_modules/snarkjs").canonicalize().ok()
+    crate::proving_key::node_deps::ensure_node_path(Some("SNARKJS_PATH"), "snarkjs").map(PathBuf::from)
 }
 
 /// Make a path absolute against the current working directory. Required before

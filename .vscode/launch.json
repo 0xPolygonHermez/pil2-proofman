@@ -36,22 +36,6 @@
         {
             "type": "lldb",
             "request": "launch",
-            "name": "Debug binFile",
-            "program": "pil2-stark/build/binfile",
-            "args": [
-                "-s",
-                "examples/fibonacci-square/build/provingKey/build/FiboCPU/airs/SpecifiedRanges/air/SpecifiedRanges.starkinfo.json",
-                "-e",
-                "examples/fibonacci-square/build/provingKey/build/FiboCPU/airs/SpecifiedRanges/air/SpecifiedRanges.expressionsinfo.json",
-                "-b",
-                "examples/fibonacci-square/build/provingKey/build/FiboCPU/airs/SpecifiedRanges/air/SpecifiedRanges.bin"
-            ],
-            "cwd": "${workspaceFolder}",
-            "sourceLanguages": ["cpp"]
-        },
-        {
-            "type": "lldb",
-            "request": "launch",
             "name": "Debug RECURSION${fileBasename}",
             "program": "target/debug/proofman-cli",
             //"cargo": {

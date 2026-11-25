@@ -35,10 +35,8 @@ use serde_json::{json, Value};
 use pilfflonk_setup::command::{DEFAULT_EXTRA_MULS, DEFAULT_MAX_CONSTRAINT_DEGREE, DEFAULT_MAX_Q_DEGREE, PROVING_KEY_DIR};
 use pilfflonk_setup::passes;
 use pilfflonk_setup::{run_setup_pilfflonk, SetupPilfflonkOptions};
-use proofman_pilfflonk::oracle::{self, omega, AirOracle, ColumnRef, Domain, Fr};
-use proofman_pilfflonk::{
-    AirFile, Boundary, EvMapEntry, FileWitnessSource, JsonFile, PilfflonkGlobalInfo, PilfflonkInfo, PolType,
-};
+use proofman_pilfflonk::oracle::{self, omega, AirOracle, Domain, Fr};
+use proofman_pilfflonk::{AirFile, Boundary, FileWitnessSource, JsonFile, PilfflonkGlobalInfo, PilfflonkInfo};
 
 use super::*;
 
@@ -383,18 +381,6 @@ fn xi_and_std_vc() -> (Fr, Fr) {
     (Fr::from_u64(7).pow_u64(1000), Fr::from_u64(0x5eed).pow_u64(77))
 }
 
-/// The column an evMap entry evaluates, as the oracle names it.
-fn column_of(pilout: &pb::PilOut, info: &PilfflonkInfo, e: &EvMapEntry) -> ColumnRef {
-    let pol = info.pol(e.pol_type, e.id).unwrap();
-    match (e.pol_type, pol.exp_id) {
-        (PolType::Const, _) => ColumnRef::Fixed(e.id as usize),
-        (PolType::Cm, Some(exp_id)) if pol.im_pol => {
-            ColumnRef::Im(pilout_expr_index(pilout, 0, 0, exp_id as u32).unwrap())
-        }
-        (PolType::Cm, _) => ColumnRef::Witness { stage: pol.stage as usize, idx: pol.stage_id as usize },
-    }
-}
-
 #[test]
 #[ignore = "needs PIL2C_EXEC"]
 fn the_fibonacci_fixtures_are_the_setups_and_the_oracles() {
@@ -451,17 +437,14 @@ fn the_fibonacci_fixtures_are_the_setups_and_the_oracles() {
     let source = FileWitnessSource::open(&witness_dir, &shape).unwrap();
     let values = air_oracle.values(&source, 0).unwrap();
     let (xi, std_vc) = xi_and_std_vc();
-    let im_pols: Vec<usize> = info
-        .cm_pols_map
-        .iter()
-        .filter(|p| p.im_pol)
-        .map(|p| pilout_expr_index(&pilout, 0, 0, p.exp_id.unwrap() as u32).unwrap())
-        .collect();
+    let im_pols = crate::support::im_pols(&pilout, &info);
     let q = air_oracle.q_at(&values, &im_pols, &std_vc, &xi).unwrap();
     let evals: Vec<Fr> = info
         .ev_map
         .iter()
-        .map(|e| air_oracle.column_at(&values, column_of(&pilout, &info, e), e.prime as i32, &xi).unwrap())
+        .map(|e| {
+            air_oracle.column_at(&values, crate::support::column_of(&pilout, &info, e), e.prime as i32, &xi).unwrap()
+        })
         .collect();
     let zerofiers: Vec<Fr> = info.boundaries.iter().map(|b| zerofier_term(b, &xi, FIBONACCI_N_BITS)).collect();
     let publics: Vec<Fr> = witness.publics.iter().map(from_bytes).collect();

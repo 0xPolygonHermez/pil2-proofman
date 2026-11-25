@@ -3,7 +3,7 @@
 use std::fs;
 use std::path::PathBuf;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use pil2_pilout::pilout as pb;
 use prost::Message;
 
@@ -21,7 +21,7 @@ pub struct StatsOptions {
     /// Path to compiled .pilout file.
     pub airout_path: String,
     /// Hash family (tree/transcript geometry), as in the setup command.
-    pub hash: String,
+    pub hash: proofman_common::hash_family::HashFamily,
     /// Output file for detailed per-AIR stats (default: `tmp/stats.txt`).
     pub output_path: Option<String>,
     /// Optional path to starkstructs.json.
@@ -82,11 +82,12 @@ pub fn run_stats(opts: &StatsOptions) -> Result<()> {
                 continue;
             }
 
-            let n_bits = log2_usize(num_rows);
+            let n_bits = crate::proving_key::util::exact_log2(num_rows as u64)
+                .with_context(|| format!("air '{air_name}' row count"))?;
 
             let air_settings = settings_map.resolve(&airgroup_name, &air_name);
 
-            let stark_struct = generate_basic_stark_struct(&air_settings, n_bits, &opts.hash);
+            let stark_struct = generate_basic_stark_struct(&air_settings, n_bits, opts.hash.as_str());
 
             let prepare_opts = PrepareOptions { im_pols_stages: opts.im_pols_stages, inplace_stage_commit: true };
 
@@ -318,10 +319,4 @@ fn security_line(si: &proofman_common::StarkInfo) -> String {
         Ok(r) => format!("{} [{}, weakest {}]", r.summary(), r.config, r.weakest_phase),
         Err(e) => format!("security: ERROR {e}"),
     }
-}
-
-/// floor(log2(n)) for a nonzero usize.
-fn log2_usize(n: usize) -> usize {
-    assert!(n > 0, "log2_usize: n must be positive");
-    (usize::BITS - 1 - n.leading_zeros()) as usize
 }

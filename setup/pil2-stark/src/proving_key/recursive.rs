@@ -1,22 +1,17 @@
-//! Port of `generateRecursiveSetup.js`: generate recursive verifier circuits,
-//! compile them, and produce the proving key artifacts for recursive1,
-//! recursive2, and compressor templates.
-//!
-//! The function drives:
-//! 1. Circom verifier generation (pil2circom)
-//! 2. Recursive circom generation (gencircom)
-//! 3. Circom compilation to R1CS + C++
-//! 4. R1CS-to-PIL conversion (plonk2pil)
-//! 5. PIL compilation (pil2com JS compiler)
-//! 6. starkSetup (pil_info)
-//! 7. Constant tree computation (bctree)
-//! 8. Binary file generation
+//! The compressor, recursive1 and recursive2 proving keys: their settings and the pipeline run
+//! (`pipeline::kinds::steps_for_recursive` lists the steps).
 
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use anyhow::{bail, Context, Result};
+use pil2_stark_recurser::stark2circom::CircomGenOptions;
 use proofman_common::hash_family::HashFamily;
+use serde_json::Value;
+
+use crate::output::witness_gen::WitnessTracker;
+use crate::proving_key::pipeline::kinds::{self, RecursiveCfg};
+use crate::proving_key::pipeline::{self, CircuitInput, PipelineCtx, ReusedSetup, Step, Tools, VerifierInput};
 
 /// Blowup buys constraint degree: an air whose constraints reach degree d needs
 /// `2^blowup + 1 >= d`. The poseidon aggregator is built at degree 8 and so needs 3; blake3's is
@@ -106,31 +101,21 @@ fn needs_compressor(
     template == RecursiveTemplate::Recursive1 && !has_compressor && n_bits_natural > domain_bits
 }
 
-/// Sentinel error returned when recursive1 detects that a compressor is required.
-///
-/// This is returned instead of a generic error so the caller can distinguish
-/// "compressor needed" from a real failure and auto-retry.
+/// Sentinel error returned when recursive1 detects that a compressor is required, so the caller
+/// can tell "compressor needed" from a real failure and retry.
 #[derive(Debug)]
 pub struct NeedsCompressorError {
-    /// The n_bits value from plonk2pil that exceeded the 17-bit threshold.
+    /// plonk2pil's n_bits, past the recursion's domain.
     pub n_bits: usize,
 }
 
 impl std::fmt::Display for NeedsCompressorError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Recursive1 circuit exceeds 17-bit threshold (n_bits={}); a compressor is needed", self.n_bits)
+        write!(f, "Recursive1 circuit exceeds the recursion's domain (n_bits={}); a compressor is needed", self.n_bits)
     }
 }
 
 impl std::error::Error for NeedsCompressorError {}
-
-use serde_json::Value;
-
-use pil2_stark_recurser::stark2circom::CircomGenOptions;
-
-use crate::output::witness_gen::WitnessTracker;
-use crate::proving_key::pipeline::kinds::{self, RecursiveCfg};
-use crate::proving_key::pipeline::{self, CircuitInput, PipelineCtx, Step, Tools, VerifierInput};
 
 /// Which recursive template to use.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -206,14 +191,6 @@ impl RecursiveTemplate {
             Self::Recursive2 => "recursive2",
         }
     }
-
-    pub fn ejs_template(&self) -> &'static str {
-        match self {
-            Self::Compressor => "src/vadcop/templates/compressor.circom.ejs",
-            Self::Recursive1 => "src/vadcop/templates/recursive1.circom.ejs",
-            Self::Recursive2 => "src/vadcop/templates/recursive2.circom.ejs",
-        }
-    }
 }
 
 /// Configuration for the recursive setup.
@@ -230,7 +207,7 @@ pub struct RecursiveSetupConfig<'a> {
     pub stark_info: &'a Value,
     pub verifier_info: &'a Value,
     pub has_compressor: bool,
-    pub hash: &'a str,
+    pub hash: HashFamily,
     /// The user's knobs on the recursion tree's own low-degree test (the starkstructs
     /// `"recursion"` entry), overlaid on `recursive_stark_settings`' defaults.
     pub recursion_settings: &'a crate::types::stark_struct::StarkSettings,
@@ -240,35 +217,18 @@ pub struct RecursiveSetupConfig<'a> {
     /// Pin this air to 2^N rows (see the --recursive-n-bits flag).
     pub recursive_n_bits: Option<usize>,
 
-    /// Optional pre-computed pil_info result to reuse instead of running starkSetup again.
-    /// When provided, the pil_info computation (starkInfo / verifierInfo / expressionsInfo)
-    /// is skipped and these values are used directly — this mirrors the JS behaviour where
-    /// `setupAggregation_` is passed in for the 2nd+ airs and for recursive2.
-    ///
-    /// Format: `(stark_info, verifier_info, expressions_info)` as JSON Values.
-    pub existing_pil_info: Option<(Value, Value, Value)>,
-
-    // Tool paths
-    pub circom_exec: &'a str,
-    pub circuits_gl_path: &'a str,
-    pub recurser_circuits_path: &'a str,
-    pub std_pil_path: &'a str,
-    pub recurser_pil_path: &'a str,
-    pub circom_helpers_dir: &'a str,
+    /// Another air's recursive1 setup to reuse instead of running starkSetup (2nd+ airs of an
+    /// airgroup); its constraints must be this air's.
+    pub reuse: Option<&'a ReusedSetup>,
+    pub tools: &'a Tools,
 }
 
 /// Result of a recursive setup step.
 pub struct RecursiveSetupResult {
-    /// The 4-element constant root.
     pub const_root: [u64; 4],
-    /// The starkInfo JSON for this recursive circuit.
-    pub stark_info: Option<Value>,
-    /// The verifierInfo JSON for this recursive circuit.
-    pub verifier_info: Option<Value>,
-    /// The expressionsInfo JSON for this recursive circuit.
-    pub expressions_info: Option<Value>,
-    /// n_bits from plonk2pil (log2 of circuit rows).  Exposed so the caller
-    /// can validate size without re-reading the starkInfo JSON.
+    /// This circuit's setup, as the next airs of its airgroup reuse it.
+    pub setup: ReusedSetup,
+    /// n_bits from plonk2pil (log2 of circuit rows), to validate sizes without the starkinfo.
     pub n_bits: usize,
     /// Proofs this circuit verifies; reaches globalInfo.json from here for the prover.
     pub batch_size: usize,
@@ -279,7 +239,7 @@ pub fn gen_recursive_setup(
     config: &RecursiveSetupConfig<'_>,
     witness_tracker: &WitnessTracker,
 ) -> Result<RecursiveSetupResult> {
-    let family: HashFamily = config.hash.parse().map_err(anyhow::Error::msg)?;
+    let family = config.hash;
     let template = config.template;
     let template_str = template.as_str();
 
@@ -293,22 +253,11 @@ pub fn gen_recursive_setup(
         RecursiveTemplate::Recursive2 => format!("Airgroup '{}' recursive2", config.airgroup_name),
         _ => format!("Air '{}' {}", config.air_name, template_str),
     };
-    ctx.tools = Tools {
-        circom_exec: config.circom_exec.into(),
-        libs: vec![config.recurser_circuits_path.into(), config.circuits_gl_path.into()],
-        std_pil_path: config.std_pil_path.into(),
-        recurser_pil_path: config.recurser_pil_path.into(),
-        circom_helpers_dir: config.circom_helpers_dir.into(),
-    };
+    ctx.tools = config.tools.clone();
     ctx.witness = Some(witness_tracker.clone());
-    let const_root = if config.const_root.iter().all(|s| s.is_empty()) {
-        ["0".to_string(), "0".to_string(), "0".to_string(), "0".to_string()]
-    } else {
-        config.const_root.clone()
-    };
     ctx.verifiers = vec![VerifierInput {
         file: verifier_name,
-        const_root,
+        const_root: config.const_root.clone(),
         stark_info: config.stark_info.clone(),
         verifier_info: config.verifier_info.clone(),
     }];
@@ -322,7 +271,6 @@ pub fn gen_recursive_setup(
             airgroup_id: Some(config.airgroup_id),
             has_compressor: config.has_compressor,
             has_recursion: false,
-            is_final: false,
             agg_arity: config.agg_arity,
             batch_size: 1,
         },
@@ -335,17 +283,17 @@ pub fn gen_recursive_setup(
         ids: Some((config.airgroup_id, config.air_id)),
         ..Default::default()
     };
-    ctx.reuse_pil_info = config.existing_pil_info.clone();
+    ctx.reuse = config.reuse.cloned();
 
     let cfg = RecursiveCfg {
         template,
         family,
-        reuse: config.existing_pil_info.is_some(),
+        reuse: config.reuse.is_some(),
         has_compressor: config.has_compressor,
         multi_air: multi_air(config.global_info),
         domain_bits: config
             .recursive_n_bits
-            .unwrap_or(proofman_common::hash_family::recursive_bits_threshold(config.hash)),
+            .unwrap_or(proofman_common::hash_family::recursive_bits_threshold(family.as_str())),
         agg_arity: config.agg_arity,
         airgroup_name: config.airgroup_name.to_string(),
         air_name: config.air_name.to_string(),
@@ -353,12 +301,10 @@ pub fn gen_recursive_setup(
     pipeline::run(&kinds::steps_for_recursive(&cfg), &mut ctx)?;
 
     let plonk = ctx.plonk.take().context("no plonk2pil result")?;
-    let (si, vi, ei) = ctx.pil_info.take().context("no starkinfo")?;
+    let pil_info = ctx.pil_info.take().context("no starkinfo")?;
     Ok(RecursiveSetupResult {
         const_root: ctx.const_root.context("no const root")?,
-        stark_info: Some(si),
-        verifier_info: Some(vi),
-        expressions_info: Some(ei),
+        setup: ReusedSetup { pil_info, constraints: ctx.constraints.context("no constraints digest")? },
         n_bits: plonk.n_bits,
         batch_size: ctx.batch_size,
     })
@@ -460,7 +406,7 @@ pub(crate) fn check_compressor(cfg: &RecursiveCfg, ctx: &mut PipelineCtx) -> Res
         return Err(anyhow::Error::new(NeedsCompressorError { n_bits: p.n_bits }));
     }
     // Unreconcilable: a compressor is already applied, the batch is 1, and a floor only pads up.
-    if cfg.template != RecursiveTemplate::Compressor && p.n_bits > cfg.domain_bits {
+    if cfg.template != RecursiveTemplate::Compressor {
         let why = if cfg.has_compressor {
             "this air already has a compressor and is still too big, so the compressor is not \
              the answer here: either raise the pin, or take rows out of the air."
@@ -470,14 +416,18 @@ pub(crate) fn check_compressor(cfg: &RecursiveCfg, ctx: &mut PipelineCtx) -> Res
              outside the blake3 bands are the slack, since a band leaves the plonk columns free \
              on all but its first LANES rows."
         };
-        bail!("{} compiles to 2^{} rows but must be 2^{}: {}", ctx.circuit, p.n_bits, cfg.domain_bits, why);
+        kinds::ensure_within_floor(&ctx.circuit, p.n_bits, cfg.domain_bits, why)?;
     }
     Ok(())
 }
 
 /// recursive2's `vks.json`: the recursive1 roots it accepts and its own.
 pub(crate) fn write_vks_json(_cfg: &RecursiveCfg, ctx: &mut PipelineCtx) -> Result<()> {
-    let r1_vks = ctx.circuit_input.as_ref().and_then(|c| c.basic_vk.first().cloned()).unwrap_or_default();
+    let r1_vks = ctx
+        .circuit_input
+        .as_ref()
+        .and_then(|c| c.basic_vk.first())
+        .context("recursive2 without its recursive1 roots")?;
     let root = ctx.const_root.context("vks.json before the const tree")?;
     let num = |v: &String| v.parse::<u64>().map(Value::from).unwrap_or_else(|_| Value::String(v.clone()));
     let vks = serde_json::json!({
@@ -531,12 +481,7 @@ fn get_global_name(global_info: &Value) -> String {
     global_info.get("name").and_then(|v| v.as_str()).unwrap_or("pilout").to_string()
 }
 
-/// Compile PIL source by spawning `pil2com` (JS compiler) as a subprocess.
-/// Install pil2com: `npm install` (reads package.json in the setup crate).
-///
-/// Thin wrapper around [`crate::commands::compile_pil::run_compile_pil`] so
-/// that the recursive setup pipeline and the public CLI command share a
-/// single implementation.
+/// Compile PIL source with `pil2com` ([`crate::commands::compile_pil::run_compile_pil`]).
 pub fn compile_pil(pil_path: &str, output_path: &str, std_pil_path: &str, recurser_pil_path: &str) -> Result<()> {
     use crate::commands::compile_pil::{run_compile_pil, CompilePilOptions};
     let opts = CompilePilOptions {
@@ -546,134 +491,6 @@ pub fn compile_pil(pil_path: &str, output_path: &str, std_pil_path: &str, recurs
         ..Default::default()
     };
     run_compile_pil(&opts)
-}
-
-/// Locate an already-installed `pil2com`, checking (in order):
-///   1. `PIL2C_EXEC` environment variable
-///   2. The setup crate's own dir (compile-time baked) — covers consumers that
-///      use proofman as a path/git dependency from another workspace
-///   3. `node_modules/.bin/pil2com` relative to cwd
-///   4. Walk up from the executable's location to find `node_modules/.bin/pil2com`
-///   5. Global install: `pil2com` on PATH
-///
-/// Pure lookup — installs nothing. [`ensure_pil2com_exec`] is the entry point
-/// that bootstraps when every step here misses.
-fn resolve_pil2com_exec() -> Option<String> {
-    if let Ok(path) = std::env::var("PIL2C_EXEC") {
-        if Path::new(&path).is_file() {
-            return Some(path);
-        }
-    }
-    // npm install in the setup crate dir (this crate sits at <root>/setup/pil2-stark)
-    const CRATE_ROOT: &str = env!("CARGO_MANIFEST_DIR");
-    let baked = Path::new(CRATE_ROOT).join("node_modules/.bin/pil2com");
-    if baked.is_file() {
-        if let Ok(abs) = baked.canonicalize() {
-            return abs.to_str().map(|s| s.to_string());
-        }
-    }
-    // Local npm install (preferred)
-    let local_npm = Path::new("node_modules/.bin/pil2com");
-    if local_npm.is_file() {
-        if let Ok(abs) = local_npm.canonicalize() {
-            return abs.to_str().map(|s| s.to_string());
-        }
-    }
-    // Walk up from the executable's location
-    if let Ok(exe) = std::env::current_exe() {
-        let mut dir = exe.parent();
-        while let Some(d) = dir {
-            let candidate = d.join("node_modules/.bin/pil2com");
-            if candidate.is_file() {
-                if let Ok(abs) = candidate.canonicalize() {
-                    return abs.to_str().map(|s| s.to_string());
-                }
-            }
-            dir = d.parent();
-        }
-    }
-    // Global install on PATH
-    which::which("pil2com").ok().map(|p| p.to_string_lossy().into_owned())
-}
-
-/// [`resolve_pil2com_exec`], but self-bootstrapping: when pil2com is missing,
-/// install the Node deps (see [`crate::proving_key::node_deps`]) and use the
-/// root it reports. Setup owns making its own tooling available — callers
-/// (SDK, worker, CLI, tests) shouldn't each carry an npm bootstrap.
-///
-/// Bootstrapping through `node_deps` rather than npm-installing this crate's
-/// directory directly is what makes this work for a published consumer: a
-/// registry checkout is read-only, and `node_deps` falls back to a user-cache
-/// root seeded from the embedded `package.json`. The snarkjs/circomlib
-/// bootstrap in [`ensure_node_module_subpath`] goes through the same helper.
-///
-/// The result is memoized: a recursive setup calls this once per air (and again
-/// per compressor attempt), and neither the PATH scan nor a failed bootstrap
-/// gets cheaper by being repeated.
-pub(crate) fn ensure_pil2com_exec() -> Option<String> {
-    static PIL2COM_EXEC: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
-    PIL2COM_EXEC.get_or_init(|| resolve_pil2com_exec().or_else(|| bootstrapped_node_path(".bin/pil2com"))).clone()
-}
-
-/// Install the Node deps if needed and return the absolute path to `probe`
-/// (a path relative to `node_modules`), or `None` if the bootstrap failed.
-fn bootstrapped_node_path(probe: &str) -> Option<String> {
-    let root = crate::proving_key::node_deps::ensure_node_deps(probe)?;
-    let path = root.join("node_modules").join(probe);
-    path.canonicalize().ok().map(|p| p.to_string_lossy().into_owned())
-}
-
-/// Resolve a path inside `node_modules/<package>/<sub_path>`, with an env-var override.
-/// Search order:
-///   1. Env var override
-///   2. `<setup-crate-dir>/node_modules/<package>/<sub_path>` (compile-time baked)
-///   3. CWD-relative `node_modules/<package>/<sub_path>`
-///   4. Walk up from the running executable
-fn find_node_module_subpath(env_var: &str, package: &str, sub_path: &str) -> Option<String> {
-    if let Ok(v) = std::env::var(env_var) {
-        if !v.is_empty() {
-            return Some(v);
-        }
-    }
-    // Compile-time path to the setup crate dir (where node_modules lives).
-    const CRATE_ROOT: &str = env!("CARGO_MANIFEST_DIR");
-    let baked = std::path::Path::new(CRATE_ROOT).join("node_modules").join(package).join(sub_path);
-    if baked.is_dir() {
-        if let Ok(abs) = baked.canonicalize() {
-            return Some(abs.to_string_lossy().into_owned());
-        }
-    }
-    let rel = PathBuf::from("node_modules").join(package).join(sub_path);
-    if rel.is_dir() {
-        if let Ok(abs) = rel.canonicalize() {
-            return Some(abs.to_string_lossy().into_owned());
-        }
-    }
-    if let Ok(exe) = std::env::current_exe() {
-        let mut dir = exe.parent();
-        while let Some(d) = dir {
-            let candidate = d.join("node_modules").join(package).join(sub_path);
-            if candidate.is_dir() {
-                if let Ok(abs) = candidate.canonicalize() {
-                    return Some(abs.to_string_lossy().into_owned());
-                }
-            }
-            dir = d.parent();
-        }
-    }
-    None
-}
-
-/// [`find_node_module_subpath`], but self-bootstrapping: when the package is
-/// missing, install the Node deps (see [`crate::proving_key::node_deps`]) and
-/// look again. Falls back to the literal relative path so callers keep getting
-/// a usable-for-error-messages string even when bootstrap is impossible.
-pub(crate) fn ensure_node_module_subpath(env_var: &str, package: &str, sub_path: &str) -> String {
-    if let Some(p) = find_node_module_subpath(env_var, package, sub_path) {
-        return p;
-    }
-    let probe = format!("{package}/{sub_path}");
-    bootstrapped_node_path(&probe).unwrap_or_else(|| format!("node_modules/{probe}"))
 }
 
 #[cfg(test)]

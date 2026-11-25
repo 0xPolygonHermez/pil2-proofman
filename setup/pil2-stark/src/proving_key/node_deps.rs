@@ -114,6 +114,46 @@ pub(crate) fn ensure_node_deps(probe: &str) -> Option<PathBuf> {
     ensure_cache_deps(&cache, EMBEDDED_PACKAGE_JSON, "npm", probe)
 }
 
+/// `node_modules/<rel>` in this crate's dir (baked at compile time, for consumers using proofman as
+/// a path/git dependency), the cwd, or an ancestor of the running executable. Installs nothing.
+fn find_node_path(rel: &str) -> Option<String> {
+    let rel = Path::new("node_modules").join(rel);
+    let exe = std::env::current_exe().ok();
+    let mut dirs = vec![PathBuf::from(env!("CARGO_MANIFEST_DIR")), PathBuf::new()];
+    dirs.extend(exe.iter().flat_map(|e| e.ancestors().skip(1)).map(Path::to_path_buf));
+    dirs.into_iter()
+        .map(|d| d.join(&rel))
+        .find(|p| p.exists())
+        .and_then(|p| p.canonicalize().ok())
+        .map(|p| p.to_string_lossy().into_owned())
+}
+
+/// `env_var` (verbatim) or [`find_node_path`], else the Node deps installed ([`ensure_node_deps`]).
+pub(crate) fn ensure_node_path(env_var: Option<&str>, rel: &str) -> Option<String> {
+    env_var.and_then(|k| std::env::var(k).ok()).filter(|v| !v.is_empty()).or_else(|| find_node_path(rel)).or_else(
+        || {
+            let p = ensure_node_deps(rel)?.join("node_modules").join(rel).canonicalize().ok()?;
+            Some(p.to_string_lossy().into_owned())
+        },
+    )
+}
+
+/// The `pil2com` executable: `PIL2C_EXEC`, an npm install, `pil2com` on PATH, else the Node deps
+/// installed. Memoized: a recursive setup asks once per air and compressor attempt.
+pub(crate) fn ensure_pil2com_exec() -> Option<String> {
+    static PIL2COM_EXEC: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+    PIL2COM_EXEC
+        .get_or_init(|| {
+            std::env::var("PIL2C_EXEC")
+                .ok()
+                .filter(|p| Path::new(p).is_file())
+                .or_else(|| find_node_path(".bin/pil2com"))
+                .or_else(|| which::which("pil2com").ok().map(|p| p.to_string_lossy().into_owned()))
+                .or_else(|| ensure_node_path(None, ".bin/pil2com"))
+        })
+        .clone()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

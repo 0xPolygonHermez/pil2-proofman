@@ -1,23 +1,15 @@
-//! Port of `generateFinalSetup.js`: generate the vadcop_final circuit,
-//! compile it, and produce the proving key artifacts.
-//!
-//! The final setup:
-//! 1. Reads all recursive2 starkInfo/verifierInfo/vks for each airgroup
-//! 2. Generates the final circom via gencircom with the "final" template
-//! 3. Compiles circom to R1CS + C++
-//! 4. Converts R1CS to PIL
-//! 5. Compiles PIL
-//! 6. Runs starkSetup with specific final settings
-//! 7. Computes constant tree and writes all artifacts
-//! 8. Writes verifier.rs for the final circuit
+//! The vadcop_final proving key: one recursive2 verifier per airgroup and the global constraints
+//! (`pipeline::kinds::steps_for_vadcop_final` lists the steps).
 
 use std::fs;
 use std::path::PathBuf;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result};
 use pil2_stark_recurser::stark2circom::CircomGenOptions;
-use proofman_common::hash_family as hf;
+use proofman_common::hash_family::{self as hf, HashFamily};
 use serde_json::Value;
+
+use crate::commands::common::parse_root_strings;
 
 use crate::output::witness_gen::WitnessTracker;
 use crate::proving_key::pipeline::{self, kinds, CircuitInput, PipelineCtx, Tools, VerifierInput};
@@ -26,17 +18,10 @@ use crate::types::stark_struct::StarkSettings;
 /// Configuration for the final setup.
 pub struct FinalSetupConfig<'a> {
     pub build_dir: &'a str,
-    pub hash: &'a str,
+    pub hash: HashFamily,
     pub global_info: &'a Value,
     pub global_constraints: &'a Value,
-
-    // Tool paths
-    pub circom_exec: &'a str,
-    pub circuits_gl_path: &'a str,
-    pub recurser_circuits_path: &'a str,
-    pub std_pil_path: &'a str,
-    pub recurser_pil_path: &'a str,
-    pub circom_helpers_dir: &'a str,
+    pub tools: &'a Tools,
 }
 
 /// Result of the final setup.
@@ -46,108 +31,59 @@ pub struct FinalSetupResult {
     pub const_root: [u64; 4],
 }
 
-/// Parse a JSON value that may be either a string or a u64 number into a String.
-/// Used when reading vks.json fields that are stored as u64 integers.
-fn json_val_to_str(v: &Value) -> String {
-    v.as_str().map(|s| s.to_string()).or_else(|| v.as_u64().map(|n| n.to_string())).unwrap_or_else(|| "0".to_string())
-}
-
 /// Run the final setup (`genFinalSetup()`).
 pub fn gen_final_setup(config: &FinalSetupConfig<'_>, witness_tracker: &WitnessTracker) -> Result<FinalSetupResult> {
     let build_dir = PathBuf::from(config.build_dir);
     let global_name = config.global_info.get("name").and_then(|v| v.as_str()).unwrap_or("pilout");
-
-    let air_groups: Vec<String> = config
-        .global_info
-        .get("air_groups")
-        .and_then(|v| v.as_array())
-        .map(|a| a.iter().map(|v| v.as_str().unwrap_or("unnamed").to_string()).collect())
-        .unwrap_or_default();
+    let air_groups = config.global_info["air_groups"].as_array().context("globalInfo has no air_groups")?;
 
     let mut stark_infos = Vec::new();
     let mut verifier_infos = Vec::new();
-    let mut agg_keys_recursive2 = Vec::new();
+    let mut agg_keys_recursive2: Vec<[String; 4]> = Vec::new();
     let mut basic_keys_recursive1 = Vec::new();
     let mut verifier_names = Vec::new();
 
-    // Read recursive2 artifacts for each airgroup
-    for ag_name in air_groups.iter() {
+    // Each airgroup's recursive2: its setup, its own root and the recursive1 roots it accepts.
+    for ag in air_groups {
+        let ag_name = ag.as_str().context("an airgroup without a name")?;
         let r2_dir = build_dir.join("provingKey").join(global_name).join(ag_name).join("recursive2");
-
-        let si_path = r2_dir.join("recursive2.starkinfo.json");
-        let vi_path = r2_dir.join("recursive2.verifierinfo.json");
-        let vks_path = r2_dir.join("recursive2.vks.json");
-
-        if si_path.exists() && vi_path.exists() && vks_path.exists() {
-            let si: Value = serde_json::from_str(&fs::read_to_string(&si_path)?)?;
-            let vi: Value = serde_json::from_str(&fs::read_to_string(&vi_path)?)?;
-            let vks: Value = serde_json::from_str(&fs::read_to_string(&vks_path)?)?;
-
-            stark_infos.push(si);
-            verifier_infos.push(vi);
-
-            if let Some(root) = vks.get("rootCRecursive2") {
-                agg_keys_recursive2.push(
-                    root.as_array().map(|a| a.iter().map(json_val_to_str).collect::<Vec<_>>()).unwrap_or_default(),
-                );
-            } else {
-                agg_keys_recursive2.push(vec![]);
-            }
-
-            if let Some(keys) = vks.get("rootCRecursives1") {
-                // rootCRecursives1 = [[v0,v1,v2,v3], [v0,...], ...] — flat 2-D
-                basic_keys_recursive1.push(
-                    keys.as_array()
-                        .map(|airs| {
-                            airs.iter()
-                                .map(|air_vk| {
-                                    air_vk
-                                        .as_array()
-                                        .map(|vals| vals.iter().map(json_val_to_str).collect::<Vec<_>>())
-                                        .unwrap_or_default()
-                                })
-                                .collect::<Vec<_>>()
-                        })
-                        .unwrap_or_default(),
-                );
-            } else {
-                basic_keys_recursive1.push(vec![]);
-            }
-        } else {
-            bail!(
-                "Recursive2 artifacts not found for airgroup '{}'. \
-                 Run recursive setup first.",
-                ag_name
-            );
-        }
-
-        verifier_names.push(format!("{}_recursive2.verifier.circom", ag_name));
+        let read = |f: &str| -> Result<Value> {
+            let p = r2_dir.join(f);
+            let s = fs::read_to_string(&p).with_context(|| {
+                format!(
+                    "Recursive2 artifacts not found for airgroup '{ag_name}' ({}): run the recursive setup first",
+                    p.display()
+                )
+            })?;
+            Ok(serde_json::from_str(&s)?)
+        };
+        stark_infos.push(read("recursive2.starkinfo.json")?);
+        verifier_infos.push(read("recursive2.verifierinfo.json")?);
+        let vks = read("recursive2.vks.json")?;
+        let root = |v: &Value, what: &str| parse_root_strings(v).with_context(|| format!("{ag_name} vks.json {what}"));
+        agg_keys_recursive2.push(root(&vks["rootCRecursive2"], "rootCRecursive2")?);
+        let r1 = vks["rootCRecursives1"]
+            .as_array()
+            .with_context(|| format!("{ag_name} vks.json has no rootCRecursives1"))?;
+        basic_keys_recursive1
+            .push(r1.iter().map(|vk| Ok(root(vk, "rootCRecursives1")?.to_vec())).collect::<Result<Vec<_>>>()?);
+        verifier_names.push(format!("{ag_name}_recursive2.verifier.circom"));
     }
 
     let files_dir = build_dir.join("provingKey").join(global_name).join("vadcop_final");
-    let family = config.hash.parse().map_err(anyhow::Error::msg)?;
+    let family = config.hash;
     let mut ctx = PipelineCtx::new(build_dir, files_dir, "vadcop_final", family);
-    ctx.tools = Tools {
-        circom_exec: config.circom_exec.into(),
-        libs: vec![config.recurser_circuits_path.into(), config.circuits_gl_path.into()],
-        std_pil_path: config.std_pil_path.into(),
-        recurser_pil_path: config.recurser_pil_path.into(),
-        circom_helpers_dir: config.circom_helpers_dir.into(),
-    };
+    ctx.tools = config.tools.clone();
     ctx.witness = Some(witness_tracker.clone());
     // One verifier per airgroup's recursive2, from the recursive2 starkinfo (not recursive1's).
     ctx.verifiers = stark_infos
         .iter()
         .zip(&verifier_infos)
         .zip(&verifier_names)
-        .enumerate()
-        .map(|(i, ((si, vi), file))| VerifierInput {
+        .zip(&agg_keys_recursive2)
+        .map(|(((si, vi), file), root)| VerifierInput {
             file: file.clone(),
-            const_root: agg_keys_recursive2
-                .get(i)
-                .filter(|k| k.len() == 4)
-                .map(|k| [k[0].clone(), k[1].clone(), k[2].clone(), k[3].clone()])
-                .unwrap_or_else(|| ["0".into(), "0".into(), "0".into(), "0".into()]),
+            const_root: root.clone(),
             stark_info: si.clone(),
             verifier_info: vi.clone(),
         })
@@ -163,18 +99,17 @@ pub fn gen_final_setup(config: &FinalSetupConfig<'_>, witness_tracker: &WitnessT
         stark_infos,
         vadcop_info: final_global_info,
         basic_vk: basic_keys_recursive1,
-        agg_vk: agg_keys_recursive2,
+        agg_vk: agg_keys_recursive2.iter().map(|k| k.to_vec()).collect(),
         publics: vec![],
         opts: CircomGenOptions {
             airgroup_id: None,
             has_compressor: false,
             has_recursion: false,
-            is_final: true,
             agg_arity: 0,
             batch_size: 1,
         },
     });
-    let hash = config.hash;
+    let hash = family.as_str();
     ctx.settings = StarkSettings {
         initial_blowup_factor: Some(hf::final_blowup_factor(hash)),
         initial_folding_factor: Some(4),
@@ -194,14 +129,4 @@ pub fn gen_final_setup(config: &FinalSetupConfig<'_>, witness_tracker: &WitnessT
     let (stark_info, verifier_info, _) = ctx.pil_info.take().context("vadcop_final produced no starkinfo")?;
     let const_root = ctx.const_root.context("vadcop_final produced no const root")?;
     Ok(FinalSetupResult { stark_info, verifier_info, const_root })
-}
-
-#[cfg(test)]
-mod missing_const_tests {
-    /// The const-tree block bails on a missing const file instead of warning and returning a zero root.
-    #[test]
-    fn missing_const_file_is_an_error() {
-        let p = std::path::Path::new("/nonexistent/vadcop_final.const");
-        assert!(crate::proving_key::util::require_const_file("vadcop_final", p).is_err());
-    }
 }

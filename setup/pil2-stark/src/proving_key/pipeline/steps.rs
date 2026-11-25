@@ -8,7 +8,7 @@ use anyhow::{bail, Context, Result};
 use pil2_pilout::pilout_proxy::PilOutProxy;
 use pil2_stark_recurser::plonk2pil::{self, r1cs_types::PlonkOptions};
 use pil2_stark_recurser::stark2circom::{
-    gen_circom_circuit, gen_stark_verifier, gen_stark_verifier_bn128_blake3, GenCircomCircuitInput,
+    gen_circom_circuit, gen_stark_verifier, gen_stark_verifier_bn128_blake3, CircuitTemplate, GenCircomCircuitInput,
     StarkVerifierOptions,
 };
 use serde_json::Value;
@@ -20,7 +20,7 @@ use crate::proving_key::util::{exact_log2, require_const_file};
 use crate::proving_key::{bctree, recursive::compile_pil};
 use crate::types::stark_info::{ExpressionsInfo, StarkInfo, VerifierInfo};
 
-/// circom optimisation level, a per-kind builder parameter (owner question 1).
+/// circom optimisation level, a per-kind builder parameter.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CircomOpt {
     O1,
@@ -81,12 +81,21 @@ pub enum ConstSource {
 
 pub type CustomFn = Box<dyn Fn(&mut PipelineCtx) -> Result<()>>;
 
+/// The field circom compiles over.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Prime {
+    Goldilocks,
+    /// The final SNARK's circuit, which also gets its `--inspect` checks and a wasm witness.
+    Bn128,
+}
+
 pub enum Step {
     /// verifier circom(s), circuit circom (None: `ctx.circom_file` as is), `circom` compile, copy `.dat`.
     CircomPrologue {
         verifier: Option<VerifierGen>,
-        circom_template: Option<&'static str>,
+        circom_template: Option<CircuitTemplate>,
         opt: CircomOpt,
+        prime: Prime,
     },
     /// Background build of the compiled circuit's witness library.
     WitnessLib,
@@ -98,8 +107,9 @@ pub enum Step {
         source: ConstSource,
     },
     CompilePil,
-    /// pil_info (or `reuse` of `ctx.reuse_pil_info`), starkinfo/verifierinfo/expressionsinfo JSON, `.bin`,
-    /// plonk `.const`; `starkinfo_only` (recursive1) writes just the starkinfo the const tree reads.
+    /// pil_info (or `reuse` of `ctx.reuse`), starkinfo/verifierinfo/expressionsinfo JSON, `.bin`,
+    /// plonk `.const`; `starkinfo_only` (recursive1) writes just the starkinfo the const tree reads,
+    /// which the const tree then removes.
     StarkTail {
         reuse: bool,
         starkinfo_only: bool,
@@ -109,6 +119,8 @@ pub enum Step {
         required: bool,
     },
     WriteVerifierRs,
+    /// Waits for the background witness library builds.
+    WitnessWait,
     Custom {
         name: &'static str,
         run: CustomFn,
@@ -118,8 +130,8 @@ pub enum Step {
 impl Step {
     pub fn run(&self, ctx: &mut PipelineCtx) -> Result<()> {
         match self {
-            Step::CircomPrologue { verifier, circom_template, opt } => {
-                circom_prologue(ctx, verifier.as_ref(), *circom_template, *opt)
+            Step::CircomPrologue { verifier, circom_template, opt, prime } => {
+                circom_prologue(ctx, verifier.as_ref(), *circom_template, *opt, *prime)
             }
             Step::WitnessLib => {
                 let w = ctx.witness.as_ref().context("no witness tracker")?;
@@ -175,10 +187,10 @@ impl Step {
                     path_str(&ctx.file("verifier.rs"))?,
                     &StarkInfo::from_json(si)?,
                     &VerifierInfo::from_json(vi)?,
-                    true,
                     ctx.hash(),
                 )
             }
+            Step::WitnessWait => ctx.witness.as_ref().map_or(Ok(()), |w| w.await_all()),
             Step::Custom { run, .. } => run(ctx),
         }
     }
@@ -189,9 +201,13 @@ pub(super) fn path_str(p: &Path) -> Result<&str> {
 }
 
 /// The argument list of the `circom` invocation (no process spawned).
-pub fn circom_args(opt: CircomOpt, prime: &str, libs: &[String], circom_file: &Path, out_dir: &Path) -> Vec<String> {
+pub fn circom_args(opt: CircomOpt, prime: Prime, libs: &[String], circom_file: &Path, out_dir: &Path) -> Vec<String> {
+    let field = match prime {
+        Prime::Goldilocks => &["--prime", "goldilocks"][..],
+        Prime::Bn128 => &["--prime", "bn128", "--inspect", "--wasm"][..],
+    };
     let mut a: Vec<String> =
-        [opt.flag(), "--r1cs", "--prime", prime, "--c", "--verbose"].iter().map(|s| s.to_string()).collect();
+        [opt.flag(), "--r1cs"].iter().chain(field).chain(&["--c", "--verbose"]).map(|s| s.to_string()).collect();
     for l in libs {
         a.extend(["-l".to_string(), l.clone()]);
     }
@@ -199,25 +215,12 @@ pub fn circom_args(opt: CircomOpt, prime: &str, libs: &[String], circom_file: &P
     a
 }
 
-/// The error of a failed `circom` run; names the circuit.
-pub fn circom_failure(name: &str, stderr: &str) -> anyhow::Error {
-    anyhow::anyhow!("Circom compilation failed for {name}: {stderr}")
-}
-
-/// File names (relative to the files dir) the STARK tail + const tree write for circuit `name`.
-#[cfg(test)]
-pub fn tail_output_files(name: &str, _reuse: bool) -> Vec<String> {
-    ["starkinfo.json", "verifierinfo.json", "expressionsinfo.json", "bin", "const", "verkey.json", "verkey.bin"]
-        .iter()
-        .map(|e| format!("{name}.{e}"))
-        .collect()
-}
-
 fn circom_prologue(
     ctx: &mut PipelineCtx,
     verifier: Option<&VerifierGen>,
-    template: Option<&'static str>,
+    template: Option<CircuitTemplate>,
     opt: CircomOpt,
+    prime: Prime,
 ) -> Result<()> {
     let circom_dir = ctx.build_dir.join("circom");
     let build = ctx.build_dir.join("build");
@@ -236,13 +239,13 @@ fn circom_prologue(
         }
     }
     let circom_file = match template {
-        Some(template_name) => {
+        Some(template) => {
             let input = ctx.circuit_input.as_ref().context("circuit circom without its input")?;
             let mut options = input.opts.clone();
             options.batch_size = ctx.batch_size.max(1);
             let verifier_filenames: Vec<String> = ctx.verifiers.iter().map(|v| v.file.clone()).collect();
             let src = gen_circom_circuit(&GenCircomCircuitInput {
-                template_name,
+                template,
                 stark_infos: &input.stark_infos,
                 vadcop_info: &input.vadcop_info,
                 verifier_filenames: &verifier_filenames,
@@ -262,11 +265,11 @@ fn circom_prologue(
 
     tracing::info!("Compiling {stem}...");
     let out = std::process::Command::new(&ctx.tools.circom_exec)
-        .args(circom_args(opt, "goldilocks", &ctx.tools.libs, &circom_file, &build))
+        .args(circom_args(opt, prime, &ctx.tools.libs, &circom_file, &build))
         .output()
         .with_context(|| format!("Failed to execute circom for {stem}"))?;
     if !out.status.success() {
-        return Err(circom_failure(&stem, &String::from_utf8_lossy(&out.stderr)));
+        bail!("Circom compilation failed for {stem}: {}", String::from_utf8_lossy(&out.stderr));
     }
     let dat = build.join(format!("{stem}_cpp")).join(format!("{stem}.dat"));
     if dat.exists() {
@@ -290,9 +293,7 @@ fn write_plonk_fixed(ctx: &mut PipelineCtx) -> Result<()> {
         &fixed_info,
     )?;
     fs::write(ctx.build_dir.join("pil").join(format!("{}.pil", ctx.circuit)), &p.pil_str)?;
-    let exec: Vec<u8> = p.exec.iter().flat_map(|v| v.to_le_bytes()).collect();
-    fs::write(ctx.file("exec"), exec)?;
-    Ok(())
+    write_exec(&ctx.file("exec"), &p.exec)
 }
 
 /// A basic air's `.const`: `fixed_file` when it exists, else the pilout's inline columns. An air
@@ -358,11 +359,16 @@ fn stark_tail(ctx: &mut PipelineCtx, reuse: bool, starkinfo_only: bool) -> Resul
     let air = &pilout.air_groups[ag].airs[ai];
     let starkinfo_path = ctx.file("starkinfo.json");
 
+    let constraints = constraint_digest(air);
     if reuse {
-        let (si, vi, ei) = ctx.reuse_pil_info.clone().context("StarkTail { reuse } without a setup to reuse")?;
+        let r = ctx.reuse.clone().context("StarkTail { reuse } without a setup to reuse")?;
+        // The reused starkinfo encodes another air's constraints: they must be this one's.
+        if r.constraints != constraints {
+            bail!("{}: its constraints differ from those of the setup it reuses", ctx.label);
+        }
+        let (si, vi, ei) = r.pil_info;
         let si_loaded = StarkInfo::from_json(&si)?;
         tracing::info!("{} low-degree test (reused): {}", ctx.label, si_loaded.stark_struct.low_degree_test.describe());
-        // The reused setup assumes every air's circuit has the same shape.
         let plonk_n_bits = ctx.plonk()?.n_bits;
         if si_loaded.stark_struct.n_bits != plonk_n_bits {
             bail!(
@@ -379,7 +385,6 @@ fn stark_tail(ctx: &mut PipelineCtx, reuse: bool, starkinfo_only: bool) -> Resul
             fs::write(ctx.file("expressionsinfo.json"), to_json_string(&ei)?)?;
             write_bin(ctx, &si_loaded, &ExpressionsInfo::from_json(&ei)?)?;
         }
-        ctx.n_bits = Some(si_loaded.stark_struct.n_bits);
         ctx.pil_info = Some((si, vi, ei));
     } else {
         let stark_struct = match ctx.stark_struct.clone() {
@@ -405,10 +410,12 @@ fn stark_tail(ctx: &mut PipelineCtx, reuse: bool, starkinfo_only: bool) -> Resul
             fs::write(ctx.file("expressionsinfo.json"), to_json_string(ei_code)?)?;
             write_bin(ctx, &StarkInfo::from_json(&si)?, &ExpressionsInfo::try_from(ei_code)?)?;
         }
-        ctx.n_bits = Some(stark_struct.n_bits);
         ctx.pil_info = Some((si, serde_json::to_value(vi_code)?, serde_json::to_value(ei_code)?));
         ctx.stats = Some((r.summary, r.im_pols_info));
     }
+
+    ctx.constraints = Some(constraints);
+    ctx.temp_starkinfo = starkinfo_only;
 
     // pil_info fixes nConstants, which may exceed plonk2pil's columns: the pilout fills the rest.
     if let Some(p) = &ctx.plonk {
@@ -438,10 +445,37 @@ fn const_tree(ctx: &mut PipelineCtx, required: bool) -> Result<()> {
         path_str(&ctx.file("starkinfo.json"))?,
         path_str(&ctx.file("verkey.json"))?,
     )?;
-    let bin: Vec<u8> = root.iter().flat_map(|v| v.to_le_bytes()).collect();
-    fs::write(ctx.file("verkey.bin"), bin)?;
+    write_exec(&ctx.file("verkey.bin"), &root)?;
+    if ctx.temp_starkinfo {
+        // recursive1 keeps its starkinfo only for the const tree (it reuses the first air's).
+        fs::remove_file(ctx.file("starkinfo.json"))?;
+    }
     ctx.const_root = Some(root);
     Ok(())
+}
+
+/// `words` little-endian, as the exec and verkey.bin files hold them.
+pub(crate) fn write_exec(path: &Path, words: &[u64]) -> Result<()> {
+    let bytes: Vec<u8> = words.iter().flat_map(|v| v.to_le_bytes()).collect();
+    fs::write(path, bytes).with_context(|| format!("writing {}", path.display()))
+}
+
+/// A digest of the air's constraint system: what a reused starkinfo encodes (fixed values excluded).
+fn constraint_digest(air: &pil2_pilout::pilout::Air) -> u64 {
+    use prost::Message;
+    use std::hash::{Hash, Hasher};
+    let shape = pil2_pilout::pilout::Air {
+        num_rows: air.num_rows,
+        stage_widths: air.stage_widths.clone(),
+        expressions: air.expressions.clone(),
+        constraints: air.constraints.clone(),
+        air_values: air.air_values.clone(),
+        custom_commits: air.custom_commits.clone(),
+        ..Default::default()
+    };
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    (air.fixed_cols.len(), shape.encode_to_vec()).hash(&mut h);
+    h.finish()
 }
 
 #[cfg(test)]
@@ -449,49 +483,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn circom_args_o1_and_o2_differ_only_in_the_opt_flag() {
+    fn circom_args_carry_the_level_the_field_and_the_libs() {
         let libs = vec!["/l1".to_string(), "/l2".to_string()];
-        let a = circom_args(CircomOpt::O1, "goldilocks", &libs, Path::new("c.circom"), Path::new("/o"));
-        let b = circom_args(CircomOpt::O2, "goldilocks", &libs, Path::new("c.circom"), Path::new("/o"));
+        let a = circom_args(CircomOpt::O1, Prime::Goldilocks, &libs, Path::new("c.circom"), Path::new("/o"));
+        let b = circom_args(CircomOpt::O2, Prime::Goldilocks, &libs, Path::new("c.circom"), Path::new("/o"));
         assert!(a.contains(&"--O1".to_string()) && !a.contains(&"--O2".to_string()), "{a:?}");
         assert!(b.contains(&"--O2".to_string()) && !b.contains(&"--O1".to_string()), "{b:?}");
-        assert_eq!(
-            a.iter().filter(|s| !s.starts_with("--O")).collect::<Vec<_>>(),
-            b.iter().filter(|s| !s.starts_with("--O")).collect::<Vec<_>>()
-        );
-    }
-
-    #[test]
-    fn circom_args_keep_the_flags_every_copy_passes_today() {
-        let libs = vec!["/l1".to_string(), "/l2".to_string()];
-        let a = circom_args(CircomOpt::O1, "goldilocks", &libs, Path::new("c.circom"), Path::new("/o"));
         for f in ["--r1cs", "--c", "--prime", "goldilocks", "-l", "/l1", "/l2", "c.circom", "-o", "/o"] {
             assert!(a.contains(&f.to_string()), "missing {f}: {a:?}");
         }
-    }
-
-    #[test]
-    fn compile_failure_message_names_the_circuit() {
-        let m = circom_failure("vadcop_final", "boom on line 3").to_string();
-        assert!(m.contains("Circom compilation failed for vadcop_final") && m.contains("boom on line 3"), "{m}");
-    }
-
-    #[test]
-    fn stark_tail_writes_the_same_files_as_today() {
-        let files = tail_output_files("Compressor", false);
-        for ext in
-            ["starkinfo.json", "verifierinfo.json", "expressionsinfo.json", "const", "verkey.json", "verkey.bin", "bin"]
-        {
-            assert!(files.contains(&format!("Compressor.{ext}")), "missing Compressor.{ext}: {files:?}");
+        let f = circom_args(CircomOpt::O1, Prime::Bn128, &libs, Path::new("c.circom"), Path::new("/o"));
+        for x in ["bn128", "--inspect", "--wasm"] {
+            assert!(f.contains(&x.to_string()), "missing {x}: {f:?}");
         }
-    }
-
-    #[test]
-    fn reuse_and_fresh_tail_write_identical_files() {
-        let mut fresh = tail_output_files("Circ", false);
-        let mut reused = tail_output_files("Circ", true);
-        fresh.sort();
-        reused.sort();
-        assert_eq!(fresh, reused);
     }
 }

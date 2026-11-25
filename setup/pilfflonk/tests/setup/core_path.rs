@@ -1,12 +1,12 @@
 //! The setup on the core (`run_passes` -> `pil_info::shplonk_info`) through the real pipeline: every
 //! artefact of a key (pilfflonkinfo, unsealed vkey, verifierinfo, expressionsinfo, `<air>.bin`) is
-//! built and deterministic; qDeg counts the boundary degree; the old passes are not reached. That the
-//! keys prove and verify is `pilfflonk_prove` (cli, `--ignored`).
+//! built and deterministic. qDeg and the degenerate pilouts are pil-info's `shplonk_core` tests; that
+//! the keys prove and verify is `pilfflonk_prove` (cli, `--ignored`).
 
 use std::fs;
 
 use pil2_pilout::pilout::{self as pb, constraint, operand};
-use pil_info::PilInfoResult;
+use pil_info::ShplonkResult;
 use pilfflonk_setup::air_info::{air_setup, AirRef};
 use pilfflonk_setup::bytecode::write_air_bin;
 use pilfflonk_setup::global_info::global_info;
@@ -32,7 +32,7 @@ fn constraint_on(idx: u32, kind: &str) -> pb::Constraint {
 }
 
 /// Every artefact of the key the passes' result `r` feeds; (result, artefacts) or the setup's error.
-fn artefacts(pilout: &pb::PilOut, max_degree: u64) -> Result<(PilInfoResult, Artefacts), SetupError> {
+fn artefacts(pilout: &pb::PilOut, max_degree: u64) -> Result<(ShplonkResult, Artefacts), SetupError> {
     let air = validate(pilout)?;
     let r = run_passes(pilout, air, max_degree)?;
     let name = air.air.name.clone().unwrap_or_default();
@@ -93,42 +93,4 @@ fn a_pilout_with_im_pols_gives_deterministic_key_artefacts() {
     for max in [2, 3, 4] {
         assert_deterministic(&format!("im pols max {max}"), &p, max);
     }
-}
-
-/// A boundary off everyRow adds a degree (pilfflonk/docs/protocol.md#degree-search): `a·b` is qDeg 1
-/// everyRow, and 2 at firstRow when the degree bound (3) leaves it without an im pol.
-#[test]
-fn qdeg_has_the_boundary_degree_off_every_row() {
-    let q_deg = |kind: &str| {
-        let mut p = pilout();
-        the_air(&mut p).expressions = vec![mul(witness(0, 0), witness(1, 0))];
-        the_air(&mut p).constraints = vec![constraint_on(0, kind)];
-        let r = run_passes(&p, validate(&p).unwrap(), 3).unwrap();
-        (r.q_deg, r.setup.cm_pols_map.iter().filter(|s| s.im_pol).count())
-    };
-    assert_eq!(q_deg("everyRow"), (1, 0));
-    assert_eq!(q_deg("firstRow"), (1, 1), "im pol at degree 2 ties no im pol at degree 3 (qDeg 2)");
-}
-
-#[test]
-fn no_constraint_is_a_clear_error_and_first_row_only_sets_up() {
-    let _cpp = cpp_core();
-    let mut p = pilout();
-    the_air(&mut p).constraints = vec![];
-    let e = artefacts(&p, 4).err().expect("refused").to_string();
-    assert!(!e.is_empty() && !e.contains("not yet implemented"), "{e}");
-    let mut p = pilout();
-    the_air(&mut p).expressions = vec![sub(witness(0, 0), fixed(0))];
-    the_air(&mut p).constraints = vec![constraint_on(0, "firstRow")];
-    assert_eq!(run_passes(&p, validate(&p).unwrap(), 4).unwrap().q_deg, 1, "firstRow only");
-}
-
-/// The setup's entry runs the core, not the old passes.
-#[test]
-fn the_passes_are_the_core() {
-    let src = include_str!("../../src/passes.rs");
-    let start = src.find("pub fn run_passes").expect("run_passes");
-    let body = &src[start..];
-    let body = &body[..body.find("\n}\n").unwrap()];
-    assert!(body.contains("shplonk_info"));
 }

@@ -51,7 +51,7 @@ proofman-setup setup \
 
 Without `--recursive`, only the per-AIR artifacts are produced
 (`<airgroup>/airs/<air>/air/<air>.{starkinfo,verifierinfo,expressionsinfo,verkey}.json`,
-plus `.const`, `.consttree`, `.bin`, `.verifier.rs`).
+plus `.const`, `.verkey.bin` and `.bin`).
 
 With `--recursive`, the recursive layers are added under
 `<airgroup>/airs/<air>/{compressor,recursive1}/`,
@@ -189,51 +189,16 @@ Linux-built proving key).
 | Flag | Purpose |
 |---|---|
 | `-p, --proving-key` | Path to the `provingKey/` directory |
-| `-b, --build-dir` | Optional directory for intermediate `.circom`/`.cpp` files. Defaults to a tempdir that is removed when the command finishes |
-| `-j, --jobs` | Number of circom compiles to run in parallel (env: `REBUILD_JOBS`, default 1 = serial). Each circom invocation is single-threaded but RAM-hungry — size by available memory rather than CPU count. ~10–20 GB peak per large circuit |
+| `-s, --proving-key-snark` | Optional `provingKeySnark/` directory; its `recursivef` and `final` libraries are rebuilt too |
+| `-j, --jobs` | Libraries to build at once (env: `REBUILD_JOBS`, default: the CPU count). Each `make` is g++-bound, ~1–2 GB RAM |
 
 ### What it does
 
-For every circuit in `provingKey/<global_name>/...` that already has a witness
-library (`compressor`, `recursive1`, `recursive2`, `vadcop_final`,
-`vadcop_final_compressed`):
-
-1. Loads the persisted `*.starkinfo.json` / `*.verifierinfo.json` /
-   `*.verkey.json` from the proving key.
-2. Regenerates the verifier circom via `pil2circom` and the wrapper circom
-   via `gen_circom`.
-3. Runs `circom <name>.circom --c -O2 --prime goldilocks` to emit C++.
-4. Compiles the C++ into a shared library via the same `make witness` recipe
-   the original setup uses.
-
-No `.dat`, `.const`, `.consttree`, `.exec`, `.bin`, `.verifier.rs` files are
-touched.
-
-### Progress logging
-
-The command prints a discovery summary, then `[i/N]` progress lines for each
-circuit. Sample output for fibonacci-square (with `--jobs 1`):
-
-```
-Discovered 6 witness library(ies) to rebuild:
-  [1/6] compressor / FiboCPU.FibonacciSquare
-  [2/6] recursive1 / FiboCPU.FibonacciSquare (with compressor)
-  [3/6] recursive1 / FiboCPU.Module
-  [4/6] recursive1 / FiboCPU.SpecifiedRanges
-  [5/6] recursive2 / FiboCPU
-  [6/6] vadcop_final
-Running circom compiles with 1 job(s) in parallel
-[1/6] compressor / FiboCPU.FibonacciSquare: loading starkinfo / verifierinfo / verkey
-[1/6] compressor / FiboCPU.FibonacciSquare: generating circom sources (pil2circom + gen_circom)
-[1/6] compressor / FiboCPU.FibonacciSquare: invoking circom (this is the slow step)
-[1/6] compressor / FiboCPU.FibonacciSquare: circom done in 28.4s
-[1/6] compressor / FiboCPU.FibonacciSquare: spawning witness library build (.so/.dylib)
-...
-All circom compiles complete; 6 witness library build(s) running in background
-```
-
-With `--jobs > 1`, lines from different circuits will be interleaved — the
-`[i/N]` prefix lets you trace which one each log belongs to.
+For every circuit under `provingKey/` (and `provingKeySnark/`) whose setup stored the circom C++
+(`<circuit>.cpp`), it rebuilds the witness library with the same `make` recipe the setup uses; no
+circom runs, and no other file is touched. A library without its `.cpp` is an error (the key
+predates stored C++: rerun the setup). `-j` builds that many libraries at once, with
+`[i/N]`-prefixed logs.
 
 ### Output extension is host-OS controlled
 

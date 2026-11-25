@@ -18,9 +18,9 @@ use std::io::{BufWriter, Write};
 use std::path::Path;
 
 use num_bigint::BigUint;
-use pil2_pilout::pilout::{self as pb, SymbolType};
-use pil_info::types::pilout_info::format_symbols;
-use pil_info::FieldCfg;
+use pil2_pilout::pilout as pb;
+use pil_info::core::from_pilout::from_pilout;
+use pil_info::{FieldCfg, Opening};
 use proofman_pilfflonk::field::FIELD_BYTES;
 use proofman_pilfflonk::global_info::MAX_NBITS;
 use proofman_pilfflonk::FrBytes;
@@ -265,41 +265,22 @@ fn decode_column(column: usize, col: &pb::FixedCol, n_rows: usize) -> Result<Vec
 }
 
 /// The name and the index ([`ExternalFixedColumn`]) of each fixed column of `air`, the AIR of
-/// `pilout`, from the symbols as `pil-info` expands them into `constPolsMap`; `None` for a column
-/// without a symbol. Refuses a symbol of a column the AIR does not have, and two of one column.
+/// `pilout`, from the core's fixed columns (the symbols expanded as `constPolsMap` has them). The
+/// core refuses a column without its one symbol.
 fn column_names(pilout: &pb::PilOut, air: ValidAir<'_>) -> Result<Vec<Option<(String, usize)>>, SetupError> {
-    let of_air = |s: &&pb::Symbol| {
-        s.r#type == SymbolType::FixedCol as i32
-            && s.air_group_id == Some(air.airgroup_id as u32)
-            && s.air_id == Some(air.air_id as u32)
-    };
-    let symbols: Vec<pb::Symbol> = pilout.symbols.iter().filter(of_air).cloned().collect();
-    // One per column, at its position in fixedCols (its stageId); the field only sets the
-    // dimension of the columns of stage 2 or above.
-    let mut columns = format_symbols(&symbols, &[], &[], &[], &FieldCfg::bn128()).map_err(SetupError::Passes)?;
-    columns.sort_by_key(|s| s.stage_id);
-
-    let n_columns = air.air.fixed_cols.len();
-    let mut names = vec![None; n_columns];
-    let mut next_index: BTreeMap<&str, usize> = BTreeMap::new();
-    for symbol in &columns {
-        let Some((column, slot)) = symbol.stage_id.and_then(|c| names.get_mut(c).map(|slot| (c, slot))) else {
-            return Err(SetupError::InvalidPilout(format!(
-                "the symbol {} is of a fixed column the AIR does not have: it has {n_columns}",
-                symbol.name
-            )));
-        };
-        if let Some((other, _)) = slot {
-            return Err(SetupError::InvalidPilout(format!(
-                "fixed column {column} has two symbols, {other} and {}",
-                symbol.name
-            )));
-        }
-        let index = next_index.entry(&symbol.name).or_default();
-        *slot = Some((symbol.name.clone(), *index));
-        *index += 1;
-    }
-    Ok(names)
+    let cs = from_pilout(pilout, air.airgroup_id, air.air_id, &FieldCfg::bn128(), Opening::Shplonk)
+        .map_err(|e| SetupError::InvalidPilout(e.to_string()))?;
+    let mut columns = cs.fixed;
+    columns.sort_by_key(|c| c.id);
+    let mut next_index: BTreeMap<String, usize> = BTreeMap::new();
+    Ok(columns
+        .into_iter()
+        .map(|c| {
+            let index = next_index.entry(c.name.clone()).or_default();
+            *index += 1;
+            Some((c.name, *index - 1))
+        })
+        .collect())
 }
 
 /// The values of each external column at the fixed column of `air` it names (`names`, of

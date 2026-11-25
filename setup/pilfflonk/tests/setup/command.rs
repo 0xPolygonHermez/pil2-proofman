@@ -309,6 +309,13 @@ fn the_command_refuses_a_vkey_the_verifier_would_refuse() {
     let dir = TestDir::new("command_refuses_vkey");
     let mut pilout = pilout();
     pilout.num_challenges = vec![1];
+    pilout.symbols.push(pb::Symbol {
+        name: "c".into(),
+        r#type: SymbolType::Challenge as i32,
+        id: 0,
+        stage: Some(1),
+        ..Default::default()
+    });
     let opts = inputs(&dir, &pilout, 64);
     let err = run_setup_pilfflonk(&opts).unwrap_err();
     let message = format!("{err:#}");

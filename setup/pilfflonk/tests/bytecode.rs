@@ -26,7 +26,7 @@ use num_bigint::BigUint;
 use pil2_pilout::pilout::{self as pb, constraint, expression, operand, SymbolType};
 use pil2_pilout::pilout_proxy::PilOutProxy;
 use pil_info::types::output::{CodeEntry, CodeRef};
-use pil_info::{DegreePolicy, PilInfoCfg, PilInfoResult};
+use pil_info::{DegreePolicy, PilInfoCfg, ShplonkResult};
 use pil_info::pil::gen_code::{ProcessedHint, ProcessedHintField};
 use pilfflonk_setup::bytecode::{
     write_air_bin, Bytecode, BytecodeError, Code, CodeContext, ConstraintBin, ExpressionBin, HintBin, HintFieldBin,
@@ -38,6 +38,8 @@ use proofman_pilfflonk::field::FrBytes;
 
 #[path = "bytecode/interpreter.rs"]
 mod interpreter;
+#[path = "support/oracle.rs"]
+mod support;
 
 const R: &str = "21888242871839275222246405745257275088548364400416034343698204186575808495617";
 const R_MINUS_ONE: &str = "21888242871839275222246405745257275088548364400416034343698204186575808495616";
@@ -270,7 +272,7 @@ fn all_numbers(bytecode: &Bytecode) -> Vec<String> {
 }
 
 /// Every code block of `bytecode` is the code of the same entry in `result`.
-fn assert_is_the_code_of(bytecode: &Bytecode, result: &PilInfoResult) {
+fn assert_is_the_code_of(bytecode: &Bytecode, result: &ShplonkResult) {
     let context = CodeContext::from_pil_info(result).unwrap();
     assert_eq!(bytecode.n_stages as usize, result.setup.n_stages);
     let info = &result.pil_code.expressions_info;
@@ -774,13 +776,13 @@ fn wide_constants_pilout() -> pb::PilOut {
     }
 }
 
-fn run_bn128(pilout: &pb::PilOut) -> PilInfoResult {
+fn run_bn128(pilout: &pb::PilOut) -> ShplonkResult {
     pil_info::shplonk_info(pilout, 0, 0, &PilInfoCfg::bn128(), &Default::default()).unwrap()
 }
 
 /// The file `write_air_bin` writes for `result`, checked against `result`'s code, and its bytes,
 /// the same when it is written again.
-fn check_air_bin(result: &PilInfoResult, name: &str) -> (Bytecode, Vec<u8>) {
+fn check_air_bin(result: &ShplonkResult, name: &str) -> (Bytecode, Vec<u8>) {
     let path = tmp_path(&format!("{name}.bin"));
     write_air_bin(result, &path).unwrap();
     let bytecode = Bytecode::read(&path).unwrap();
@@ -798,7 +800,7 @@ fn check_air_bin(result: &PilInfoResult, name: &str) -> (Bytecode, Vec<u8>) {
 
 /// The expressions of the intermediate polynomials (by the `expId` of their `cmPolsMap` entries)
 /// and of `Q` (`cExpId`) are in the file, as the STARK's prover finds them.
-fn assert_has_im_pols_and_q(bytecode: &Bytecode, result: &PilInfoResult) -> Vec<u32> {
+fn assert_has_im_pols_and_q(bytecode: &Bytecode, result: &ShplonkResult) -> Vec<u32> {
     let exp_ids: Vec<u32> = bytecode.expressions.iter().map(|e| e.exp_id).collect();
     let im_pols: Vec<u32> =
         result.setup.cm_pols_map.iter().filter(|p| p.im_pol).map(|p| p.exp_id.unwrap() as u32).collect();
@@ -921,48 +923,6 @@ fn compile_bn128(pil: &str) -> pb::PilOut {
     fs::remove_file(&out).unwrap();
     assert_eq!(pilout.base_field, big_be(R), "{pil} was not compiled over BN128: does PIL2C_EXEC have `--field`?");
     pilout
-}
-
-/// The Fibonacci fixture: its intermediate polynomial (`l1' − next`, `cmPolsMap[2]`), `Q` and
-/// six constraints over its 256 rows, the one of the intermediate polynomial included.
-#[test]
-#[ignore = "needs PIL2C_EXEC"]
-fn fibonacci_fixture_round_trips() {
-    let result = run_bn128(&compile_bn128("pilfflonk/tests/fixtures/fibonacci/fibonacci.pil"));
-    let (bytecode, bytes) = check_air_bin(&result, "fibonacci");
-
-    let exp_ids: Vec<u32> = bytecode.expressions.iter().map(|e| e.exp_id).collect();
-    assert_eq!(exp_ids, [13, result.c_exp_id as u32]);
-    assert_eq!(assert_has_im_pols_and_q(&bytecode, &result), [13]);
-    assert_eq!(result.setup.cm_pols_map[2].exp_id, Some(13));
-    assert_eq!(bytecode.n_stages, 1);
-    assert_eq!(bytecode.constraints.len(), 6);
-    assert!(bytecode.constraints.iter().all(|c| (c.first_row, c.last_row) == (0, 256)));
-    assert_eq!(bytecode.constraints.iter().filter(|c| c.im_pol).count(), 1);
-    assert!(result.pil_code.expressions_info.hints_info.is_empty());
-
-    // Q reads no piece Q0 … of cmPolsMap, at stage nStages + 1: it is computed whole.
-    let q = &bytecode.expressions[1];
-    for op in &q.code.ops {
-        for t in [op.a, op.b] {
-            if let Operand::Cm { stage, .. } = t {
-                assert_ne!(stage, bytecode.n_stages + 1, "Q reads a piece of Q");
-            }
-        }
-    }
-    // Q · Zi(everyRow), the zerofier first (the STARK's order).
-    let last = q.code.ops.last().unwrap();
-    assert_eq!((last.opcode, last.a), (Opcode::Mul, Operand::Zi { boundary: 0 }), "Q ends dividing by Z_H");
-    println!(
-        "fibonacci: {} expressions ({} and {} ops, {} and {} temporaries), {} constraints, {} bytes",
-        bytecode.expressions.len(),
-        bytecode.expressions[0].code.ops.len(),
-        q.code.ops.len(),
-        bytecode.expressions[0].code.n_temp,
-        q.code.n_temp,
-        bytecode.constraints.len(),
-        bytes.len()
-    );
 }
 
 /// `pil-info`'s `tests/fixtures/wide_constants.pil`: the compiler's constants of up to 254 bits,
@@ -1114,7 +1074,7 @@ fn a_prover_hint_the_prover_cannot_compute_is_refused() {
     let with = |name: &str, set: &dyn Fn(&mut ProcessedHintField)| {
         changed(&|h: &mut ProcessedHint| set(&mut h.fields.iter_mut().find(|f| f.name == name).unwrap().values[0]))
     };
-    let refused = |r: &PilInfoResult, why: &str| {
+    let refused = |r: &ShplonkResult, why: &str| {
         let err = check_prover_hints(r, "SumBus").unwrap_err();
         assert!(matches!(err, SetupError::ProverHint { .. }), "{err}");
         assert!(err.to_string().contains(why), "{why:?} not in {err}");
@@ -1224,7 +1184,7 @@ fn an_im_col_the_prover_cannot_compute_is_refused() {
         };
         r
     };
-    let refused = |r: &PilInfoResult, hint: &str, why: &str| {
+    let refused = |r: &ShplonkResult, hint: &str, why: &str| {
         let err = check_prover_hints(r, "SumBus").unwrap_err();
         assert!(matches!(&err, SetupError::ProverHint { hint: h, .. } if h == hint), "{err}");
         assert!(err.to_string().contains(why), "{why:?} not in {err}");

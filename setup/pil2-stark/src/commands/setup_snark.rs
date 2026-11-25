@@ -6,10 +6,11 @@ use std::path::PathBuf;
 use anyhow::{bail, Context, Result};
 use serde_json::Value;
 
-use crate::output::witness_gen::WitnessTracker;
+use crate::commands::common::{witness_tracker_from_env, RecursiveKey};
+use crate::commands::recursive_setup::resolve_path_env;
+use crate::proving_key::pipeline::Tools;
 use crate::proving_key::snark_setup::{gen_snark_setup, FinalSnark, SnarkSetupConfig};
-use crate::commands::common::parse_const_root;
-use crate::commands::recursive_setup::{resolve_circom_exec, resolve_path_env};
+use proofman_common::hash_family::HashFamily;
 use crate::commands::setup_recursivef::{
     run_setup_recursivef, RecursivefGeometry, SetupRecursivefOptions, RECURSIVEF_LANES,
 };
@@ -45,34 +46,14 @@ pub fn run_setup_snark(opts: &SetupSnarkOptions) -> Result<()> {
         other => bail!("unknown --final-snark {other:?}: expected fflonk, plonk or pilfflonk"),
     };
     let build_dir = &opts.build_dir;
-
-    // Read globalInfo to get the name.
-    let global_info_path = PathBuf::from(build_dir).join("provingKey").join("pilout.globalInfo.json");
-
-    if !global_info_path.exists() {
-        bail!("Global info file not found: {:?}. Run the regular setup first.", global_info_path);
-    }
-
-    let global_info: Value = serde_json::from_str(&fs::read_to_string(&global_info_path)?)?;
-    let name = global_info.get("name").and_then(|v| v.as_str()).unwrap_or("pilout").to_string();
-    let hash = global_info
-        .get("hash")
-        .and_then(|v| v.as_str())
-        .with_context(|| format!("'hash' missing from {:?}; re-run the regular setup", global_info_path))?
-        .to_string();
-    if !proofman_common::hash_family::is_known_family(&hash) {
-        bail!(
-            "unknown hash family {:?} in {:?}; known: {:?}",
-            hash,
-            global_info_path,
-            proofman_common::hash_family::FAMILIES
-        );
-    }
+    let key = RecursiveKey::load(build_dir)?;
+    let (name, hash, global_info_path) = (&key.name, key.hash, &key.global_info_path);
     // Refuse before building anything. blake3 has its own way to a SNARK: its recursivef
     // (setup-recursivef's, which setup-snark sets up if the key has none) verified by a circuit
     // with blake3 custom gates, which only pilfflonk's wrap lays out; PLONK and FFLONK take an r1cs
     // with no custom gates.
-    if !proofman_common::hash_family::has_bn128_recursivef(&hash) && final_snark != FinalSnark::Pilfflonk {
+    let bn128_recursivef = proofman_common::hash_family::has_bn128_recursivef(hash.as_str());
+    if !bn128_recursivef && final_snark != FinalSnark::Pilfflonk {
         bail!(
             "the {hash} proving key at {:?} wraps in a SNARK with --final-snark pilfflonk only (its \
              circuit has blake3 custom gates), or re-run the regular setup with --hash Poseidon1 or \
@@ -80,34 +61,11 @@ pub fn run_setup_snark(opts: &SetupSnarkOptions) -> Result<()> {
             global_info_path
         );
     }
-
-    proofman_starks_lib_c::set_hash_family_c(&hash);
-
-    tracing::info!("setup-snark: name='{}', hash='{}', build_dir='{}'", name, hash, build_dir);
-
-    // Read vadcop_final artifacts.
-    let vadcop_dir = PathBuf::from(build_dir).join("provingKey").join(&name).join("vadcop_final");
-
-    let const_root_path = vadcop_dir.join("vadcop_final.verkey.json");
-    let starkinfo_path = vadcop_dir.join("vadcop_final.starkinfo.json");
-    let verifier_info_path = vadcop_dir.join("vadcop_final.verifierinfo.json");
-
-    for p in [&const_root_path, &starkinfo_path, &verifier_info_path] {
-        if !p.exists() {
-            bail!("Required file not found: {:?}. Make sure you have run the regular setup first.", p);
-        }
+    tracing::info!("setup-snark: name='{name}', hash='{hash}', build_dir='{build_dir}'");
+    if !bn128_recursivef {
+        set_up_recursivef_if_missing(opts, hash)?;
     }
-
-    if !proofman_common::hash_family::has_bn128_recursivef(&hash) {
-        set_up_recursivef_if_missing(opts, &hash)?;
-    }
-
-    let const_root_json: Value = serde_json::from_str(&fs::read_to_string(&const_root_path)?)?;
-    let const_root: [u64; 4] =
-        parse_const_root(&const_root_json).context("Failed to parse vadcop_final.verkey.json")?;
-
-    let stark_info: Value = serde_json::from_str(&fs::read_to_string(&starkinfo_path)?)?;
-    let verifier_info: Value = serde_json::from_str(&fs::read_to_string(&verifier_info_path)?)?;
+    let vf = key.vadcop_final()?;
 
     // Read optional publics info.
     let publics_info: Option<Value> = if let Some(ref pi_path) = opts.publics_info {
@@ -118,44 +76,27 @@ pub fn run_setup_snark(opts: &SetupSnarkOptions) -> Result<()> {
         None
     };
 
-    // Resolve tool paths (same logic as recursive_setup).
-    let circuits_gl_path =
-        resolve_path_env("CIRCUITS_GL_PATH", "setup/stark-recurser/stark2circom/circom_verifier/circuits.gl");
-    let recurser_circuits_path =
-        resolve_path_env("RECURSER_CIRCUITS_PATH", "setup/stark-recurser/stark2circom/circom_verifier/helper_circuits");
-    let std_pil_path = resolve_path_env("STD_PIL_PATH", "pil2-components/lib/std/pil");
-    let recurser_pil_path = resolve_path_env("RECURSER_PIL_PATH", "setup/stark-recurser/plonk2pil/pil");
-    let circom_helpers_dir = resolve_path_env("CIRCOM_HELPERS_DIR", "setup/circom");
-    let final_snark_circom_helpers_dir = resolve_path_env("FINAL_SNARK_CIRCOM_HELPERS_DIR", "setup/final_snark_circom");
-    let goldilocks_src_dir = resolve_path_env("GOLDILOCKS_SRC_DIR", "pil2-stark/src/goldilocks/src");
-    let circom_exec = resolve_circom_exec(&circom_helpers_dir);
-
-    // BN128 and circomlib paths.
+    let tools = Tools::from_env();
     let circuits_bn128_path =
         resolve_path_env("CIRCUITS_BN128_PATH", "setup/stark-recurser/stark2circom/circom_verifier/circuits.bn128");
-    let circomlib_path =
-        crate::proving_key::recursive::ensure_node_module_subpath("CIRCOMLIB_PATH", "circomlib", "circuits");
+    let circomlib_path = crate::proving_key::node_deps::ensure_node_path(Some("CIRCOMLIB_PATH"), "circomlib/circuits")
+        .unwrap_or_else(|| "node_modules/circomlib/circuits".into());
 
     // Create provingKeySnark directory.
     let snark_dir = PathBuf::from(build_dir).join("provingKeySnark");
     fs::create_dir_all(&snark_dir)?;
 
-    let witness_tracker = WitnessTracker::with_goldilocks_src(&goldilocks_src_dir);
+    let witness_tracker = witness_tracker_from_env();
 
     let contract_version = opts.contract_version.clone().unwrap_or_else(|| format!("v{}", env!("CARGO_PKG_VERSION")));
     let snark_config = SnarkSetupConfig {
         build_dir,
-        name: &name,
-        hash: &hash,
-        circom_exec: &circom_exec,
-        circuits_gl_path: &circuits_gl_path,
+        name: &key.name,
+        hash,
+        tools: &tools,
         circuits_bn128_path: &circuits_bn128_path,
         circomlib_path: &circomlib_path,
-        recurser_circuits_path: &recurser_circuits_path,
-        std_pil_path: &std_pil_path,
-        recurser_pil_path: &recurser_pil_path,
-        circom_helpers_dir: &circom_helpers_dir,
-        final_snark_circom_helpers_dir: &final_snark_circom_helpers_dir,
+        final_snark_circom_helpers_dir: &resolve_path_env("FINAL_SNARK_CIRCOM_HELPERS_DIR", "setup/final_snark_circom"),
         powers_of_tau: opts.powers_of_tau.as_deref(),
         final_snark,
         contract_version: &contract_version,
@@ -165,7 +106,7 @@ pub fn run_setup_snark(opts: &SetupSnarkOptions) -> Result<()> {
         exps_arch: &opts.exps_arch,
     };
 
-    gen_snark_setup(&snark_config, &witness_tracker, &const_root, &stark_info, &verifier_info)
+    gen_snark_setup(&snark_config, &witness_tracker, &vf.const_root, &vf.stark_info, &vf.verifier_info)
         .context("Final SNARK setup failed")?;
 
     tracing::info!("setup-snark completed successfully");
@@ -175,7 +116,7 @@ pub fn run_setup_snark(opts: &SetupSnarkOptions) -> Result<()> {
 /// The recursivef of a blake3 key, in `provingKeySnark/recursivef/`, which its final circuit
 /// verifies: reused if there is one (its `recursivef.starkinfo.json`, which proofman looks for),
 /// and otherwise set up by setup-recursivef's step at that command's defaults.
-fn set_up_recursivef_if_missing(opts: &SetupSnarkOptions, hash: &str) -> Result<()> {
+fn set_up_recursivef_if_missing(opts: &SetupSnarkOptions, hash: HashFamily) -> Result<()> {
     let recursivef_dir = PathBuf::from(&opts.build_dir).join("provingKeySnark").join("recursivef");
     if recursivef_dir.join("recursivef.starkinfo.json").exists() {
         tracing::info!("setup-snark: reusing the {hash} key's recursivef in {}", recursivef_dir.display());
@@ -233,7 +174,7 @@ mod tests {
         // One it takes gets as far as the build dir.
         for final_snark in ["fflonk", "plonk", "pilfflonk"] {
             let err = run_setup_snark(&options(missing, final_snark)).unwrap_err().to_string();
-            assert!(err.contains("Global info file not found"), "{final_snark}: {err}");
+            assert!(err.contains("pilout.globalInfo.json not found"), "{final_snark}: {err}");
         }
     }
 
