@@ -1,9 +1,8 @@
 //! Circuit-level generators: recursivef, recursive1/2, compressor, vadcop/final and the
-//! Solidity verifiers, from `starkInfo` and vadcop metadata. The circom mains are small
-//! generated files over static templates (`helper_circuits/`); only the Solidity
-//! contracts are Tera (`circuit_templates/tera/`). Entry point: [`gen_circom_circuit`].
+//! Solidity verifiers, from `starkInfo` and vadcop metadata. A circom main is data over static
+//! templates (`helper_circuits/`); only the Solidity contracts are Tera (`circuit_templates/tera/`).
+//! Entry point: [`gen_circom_circuit`].
 
-pub mod stark_inputs;
 pub(crate) mod vadcop_inputs;
 pub(crate) mod get_sha256_inputs;
 pub(crate) mod verify_global_constraints;

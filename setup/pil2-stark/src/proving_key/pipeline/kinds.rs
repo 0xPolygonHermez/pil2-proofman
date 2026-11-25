@@ -150,7 +150,6 @@ pub fn steps_for_test(cfg: &TestCfg) -> Vec<Step> {
 /// The verifier circom of a proof that skips `main`, with these inputs.
 fn gl_verifier(family: HashFamily, verkey_input: bool, enable_input: bool, input_challenges: bool) -> VerifierGen {
     VerifierGen::Gl(StarkVerifierOptions {
-        skip_main: true,
         verkey_input,
         enable_input,
         input_challenges,

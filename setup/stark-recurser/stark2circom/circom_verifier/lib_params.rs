@@ -1,5 +1,5 @@
-//! The per-key data of the static verifier library: the `var` block of `StarkVerifier<suffix>`, one
-//! var per library template parameter (`lib_gl::call` passes them by name), and the proof inputs.
+//! The per-key data of the static verifier library: one `sv<sfx>_<name>()` function per [`FIELDS`] entry,
+//! read by the library as `svd_<name>(k)` through the compilation's [`dispatch`], and the proof inputs.
 //! Data only; FRI/STIR geometry is derived in circom (`verifier/geometry.circom`).
 
 use std::collections::HashMap;
@@ -12,17 +12,11 @@ use serde_json::Value;
 use super::gl_field::{gl_exp, GL_INV_W, GL_W};
 
 /// One L_0 tree: its proof inputs are `s0_vals{suffix}`, `s0_siblings{suffix}`, `s0_last_mt_levels{suffix}`.
-pub(crate) struct Tree {
-    pub suffix: String,
-    pub width: u64,
-    /// The signal that holds its root.
-    pub root: String,
-}
-
-pub(crate) struct KeyData {
-    /// `var name = value;` lines, named after the library's template parameters.
-    pub vars: String,
-    pub trees: Vec<Tree>,
+struct Tree {
+    suffix: String,
+    width: u64,
+    /// The proof input that holds its root (stage trees).
+    root: String,
 }
 
 /// Where a proof input's value comes from in a circuit that verifies the proof.
@@ -42,13 +36,6 @@ pub(crate) struct ProofInput {
     pub name: String,
     pub dims: Vec<u64>,
     pub origin: Origin,
-}
-
-impl ProofInput {
-    /// `[d0][d1]...`
-    pub fn shape(&self) -> String {
-        self.dims.iter().map(|d| format!("[{d}]")).collect()
-    }
 }
 
 /// `si` parsed, refusing what no verifier can check.
@@ -73,14 +60,13 @@ fn l0_trees(si: &StarkInfo) -> Result<(Vec<Tree>, usize)> {
     let const_tree = trees.len();
     trees.push(Tree { suffix: "C".into(), width: si.n_constants, root: "rootC".into() });
     for cc in &si.custom_commits {
-        let p: Vec<String> = cc.public_values.iter().map(|p| format!("publics[{}]", p.idx)).collect();
-        if p.len() != 4 {
+        if cc.public_values.len() != 4 {
             bail!("custom commit {}: its root needs 4 publics", cc.name);
         }
         trees.push(Tree {
             suffix: format!("_{}_0", cc.name),
             width: sec(format!("{}0", cc.name)),
-            root: format!("[{}]", p.join(", ")),
+            root: String::new(),
         });
     }
     Ok((trees, const_tree))
@@ -202,16 +188,116 @@ impl Inputs {
     }
 }
 
+/// A data value: a number or an array of numbers, as circom literals.
+pub(crate) enum Val {
+    N(String),
+    A(Vec<String>),
+}
+
+fn n(v: impl ToString) -> Val {
+    Val::N(v.to_string())
+}
+
+fn a<T: ToString>(v: &[T]) -> Val {
+    Val::A(v.iter().map(T::to_string).collect())
+}
+
+/// The data the static library reads as `svd_<name>(k)` (key `k` of the compilation), in emission order.
+/// The one declared table: `lib_params::tests` checks the library uses exactly these names.
+pub(crate) const FIELDS: &[&str] = &[
+    "nBits",
+    "nBitsExt",
+    "arity",
+    "lastLevels",
+    "nQueries",
+    "batchSize",
+    "powBits",
+    "qDeg",
+    "qPolEv",
+    "nEvals",
+    "nPublics",
+    "nAirValues",
+    "nAirgroupValues",
+    "nProofValues",
+    "nStages",
+    "nChallenges",
+    "hashCommits",
+    "circuitType",
+    "nRoots",
+    "firstRootDim",
+    "nSteps",
+    "stir",
+    "stirM",
+    "stirFinalBits",
+    "nTrees",
+    "nGroups",
+    "nPols",
+    "nColGroups",
+    "nSums",
+    "verkeyInput",
+    "enableInput",
+    "proofSize",
+    "offAGV",
+    "offAV",
+    "offEvals",
+    "offFinal",
+    "offNonce",
+    "offBetas",
+    "offNonces",
+    "STEPS",
+    "STIR_L",
+    "STIR_K",
+    "STIR_T",
+    "STIR_G",
+    "S0",
+    "CH",
+    "AV",
+    "AGV",
+    "OPEN_ROOT",
+    "GROUP_LEN",
+    "REF_COL",
+    "SUMS",
+    "COLS",
+    "OPEN",
+    "ROOT_C",
+    "OFF_ROOT",
+    "OFF_S0V",
+    "OFF_S0S",
+    "OFF_S0L",
+    "TREE_ROOT",
+    "TREE_PUB",
+    "OFF_FROOT",
+    "OFF_FV",
+    "OFF_FS",
+    "OFF_FL",
+    "OFF_ANS",
+    "OFF_SHAKE",
+    "nFolds",
+];
+
+/// How a key's verifier is used by the circuit that includes it.
+#[derive(Default)]
+pub(crate) struct KeyOpts {
+    /// Starts the transcript from the global challenge and absorbs `circuitType` (a basic air).
+    pub input_challenges: bool,
+    pub batch_size: Option<usize>,
+    /// (nRoots, firstRootDim, vc) of `ConstraintRoots` (GL; BN128 folds them in `ConstraintEval`).
+    pub roots: Option<(usize, usize, usize)>,
+    pub verkey_input: bool,
+    pub enable_input: bool,
+    /// The verification key, when it is not an input.
+    pub const_root: Option<[String; 4]>,
+}
+
+/// The key's data, one entry per [`FIELDS`] name.
+pub(crate) struct KeyData {
+    pub fields: Vec<(&'static str, Val)>,
+}
+
 impl KeyData {
-    /// `input_challenges` starts the transcript from the global challenge and absorbs `circuitType`;
-    /// `roots` = (nRoots, firstRootDim, vc) of `ConstraintRoots` (GL; BN128 folds them in `ConstraintEval`).
-    pub fn new(
-        si: &StarkInfo,
-        input_challenges: bool,
-        batch_size: Option<usize>,
-        roots: Option<(usize, usize, usize)>,
-    ) -> Result<Self> {
+    pub fn new(si: &StarkInfo, o: &KeyOpts) -> Result<Self> {
         let ss = &si.stark_struct;
+        let bn128 = ss.verification_hash_type == "BN128";
         // The query templates see STIR as FRI with one fold tree, T_0, over [log|L_0|, log|L_0| - k_0].
         let stir = ss.low_degree_test.stir();
         let (steps, n_queries, pow_bits) = match &ss.low_degree_test {
@@ -231,7 +317,7 @@ impl KeyData {
         }
         let n_stages = u64::from(si.n_stages);
         let q = n_stages + 1;
-        let circuit_type = if input_challenges {
+        let circuit_type = if o.input_challenges {
             if n_stages < 2 {
                 bail!("a basic air needs stage 2 to absorb its circuitType after (nStages = {n_stages})");
             }
@@ -241,6 +327,11 @@ impl KeyData {
         };
 
         let (trees, const_tree) = l0_trees(si)?;
+        // The static query templates have 8 slots of each kind (stark_verifier.circom).
+        let opened = if stir.is_some() { 1 } else { steps.len() - 1 };
+        if trees.len() > 8 || opened > 8 {
+            bail!("{} L_0 trees and {opened} fold trees: the verifier library opens at most 8 of each", trees.len());
+        }
         let mut s0 = vec![0];
         for t in &trees {
             s0.push(s0.last().unwrap() + t.width);
@@ -270,7 +361,7 @@ impl KeyData {
         if challenges != drawn {
             bail!("challengesMap {challenges:?} is not the order the verifier transcript draws {drawn:?}");
         }
-        if roots.is_some_and(|(_, _, vc)| vc != challenges.len() - 4) {
+        if o.roots.is_some_and(|(_, _, vc)| vc != challenges.len() - 4) {
             bail!("std_vc must be the quotient-stage challenge {q}.0");
         }
 
@@ -284,7 +375,7 @@ impl KeyData {
         let mut open = Vec::new();
         for g in &groups {
             let o = si.opening_points[g.opening as usize];
-            open.push(o.to_string());
+            open.push(o);
             let w = if o >= 0 { GL_W[ss.n_bits as usize] } else { GL_INV_W[ss.n_bits as usize] };
             open_root.push(gl_exp(w, o.unsigned_abs()));
         }
@@ -338,70 +429,145 @@ impl KeyData {
             }
         }
 
-        let batch = batch_size.unwrap_or_else(|| (n_queries as usize).div_ceil(8)).clamp(1, n_queries.max(1) as usize);
+        // The flat proof (proof2pointer order): where each input starts, -1 when absent.
+        let mut at: HashMap<String, i64> = HashMap::new();
+        let mut size = 0i64;
+        for i in proof_inputs(si)?.iter().filter(|i| i.origin == Origin::Proof) {
+            at.insert(i.name.clone(), size);
+            size += i.dims.iter().product::<u64>() as i64;
+        }
+        let off = |name: &str| at.get(name).copied().unwrap_or(-1);
+        let ll = if bn128 { "last_levels" } else { "last_mt_levels" };
+        let nf = match &ss.low_degree_test {
+            LowDegreeTest::Stir(s) => s.num_iterations(),
+            LowDegreeTest::Fri(_) => steps.len() - 1,
+        };
+        let (fl, fl_stir) = (if stir.is_some() { "last_levels" } else { ll }, stir.map_or(0, |s| s.num_iterations()));
+        let fold = |what: &str| -> Vec<i64> {
+            (1..=nf).map(|f| off(&format!("s{f}_{}", if what == "last" { fl } else { what }))).collect()
+        };
+        let mut tree_root = Vec::new();
+        let mut tree_pub = Vec::new();
+        for (t, tr) in trees.iter().enumerate() {
+            let (root, pubs) = if t == const_tree {
+                (-1, vec![0; 4])
+            } else if t > const_tree {
+                (-2, si.custom_commits[t - const_tree - 1].public_values.iter().map(|p| p.idx).collect())
+            } else {
+                (off(&tr.root), vec![0; 4])
+            };
+            tree_root.push(root);
+            tree_pub.extend(pubs);
+        }
+        let hints =
+            |kind: &str| -> Vec<i64> { (0..fl_stir.saturating_sub(1)).map(|i| off(&format!("{kind}{i}"))).collect() };
+
+        let batch =
+            o.batch_size.unwrap_or_else(|| (n_queries as usize).div_ceil(8)).clamp(1, n_queries.max(1) as usize);
         let len = |m: &Option<Vec<_>>| m.as_ref().map_or(0, Vec::len) as u64;
         let stages =
             |m: &Option<Vec<proofman_common::PolMap>>| m.iter().flatten().map(|p| p.stage).collect::<Vec<u64>>();
-        let scalars = [
-            ("nBits", ss.n_bits),
-            ("nBitsExt", ss.n_bits_ext),
-            ("arity", ss.merkle_tree_arity),
-            ("lastLevels", ss.last_level_verification),
-            ("nQueries", n_queries),
-            ("batchSize", batch as u64),
-            ("powBits", pow_bits),
-            ("qDeg", si.q_deg),
-            ("qPolEv", q_pol_ev as u64),
-            ("nEvals", si.ev_map.len() as u64),
-            ("nPublics", si.n_publics),
-            ("nAirValues", len(&si.airvalues_map)),
-            ("nAirgroupValues", len(&si.airgroupvalues_map)),
-            ("nStages", n_stages),
-            ("nChallenges", challenges.len() as u64),
-            ("hashCommits", u64::from(ss.hash_commits)),
-            ("circuitType", circuit_type),
-            ("nRoots", roots.map_or(0, |r| r.0 as u64)),
-            ("firstRootDim", roots.map_or(0, |r| r.1 as u64)),
-            ("nSteps", steps.len() as u64),
-            ("friFold", u64::from(stir.is_none())),
-            ("stir", u64::from(stir.is_some())),
-            ("stirM", stir.map_or(0, |s| s.num_iterations() as u64)),
-            ("stirFinalBits", stir.map_or(0, |s| *s.log_degrees.last().unwrap())),
-            ("nTrees", trees.len() as u64),
-            ("nGroups", n_groups),
-            ("nPols", leaf.len() as u64),
-            ("nColGroups", cgroups.len() as u64),
-            ("nSums", sums.len() as u64 / 2),
-        ];
         let st = |v: Option<&Vec<u64>>| v.cloned().unwrap_or_default();
-        let arrays = [
-            ("STEPS", steps),
-            ("STIR_L", st(stir.map(|s| &s.log_domain_sizes))),
-            ("STIR_K", st(stir.map(|s| &s.folding_factors))),
-            ("STIR_T", st(stir.map(|s| &s.num_queries))),
-            ("STIR_G", st(stir.map(|s| &s.grinding_bits_queries))),
-            ("S0", s0),
-            ("CH", ch),
-            ("AV", stages(&si.airvalues_map)),
-            ("AGV", stages(&si.airgroupvalues_map)),
-            ("OPEN_ROOT", open_root),
-            ("GROUP_LEN", groups.iter().map(|g| g.refs.len() as u64).collect()),
-            ("REF_COL", refs.iter().map(|r| u64::from(r.col)).collect()),
-            ("SUMS", sums),
-            ("COLS", cols),
+        let root_c = o.const_root.clone().unwrap_or_else(|| ["0".into(), "0".into(), "0".into(), "0".into()]);
+        let fields = vec![
+            ("nBits", n(ss.n_bits)),
+            ("nBitsExt", n(ss.n_bits_ext)),
+            ("arity", n(ss.merkle_tree_arity)),
+            ("lastLevels", n(ss.last_level_verification)),
+            ("nQueries", n(n_queries)),
+            ("batchSize", n(batch)),
+            ("powBits", n(pow_bits)),
+            ("qDeg", n(si.q_deg)),
+            ("qPolEv", n(q_pol_ev)),
+            ("nEvals", n(si.ev_map.len())),
+            ("nPublics", n(si.n_publics)),
+            ("nAirValues", n(len(&si.airvalues_map))),
+            ("nAirgroupValues", n(len(&si.airgroupvalues_map))),
+            ("nProofValues", n(len(&si.proofvalues_map))),
+            ("nStages", n(n_stages)),
+            ("nChallenges", n(challenges.len())),
+            ("hashCommits", n(u64::from(ss.hash_commits))),
+            ("circuitType", n(circuit_type)),
+            ("nRoots", n(o.roots.map_or(0, |r| r.0))),
+            ("firstRootDim", n(o.roots.map_or(0, |r| r.1))),
+            ("nSteps", n(steps.len())),
+            ("stir", n(u64::from(stir.is_some()))),
+            ("stirM", n(fl_stir)),
+            ("stirFinalBits", n(stir.map_or(0, |s| *s.log_degrees.last().unwrap()))),
+            ("nTrees", n(trees.len())),
+            ("nGroups", n(n_groups)),
+            ("nPols", n(leaf.len())),
+            ("nColGroups", n(cgroups.len())),
+            ("nSums", n(sums.len() / 2)),
+            ("verkeyInput", n(u64::from(o.verkey_input))),
+            ("enableInput", n(u64::from(o.enable_input))),
+            ("proofSize", n(size)),
+            ("offAGV", n(off("airgroupvalues"))),
+            ("offAV", n(off("airvalues"))),
+            ("offEvals", n(off("evals"))),
+            ("offFinal", n(off("finalPol"))),
+            ("offNonce", n(off("nonce"))),
+            ("offBetas", n(off("betas"))),
+            ("offNonces", n(off("nonces"))),
+            ("STEPS", a(&steps)),
+            ("STIR_L", a(&st(stir.map(|s| &s.log_domain_sizes)))),
+            ("STIR_K", a(&st(stir.map(|s| &s.folding_factors)))),
+            ("STIR_T", a(&st(stir.map(|s| &s.num_queries)))),
+            ("STIR_G", a(&st(stir.map(|s| &s.grinding_bits_queries)))),
+            ("S0", a(&s0)),
+            ("CH", a(&ch)),
+            ("AV", a(&stages(&si.airvalues_map))),
+            ("AGV", a(&stages(&si.airgroupvalues_map))),
+            ("OPEN_ROOT", a(&open_root)),
+            ("GROUP_LEN", a(&groups.iter().map(|g| g.refs.len()).collect::<Vec<_>>())),
+            ("REF_COL", a(&refs.iter().map(|r| r.col).collect::<Vec<_>>())),
+            ("SUMS", a(&sums)),
+            ("COLS", a(&cols)),
+            ("OPEN", a(&open)),
+            ("ROOT_C", a(&root_c)),
+            ("OFF_ROOT", a(&(1..=q).map(|s| off(&format!("root{s}"))).collect::<Vec<_>>())),
+            ("OFF_S0V", a(&trees.iter().map(|t| off(&format!("s0_vals{}", t.suffix))).collect::<Vec<_>>())),
+            ("OFF_S0S", a(&trees.iter().map(|t| off(&format!("s0_siblings{}", t.suffix))).collect::<Vec<_>>())),
+            ("OFF_S0L", a(&trees.iter().map(|t| off(&format!("s0_{ll}{}", t.suffix))).collect::<Vec<_>>())),
+            ("TREE_ROOT", a(&tree_root)),
+            ("TREE_PUB", a(&tree_pub)),
+            ("OFF_FROOT", a(&fold("root"))),
+            ("OFF_FV", a(&fold("vals"))),
+            ("OFF_FS", a(&fold("siblings"))),
+            ("OFF_FL", a(&fold("last"))),
+            ("OFF_ANS", a(&hints("ansCoeffs"))),
+            ("OFF_SHAKE", a(&hints("shakeCoeffs"))),
+            ("nFolds", n(nf)),
         ];
-        let mut vars: String = scalars.iter().map(|(n, v)| format!("    var {n} = {v};\n")).collect();
-        for (n, mut a) in arrays {
-            if a.is_empty() {
-                a.push(0); // circom rejects zero-length arrays
-            }
-            let list: Vec<String> = a.iter().map(u64::to_string).collect();
-            vars += &format!("    var {n}[{}] = [{}];\n", a.len(), list.join(", "));
-        }
-        // The openings themselves, signed, by rank.
-        vars += &format!("    var OPEN[{}] = [{}];\n", open.len(), open.join(", "));
-        vars += "    var L0 = geo_levels0(arity, lastLevels, STEPS);\n";
-        vars += "    var sibW = geo_sibW(arity);\n    var lastSize = geo_lastSize(arity, lastLevels);\n";
-        Ok(KeyData { vars, trees })
+        debug_assert!(fields.iter().map(|f| f.0).eq(FIELDS.iter().copied()));
+        Ok(KeyData { fields })
     }
+
+    /// `function sv{sfx}_<name>() { return <value>; }` per field (empty arrays padded to one entry).
+    pub fn functions(&self, sfx: &str) -> String {
+        let mut out = String::new();
+        for (name, v) in &self.fields {
+            let v = match v {
+                Val::N(x) => x.clone(),
+                Val::A(x) if x.is_empty() => "[0]".into(),
+                Val::A(x) => format!("[{}]", x.join(", ")),
+            };
+            out += &format!("function sv{sfx}_{name}() {{ return {v}; }}\n");
+        }
+        out
+    }
+}
+
+/// The compilation's `svd_<name>(k)`: field `name` of its k-th key, whose functions carry `sfxs[k]`.
+pub(crate) fn dispatch(sfxs: &[String]) -> String {
+    let mut out = String::new();
+    for name in FIELDS {
+        let mut body = String::new();
+        for (k, s) in sfxs.iter().enumerate().take(sfxs.len().saturating_sub(1)) {
+            body += &format!("if (k == {k}) {{ return sv{s}_{name}(); }} ");
+        }
+        let last = sfxs.last().map_or(String::new(), |s| format!("return sv{s}_{name}();"));
+        out += &format!("function svd_{name}(k) {{ {body}{last} }}\n");
+    }
+    out
 }

@@ -1,572 +1,126 @@
-//! Rust port of the VADCOP input sub-templates:
-//! - `define_vadcop_inputs.circom.ejs`
-//! - `assign_vadcop_inputs.circom.ejs`
-//! - `init_vadcop_inputs.circom.ejs`
-//! - `agg_vadcop_inputs.circom.ejs`
+//! The vadcop data a recursion main hands its static templates (`helper_circuits/recursion.circom`,
+//! `final_vadcop.circom`): `vd_<name>()` and, per airgroup, `vd_<name>(i)`.
 
 use anyhow::{bail, Context, Result};
 use serde_json::Value;
 
 use super::parse_num_proof_values;
 
-/// The airgroup's `aggTypes` entries (none when absent).
-pub(crate) fn agg_types(vadcop_info: &Value, airgroup_id: usize) -> &[Value] {
-    vadcop_info["aggTypes"].get(airgroup_id).and_then(Value::as_array).map_or(&[], Vec::as_slice)
-}
-
-// ── define_vadcop_inputs ──────────────────────────────────────────────────────
-
-/// Port of `main_templates/vadcop/define_vadcop_inputs.circom.ejs`.
-///
-/// Emits signal declarations for the vadcop inter-circuit signals.
-/// If `publics_names` is `Some`, each declared signal name is appended to it
-/// (mirrors `options.publicsNames` in the JS).
-/// How vadcop signals are declared; `Internal` for a batched recursive1's per-slot values.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum VadcopSignals {
-    Input,
-    Output,
-    Internal,
-}
-
-pub fn define_vadcop_inputs(
-    vadcop_info: &Value,
-    airgroup_id: usize,
-    prefix: &str,
-    kind: VadcopSignals,
-    mut publics_names: Option<&mut Vec<String>>,
-) -> String {
-    let mut out = String::new();
-    let prefix_ = if prefix.is_empty() { String::new() } else { format!("{prefix}_") };
-    let signal_type = match kind {
-        VadcopSignals::Input => "input ",
-        VadcopSignals::Output => "output ",
-        VadcopSignals::Internal => "",
-    };
-
-    let agg_types_len = agg_types(vadcop_info, airgroup_id).len();
-
-    let curve = vadcop_info["curve"].as_str().unwrap_or("None");
-    let lattice_size = vadcop_info["latticeSize"].as_u64().unwrap_or(0) as usize;
-
-    // circuitType
-    out.push_str(&format!("    signal {signal_type}{prefix_}circuitType;\n"));
-    if let Some(ref mut pn) = publics_names {
-        pn.push(format!("{prefix_}circuitType"));
-    }
-
-    // aggregatedProofs
-    out.push_str(&format!("    signal {signal_type}{prefix_}aggregatedProofs;\n"));
-    if let Some(ref mut pn) = publics_names {
-        pn.push(format!("{prefix_}aggregatedProofs"));
-    }
-
-    if agg_types_len > 0 {
-        out.push_str(&format!("    signal {signal_type}{prefix_}aggregationTypes[{agg_types_len}];\n"));
-        if let Some(ref mut pn) = publics_names {
-            pn.push(format!("{prefix_}aggregationTypes"));
-        }
-        out.push_str(&format!("    signal {signal_type}{prefix_}airgroupvalues[{agg_types_len}][3];\n"));
-        if let Some(ref mut pn) = publics_names {
-            pn.push(format!("{prefix_}airgroupvalues"));
-        }
-    }
-
-    if curve == "None" {
-        out.push_str(&format!("    signal {signal_type}{prefix_}stage1Hash[{lattice_size}];\n"));
-    } else {
-        out.push_str(&format!("    signal {signal_type}{prefix_}stage1Hash[2][5];\n"));
-    }
-    if let Some(ref mut pn) = publics_names {
-        pn.push(format!("{prefix_}stage1Hash"));
-    }
-
-    out
-}
-
-// ── assign_vadcop_inputs ──────────────────────────────────────────────────────
-
-/// Options for `assign_vadcop_inputs`.
-#[derive(Debug, Default, Clone)]
-pub struct AssignVadcopOptions {
-    /// Prefix aggregation types signal with `prefix_` (for recursive1 with compressor).
-    pub add_prefix_agg_types: bool,
-    /// Emit `IsZero()` enable wire (for recursive2 / vadcop final with multiple air groups).
-    pub set_enable_input: bool,
-}
-
-/// Port of `main_templates/vadcop/assign_vadcop_inputs.circom.ejs`.
-///
-/// Wires all vadcop signals into the verifier `component.publics[...]`.
-pub fn assign_vadcop_inputs(
-    component_name: &str,
-    vadcop_info: &Value,
-    airgroup_id: usize,
-    prefix: &str,
-    opts: &AssignVadcopOptions,
-) -> String {
-    let mut out = String::new();
-    let prefix_ = if prefix.is_empty() { String::new() } else { format!("{prefix}_") };
-
-    let agg_types_len = agg_types(vadcop_info, airgroup_id).len();
-    let n_publics = vadcop_info["nPublics"].as_u64().unwrap_or(0) as usize;
-    let num_proof_values = parse_num_proof_values(&vadcop_info["numProofValues"]);
-    let curve = vadcop_info["curve"].as_str().unwrap_or("None");
-    let lattice_size = vadcop_info["latticeSize"].as_u64().unwrap_or(0) as usize;
-
-    let mut n = 0usize; // running publics counter
-
-    // circuitType
-    out.push_str(&format!("    {component_name}.publics[{n}] <== {prefix_}circuitType;\n"));
-    n += 1;
-
-    // aggregatedProofs
-    out.push_str(&format!("    {component_name}.publics[{n}] <== {prefix_}aggregatedProofs;\n"));
-    n += 1;
-
-    if agg_types_len > 0 {
-        // aggregationTypes
-        let agg_prefix = if opts.add_prefix_agg_types { prefix_.as_str() } else { "" };
-        out.push_str(&format!(
-            "    for(var i = 0; i < {agg_types_len}; i++) {{\n        {component_name}.publics[{n} + i] <== {agg_prefix}aggregationTypes[i];\n    }}\n"
-        ));
-        n += agg_types_len;
-
-        // airgroupvalues
-        out.push_str(&format!(
-            "    for(var i = 0; i < {agg_types_len}; i++) {{\n        {component_name}.publics[{n} + 3*i] <== {prefix_}airgroupvalues[i][0];\n        {component_name}.publics[{n} + 3*i + 1] <== {prefix_}airgroupvalues[i][1];\n        {component_name}.publics[{n} + 3*i + 2] <== {prefix_}airgroupvalues[i][2];\n    }}\n"
-        ));
-        n += 3 * agg_types_len;
-    }
-
-    // stage1Hash
-    if curve != "None" {
-        out.push_str(&format!(
-            "    for (var i = 0; i < 2; i++) {{\n        for (var j = 0; j < 5; j++) {{\n            {component_name}.publics[{n} + 5*i + j] <== {prefix_}stage1Hash[i][j];\n        }}\n    }}\n"
-        ));
-        n += 10;
-    } else {
-        out.push_str(&format!(
-            "    for (var i = 0; i < {lattice_size}; i++) {{\n        {component_name}.publics[{n} + i] <== {prefix_}stage1Hash[i];\n    }}\n"
-        ));
-        n += lattice_size;
-    }
-
-    // publics
-    if n_publics > 0 {
-        out.push_str(&format!(
-            "    for(var i = 0; i < {n_publics}; i++) {{\n        {component_name}.publics[{n} + i] <== publics[i];\n    }}\n"
-        ));
-        n += n_publics;
-    }
-
-    // proofValues
-    if num_proof_values > 0 {
-        out.push_str(&format!(
-            "    for(var i = 0; i < {num_proof_values}; i++) {{\n        {component_name}.publics[{n} + 3*i] <== proofValues[i][0];\n        {component_name}.publics[{n} + 3*i + 1] <== proofValues[i][1];\n        {component_name}.publics[{n} + 3*i + 2] <== proofValues[i][2];\n    }}\n"
-        ));
-        n += num_proof_values * 3;
-    }
-
-    // globalChallenge
-    out.push_str(&format!(
-        "    {component_name}.publics[{n}] <== globalChallenge[0];\n    {component_name}.publics[{n} +1] <== globalChallenge[1];\n    {component_name}.publics[{n} +2] <== globalChallenge[2];\n"
-    ));
-
-    // enable signal
-    if opts.set_enable_input {
-        out.push_str(&format!(
-            "    signal {{binary}} {prefix_}isNull <== IsZero()({prefix_}circuitType);\n    {component_name}.enable <== 1 - {prefix_}isNull;\n"
-        ));
-    }
-
-    out
-}
-
-/// The air's `var airgroupId/airId/circuitType`; circom computes the type, which a basic starkinfo must agree with.
-pub fn air_id_vars(stark_info: &Value) -> Result<String> {
+/// The air's (airgroupId, airId); a basic starkinfo's circuitType must be the one circom computes.
+pub fn air_id_vars(stark_info: &Value) -> Result<(u64, u64)> {
     let airgroup_id = stark_info["airgroupId"].as_u64().context("starkInfo has no airgroupId")?;
     let air_id = stark_info["airId"].as_u64().context("starkInfo has no airId")?;
     let circuit_type = proofman_common::circuit_type_of(airgroup_id, air_id + 1);
     if let Some(recorded) = stark_info["circuitType"].as_u64().filter(|&r| r != circuit_type) {
         bail!("starkInfo.circuitType {recorded} disagrees with ({airgroup_id}, {air_id})");
     }
-    Ok(format!(
-        "    var airgroupId = {airgroup_id};\n    var airId = {air_id};\n    var circuitType = circuitTypeOf(airgroupId, airId + 1);\n"
-    ))
+    Ok((airgroup_id, air_id))
 }
 
-/// `aggregationTypes` from slot 0, every slot required to agree; slot 0 is never empty (batches fill from it).
-pub fn agg_types_consistency(
-    vadcop_info: &Value,
-    airgroup_id: usize,
-    slot_prefixes: &[String],
-    skip_empty_slots: bool,
-) -> String {
-    let n = agg_types(vadcop_info, airgroup_id).len();
-    if n == 0 {
-        return String::new();
-    }
-    // Gated on circuitType: an empty slot's types are zeros.
-    let eqs: String = slot_prefixes[1..]
-        .iter()
-        .map(|p| {
-            if skip_empty_slots {
-                format!(
-                    "        {p}_circuitType * ({}_aggregationTypes[i] - {p}_aggregationTypes[i]) === 0;\n",
-                    slot_prefixes[0]
-                )
-            } else {
-                format!("        {}_aggregationTypes[i] === {p}_aggregationTypes[i];\n", slot_prefixes[0])
-            }
-        })
-        .collect();
-    format!(
-        "    signal aggregationTypes[{n}];\n    for(var i = 0; i < {n}; i++) {{\n        aggregationTypes[i] <== {}_aggregationTypes[i];\n{eqs}    }}",
-        slot_prefixes[0]
-    )
+/// `function vd_{name}(i)`: `values[i]`, else `default`.
+fn indexed(name: &str, values: &[String], default: &str) -> String {
+    let branches: String =
+        values.iter().enumerate().map(|(i, v)| format!("if (i == {i}) {{ return {v}; }} ")).collect();
+    format!("function vd_{name}(i) {{ {branches}return {default}; }}\n")
 }
 
-// ── init_vadcop_inputs ────────────────────────────────────────────────────────
-
-/// Port of `main_templates/vadcop/init_vadcop_inputs.circom.ejs`.
-///
-/// Initialises VADCOP outputs from a StarkVerifier component (compressor / recursive1 non-compressed).
-pub fn init_vadcop_inputs(
-    component_name: &str,
-    prefix: &str,
-    prefix_stark: &str,
-    airgroup_id: usize,
-    stark_info: &Value,
-    vadcop_info: &Value,
-    // Binary signal that is 1 when this slot carries no proof; None for a slot always full.
-    is_null: Option<&str>,
-) -> Result<String> {
-    let mut out = String::new();
-    let prefix_ = if prefix.is_empty() { String::new() } else { format!("{prefix}_") };
-    let prefix_stark_ = if prefix_stark.is_empty() { String::new() } else { format!("{prefix_stark}_") };
-
-    let agg_types_len = agg_types(vadcop_info, airgroup_id).len();
-
-    let curve = vadcop_info["curve"].as_str().unwrap_or("None");
-
-    // Wire globalChallenge
-    out.push_str(&format!("    {component_name}.globalChallenge <== globalChallenge;\n\n"));
-    out.push_str("    // --> Assign the VADCOP data\n");
-
-    // The verifier's compile-time rootC fixes the air, so an empty slot may report 0.
-    match is_null {
-        None => out.push_str(&format!("    {prefix_}circuitType <== circuitType;\n")),
-        Some(n) => out.push_str(&format!(
-            "    signal {{binary}} {prefix_}isNull <== {n};\n    {prefix_}circuitType <== (1 - {n}) * circuitType;\n"
-        )),
-    }
-    // Stays 1 for an empty slot too: AggregateProofsNull multiplies it out.
-    out.push_str(&format!("    {prefix_}aggregatedProofs <== 1;\n"));
-
-    if agg_types_len > 0 {
-        // aggregationTypes — constant values from vadcop_info
-        let agg_type_vals: Vec<String> = agg_types(vadcop_info, airgroup_id)
-            .iter()
-            .map(|v| v["aggType"].as_u64().unwrap_or(0).to_string())
-            .collect();
-        out.push_str(&format!("    {prefix_}aggregationTypes <== [{}];\n", agg_type_vals.join(",")));
-
-        // airgroupvalues — pass through from stark component
-        for i in 0..agg_types_len {
-            out.push_str(&format!("    {prefix_}airgroupvalues[{i}] <== {prefix_stark_}airgroupvalues[{i}];\n"));
-        }
-    }
-
-    // stage1Hash: vadcop_hashes.circom over the air's airvalue stages.
-    let av: Vec<String> = stark_info["airValuesMap"]
-        .as_array()
-        .map_or(vec![], |a| a.iter().map(|v| v["stage"].as_u64().unwrap_or(0).to_string()).collect());
-    let (n_av, av_list) = (av.len(), if av.is_empty() { "0".to_string() } else { av.join(", ") });
-    let airvalues = if av.is_empty() { "[[0, 0, 0]]".to_string() } else { format!("{prefix_stark_}airvalues") };
-    let hash = if curve == "None" {
-        let lattice =
-            vadcop_info["latticeSize"].as_u64().filter(|&n| n > 0).context("vadcopInfo has no latticeSize")?;
-        format!("CalculateStage1Hash(circuitType, {n_av}, [{av_list}], {lattice})")
+fn list<T: ToString>(v: &[T]) -> String {
+    if v.is_empty() {
+        "[0]".into()
     } else {
-        let c = &vadcop_info["curveConstants"];
-        let k = |n: &str| {
-            c[n].as_str().map(|v| format!("[{v}]")).with_context(|| format!("vadcopInfo has no curveConstants.{n}"))
-        };
-        format!(
-            "CalculateStage1HashEC(circuitType, {n_av}, [{av_list}], {}, {}, {}, {}, {})",
-            k("A")?,
-            k("B")?,
-            k("Z")?,
-            k("C1")?,
-            k("C2")?
-        )
-    };
-    out.push_str(&format!(
-        "    {prefix_}stage1Hash <== {hash}({component_name}.rootC, {prefix_stark_}root1, {airvalues});\n"
-    ));
+        format!("[{}]", v.iter().map(T::to_string).collect::<Vec<_>>().join(", "))
+    }
+}
 
+/// The vadcop data of a recursion main: globalInfo `vi` (Null for a circuit with none), the per-airgroup
+/// recursive1 keys `basic_vk` and recursive2 keys `agg_vk`, the verified air's ids.
+pub fn vadcop_data(
+    vi: &Value,
+    basic_vk: &[Vec<Vec<String>>],
+    agg_vk: &[Vec<String>],
+    airgroup_id: u64,
+    air_id: u64,
+) -> Result<String> {
+    let agg_types = vi["aggTypes"].as_array().map_or(&[][..], Vec::as_slice);
+    let ec = vi["curve"].as_str().is_some_and(|c| c != "None");
+    let w = if ec {
+        10
+    } else if vi.is_null() {
+        0
+    } else {
+        vi["latticeSize"].as_u64().filter(|&n| n > 0).context("vadcopInfo has no latticeSize")?
+    };
+    let airgroups = vi["air_groups"].as_array().map_or(0, Vec::len);
+    let airs_0 = vi["airs"].get(0).and_then(Value::as_array).map_or(0, Vec::len);
+    let pv: Vec<u64> = vi["proofValuesMap"]
+        .as_array()
+        .map_or(vec![], |a| a.iter().map(|v| v["stage"].as_u64().unwrap_or(0)).collect());
+
+    let mut out =
+        format!("\nfunction vd_airgroupId() {{ return {airgroup_id}; }}\nfunction vd_airId() {{ return {air_id}; }}\n");
+    out += &format!("function vd_nPublics() {{ return {}; }}\n", vi["nPublics"].as_u64().unwrap_or(0));
+    out += &format!("function vd_nProofValues() {{ return {}; }}\n", parse_num_proof_values(&vi["numProofValues"]));
+    out += &format!("function vd_nPVMap() {{ return {}; }}\nfunction vd_PV() {{ return {}; }}\n", pv.len(), list(&pv));
+    out += &format!("function vd_W() {{ return {w}; }}\nfunction vd_ec() {{ return {}; }}\n", u8::from(ec));
+    for k in ["A", "B", "Z", "C1", "C2"] {
+        let v = if ec {
+            vi["curveConstants"][k]
+                .as_str()
+                .map(|v| format!("[{v}]"))
+                .with_context(|| format!("vadcopInfo has no curveConstants.{k}"))?
+        } else {
+            "[0, 0, 0, 0, 0]".into()
+        };
+        out += &format!("function vd_ec{k}() {{ return {v}; }}\n");
+    }
+    out += &format!("function vd_multiAir() {{ return {}; }}\n", u8::from(airgroups > 1 || airs_0 > 1));
+    let types: Vec<Vec<u64>> = agg_types
+        .iter()
+        .map(|ag| ag.as_array().map_or(vec![], |a| a.iter().map(|t| t["aggType"].as_u64().unwrap_or(0)).collect()))
+        .collect();
+    out += &indexed("nAgg", &types.iter().map(|t| t.len().to_string()).collect::<Vec<_>>(), "0");
+    out += &indexed("AGG", &types.iter().map(|t| list(t)).collect::<Vec<_>>(), "[0]");
+    let root = |vk: &[String]| format!("[{}]", vk.join(", "));
+    out += &indexed("nBasics", &basic_vk.iter().map(|b| b.len().to_string()).collect::<Vec<_>>(), "0");
+    let basics: Vec<String> =
+        basic_vk.iter().map(|b| format!("[{}]", b.iter().map(|vk| root(vk)).collect::<Vec<_>>().join(", "))).collect();
+    out += &indexed("basics", &basics, "[[0, 0, 0, 0]]");
+    out += &indexed("rootCAgg", &agg_vk.iter().map(|vk| root(vk)).collect::<Vec<_>>(), "[0, 0, 0, 0]");
     Ok(out)
 }
 
-// ── agg_vadcop_inputs ─────────────────────────────────────────────────────────
-
-/// Port of `main_templates/vadcop/agg_vadcop_inputs.circom.ejs`.
-///
-/// Aggregates VADCOP signals from `slot_prefixes.len()` verifier instances into one
-/// output, folding them left-to-right.  Used by `recursive2`.
-/// Options for `agg_vadcop_inputs`. `Default` is recursive2's behaviour.
-#[derive(Debug, Default, Clone, Copy)]
-pub struct AggVadcopOptions {
-    /// Let the caller emit `{prefix}_circuitType`; a batched recursive1 keeps its air's type.
-    pub own_circuit_type: bool,
-    /// Fold null-aware even in a single-air topology: empty SLOTS exist in every topology.
-    pub force_null: bool,
-}
-
-pub fn agg_vadcop_inputs(
-    vadcop_info: &Value,
-    airgroup_id: usize,
-    slot_prefixes: &[String],
-    prefix: &str,
-    opts: &AggVadcopOptions,
-) -> String {
-    let mut out = String::new();
-    let p: Vec<String> =
-        slot_prefixes.iter().map(|s| if s.is_empty() { String::new() } else { format!("{s}_") }).collect();
-    let n = p.len();
-    let prefix_ = if prefix.is_empty() { String::new() } else { format!("{prefix}_") };
-
-    // Name of the accumulator after folding the first k slots: the slots' initial
-    // letters, uppercased. k=2 gives "AB", which is what the arity-3 text uses.
-    let acc = |k: usize| -> String {
-        p[..k].iter().filter_map(|q| q.chars().next()).map(|c| c.to_ascii_uppercase()).collect()
-    };
-
-    let agg_types_len = agg_types(vadcop_info, airgroup_id).len();
-
-    let air_groups_len = vadcop_info["air_groups"].as_array().map(|a| a.len()).unwrap_or(0);
-    let airs_0_len =
-        vadcop_info["airs"].as_array().and_then(|a| a.first()).and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0);
-
-    let curve = vadcop_info["curve"].as_str().unwrap_or("None");
-    let lattice_size = vadcop_info["latticeSize"].as_u64().unwrap_or(0) as usize;
-
-    let multi_air = air_groups_len > 1 || airs_0_len > 1;
-
-    // The caller declares `var circuitType` (the recursive2's own, or the batched air's).
-    if !opts.own_circuit_type {
-        out.push_str(&format!("    {prefix_}circuitType <== circuitType;\n\n"));
-    }
-
-    if agg_types_len > 0 {
-        out.push_str(&format!(
-            "    {prefix_}aggregationTypes <== aggregationTypes;\n    signal {{binary}} aggTypes[{agg_types_len}];\n    for (var i = 0; i < {agg_types_len}; i++) {{\n        {prefix_}aggregationTypes[i] * ({prefix_}aggregationTypes[i] - 1) === 0;\n        aggTypes[i] <== {prefix_}aggregationTypes[i];\n    }}\n\n"
-        ));
-    }
-
-    if multi_air || opts.force_null {
-        // Running isNull for each intermediate accumulator.
-        for k in 2..n {
-            let terms: String = p[..k].iter().map(|q| format!(" - {q}isNull")).collect();
-            out.push_str(&format!("    signal {{binary}} {}_isNull <== IsZero()({k}{terms});\n", acc(k)));
-        }
-
-        if agg_types_len > 0 {
-            let mut decls = String::new();
-            for k in 2..n {
-                decls.push_str(&format!("    signal airgroupValues_{}[{agg_types_len}][3];\n", acc(k)));
-            }
-            let mut body = String::new();
-            for k in 1..n {
-                let (lhs, lhs_isnull) = if k == 1 {
-                    (format!("{}airgroupvalues[i]", p[0]), format!("{}isNull", p[0]))
-                } else {
-                    (format!("airgroupValues_{}[i]", acc(k)), format!("{}_isNull", acc(k)))
-                };
-                let target = if k == n - 1 {
-                    format!("{prefix_}airgroupvalues[i]")
-                } else {
-                    format!("airgroupValues_{}[i]", acc(k + 1))
-                };
-                body.push_str(&format!(
-                    "        {target} <== AggregateAirgroupValuesNull()({lhs}, {}airgroupvalues[i], aggTypes[i], {lhs_isnull}, {}isNull);\n",
-                    p[k], p[k]
-                ));
-            }
-            out.push_str(&format!("{decls}    for (var i = 0; i < {agg_types_len}; i++) {{\n{body}    }}\n\n"));
-        }
-
-        let null_list = p.iter().map(|q| format!("{q}isNull")).collect::<Vec<_>>().join(", ");
-        let proof_list = p.iter().map(|q| format!("{q}aggregatedProofs")).collect::<Vec<_>>().join(", ");
-        out.push_str(&format!(
-            "    signal {{binary}} isNull[{n}] <== [{null_list}];\n    {prefix_}aggregatedProofs <== AggregateProofsNull({n})([{proof_list}], isNull);\n\n"
-        ));
-
-        for k in 1..n {
-            let (lhs, lhs_isnull) = if k == 1 {
-                (format!("{}stage1Hash", p[0]), format!("{}isNull", p[0]))
-            } else {
-                (format!("{}_stage1Hash", acc(k)), format!("{}_isNull", acc(k)))
-            };
-            let call = if curve != "None" {
-                format!("AccumulatePointsNull()({lhs}, {}stage1Hash, {lhs_isnull}, {}isNull)", p[k], p[k])
-            } else {
-                format!("AggregateValuesNull({lattice_size})({lhs}, {}stage1Hash, {lhs_isnull}, {}isNull)", p[k], p[k])
-            };
-            if k == n - 1 {
-                out.push_str(&format!("    {prefix_}stage1Hash <== {call};\n"));
-            } else {
-                let name = acc(k + 1);
-                let dim = if curve != "None" { "[2][5]".to_string() } else { format!("[{lattice_size}]") };
-                out.push_str(&format!("    signal {name}_stage1Hash{dim} <== {call};\n"));
-            }
-        }
-    } else {
-        if agg_types_len > 0 {
-            let mut decls = String::new();
-            for k in 2..n {
-                decls.push_str(&format!("    signal airgroupValues{}[{agg_types_len}][3];\n", acc(k)));
-            }
-            let mut body = String::new();
-            for k in 1..n {
-                let lhs =
-                    if k == 1 { format!("{}airgroupvalues[i]", p[0]) } else { format!("airgroupValues{}[i]", acc(k)) };
-                let target = if k == n - 1 {
-                    format!("{prefix_}airgroupvalues[i]")
-                } else {
-                    format!("airgroupValues{}[i]", acc(k + 1))
-                };
-                body.push_str(&format!(
-                    "        {target} <== AggregateAirgroupValues()({lhs}, {}airgroupvalues[i], aggTypes[i]);\n",
-                    p[k]
-                ));
-            }
-            out.push_str(&format!("{decls}    for (var i = 0; i < {agg_types_len}; i++) {{\n{body}    }}\n\n"));
-        }
-
-        let proof_list = p.iter().map(|q| format!("{q}aggregatedProofs")).collect::<Vec<_>>().join(", ");
-        out.push_str(&format!("    {prefix_}aggregatedProofs <== AggregateProofs({n})([{proof_list}]);\n\n"));
-
-        for k in 1..n {
-            let lhs = if k == 1 { format!("{}stage1Hash", p[0]) } else { format!("{}_stage1Hash", acc(k)) };
-            let call = if curve != "None" {
-                format!("AccumulatePoints()({lhs}, {}stage1Hash)", p[k])
-            } else {
-                format!("AggregateValues({lattice_size})({lhs}, {}stage1Hash)", p[k])
-            };
-            if k == n - 1 {
-                out.push_str(&format!("    {prefix_}stage1Hash <== {call};\n"));
-            } else {
-                let name = acc(k + 1);
-                let dim = if curve != "None" { "[2][5]".to_string() } else { format!("[{lattice_size}]") };
-                out.push_str(&format!("    signal {name}_stage1Hash{dim} <== {call};\n"));
-            }
-        }
-    }
-
-    out
-}
-
 #[cfg(test)]
-mod fold_tests {
+mod tests {
     use super::*;
-
-    fn d() -> AggVadcopOptions {
-        AggVadcopOptions::default()
-    }
-
-    fn single_air() -> serde_json::Value {
-        serde_json::json!({
-            "aggTypes": [[{"aggType": 0, "stage": 2}]], "air_groups": ["g"],
-            "airs": [[{"name": "a"}]], "curve": "None", "latticeSize": 368
-        })
-    }
-    fn multi_air() -> serde_json::Value {
-        serde_json::json!({
-            "aggTypes": [[{"aggType": 0, "stage": 2}]], "air_groups": ["g"],
-            "airs": [[{"name": "a"}, {"name": "b"}]], "curve": "None", "latticeSize": 368
-        })
-    }
-    fn slots(n: usize) -> Vec<String> {
-        (0..n).map(|i| format!("{}_sv", (b'a' + i as u8) as char)).collect()
-    }
-
-    // The exact text `agg_vadcop_inputs` emitted for three slots before it became a fold.
-    // Inlined rather than kept as fixture files so the expected output is readable beside
-    // the assertion. Byte-exact: this is the whole point of the test.
-    const EXPECTED_N3_SINGLE: &str = r#"    sv_circuitType <== circuitType;
-
-    sv_aggregationTypes <== aggregationTypes;
-    signal {binary} aggTypes[1];
-    for (var i = 0; i < 1; i++) {
-        sv_aggregationTypes[i] * (sv_aggregationTypes[i] - 1) === 0;
-        aggTypes[i] <== sv_aggregationTypes[i];
-    }
-
-    signal airgroupValuesAB[1][3];
-    for (var i = 0; i < 1; i++) {
-        airgroupValuesAB[i] <== AggregateAirgroupValues()(a_sv_airgroupvalues[i], b_sv_airgroupvalues[i], aggTypes[i]);
-        sv_airgroupvalues[i] <== AggregateAirgroupValues()(airgroupValuesAB[i], c_sv_airgroupvalues[i], aggTypes[i]);
-    }
-
-    sv_aggregatedProofs <== AggregateProofs(3)([a_sv_aggregatedProofs, b_sv_aggregatedProofs, c_sv_aggregatedProofs]);
-
-    signal AB_stage1Hash[368] <== AggregateValues(368)(a_sv_stage1Hash, b_sv_stage1Hash);
-    sv_stage1Hash <== AggregateValues(368)(AB_stage1Hash, c_sv_stage1Hash);
-"#;
-
-    const EXPECTED_N3_MULTI: &str = r#"    sv_circuitType <== circuitType;
-
-    sv_aggregationTypes <== aggregationTypes;
-    signal {binary} aggTypes[1];
-    for (var i = 0; i < 1; i++) {
-        sv_aggregationTypes[i] * (sv_aggregationTypes[i] - 1) === 0;
-        aggTypes[i] <== sv_aggregationTypes[i];
-    }
-
-    signal {binary} AB_isNull <== IsZero()(2 - a_sv_isNull - b_sv_isNull);
-    signal airgroupValues_AB[1][3];
-    for (var i = 0; i < 1; i++) {
-        airgroupValues_AB[i] <== AggregateAirgroupValuesNull()(a_sv_airgroupvalues[i], b_sv_airgroupvalues[i], aggTypes[i], a_sv_isNull, b_sv_isNull);
-        sv_airgroupvalues[i] <== AggregateAirgroupValuesNull()(airgroupValues_AB[i], c_sv_airgroupvalues[i], aggTypes[i], AB_isNull, c_sv_isNull);
-    }
-
-    signal {binary} isNull[3] <== [a_sv_isNull, b_sv_isNull, c_sv_isNull];
-    sv_aggregatedProofs <== AggregateProofsNull(3)([a_sv_aggregatedProofs, b_sv_aggregatedProofs, c_sv_aggregatedProofs], isNull);
-
-    signal AB_stage1Hash[368] <== AggregateValuesNull(368)(a_sv_stage1Hash, b_sv_stage1Hash, a_sv_isNull, b_sv_isNull);
-    sv_stage1Hash <== AggregateValuesNull(368)(AB_stage1Hash, c_sv_stage1Hash, AB_isNull, c_sv_isNull);
-"#;
-
-    #[test]
-    fn arity_three_output_is_unchanged() {
-        assert_eq!(agg_vadcop_inputs(&single_air(), 0, &slots(3), "sv", &d()), EXPECTED_N3_SINGLE);
-        assert_eq!(agg_vadcop_inputs(&multi_air(), 0, &slots(3), "sv", &d()), EXPECTED_N3_MULTI);
-    }
-
-    #[test]
-    fn arity_two_folds_once_and_names_no_intermediate_twice() {
-        let out = agg_vadcop_inputs(&single_air(), 0, &slots(2), "sv", &d());
-        // One combine, so exactly one AB intermediate and no reference to slot c.
-        assert_eq!(out.matches("AggregateProofs(2)").count(), 1);
-        assert!(!out.contains("c_sv"), "N=2 must not mention a third slot:\n{out}");
-        // One combine means the result goes straight to the output signal, so the
-        // fold declares no intermediate accumulator at all.
-        assert!(!out.contains("AB_stage1Hash"), "N=2 needs no intermediate:\n{out}");
-        assert!(out.contains("sv_stage1Hash <== "), "N=2 must write the output directly:\n{out}");
-    }
 
     /// A compressor's starkinfo carries the basic air's ids but no circuitType.
     #[test]
-    fn air_id_vars_compute_the_circuit_type_from_the_ids() {
-        let out = air_id_vars(&serde_json::json!({ "airgroupId": 0, "airId": 1 })).unwrap();
-        assert!(out.contains("var circuitType = circuitTypeOf(airgroupId, airId + 1);"), "{out}");
+    fn air_ids_without_a_recorded_circuit_type() {
+        assert_eq!(air_id_vars(&serde_json::json!({ "airgroupId": 0, "airId": 1 })).unwrap(), (0, 1));
     }
 
     #[test]
-    fn air_id_vars_reject_a_circuit_type_that_disagrees_with_the_ids() {
+    fn air_ids_reject_a_circuit_type_that_disagrees() {
         let err = air_id_vars(&serde_json::json!({ "airgroupId": 0, "airId": 1, "circuitType": 99 })).unwrap_err();
         assert!(err.to_string().contains("circuitType"), "{err}");
+    }
+
+    #[test]
+    fn per_airgroup_data_is_indexed() {
+        let vi = serde_json::json!({
+            "aggTypes": [[{"aggType": 0}], [{"aggType": 1}, {"aggType": 0}]], "air_groups": ["a", "b"],
+            "airs": [[{}], [{}]], "curve": "None", "latticeSize": 368, "nPublics": 2, "numProofValues": [1]
+        });
+        let vk = vec!["1".to_string(), "2".into(), "3".into(), "4".into()];
+        let out = vadcop_data(&vi, &[vec![vk.clone()], vec![vk.clone(), vk.clone()]], &[vk.clone(), vk], 0, 0).unwrap();
+        for f in [
+            "function vd_nAgg(i) { if (i == 0) { return 1; } if (i == 1) { return 2; } return 0; }",
+            "function vd_AGG(i) { if (i == 0) { return [0]; } if (i == 1) { return [1, 0]; } return [0]; }",
+            "function vd_multiAir() { return 1; }",
+            "function vd_W() { return 368; }",
+            "if (i == 1) { return [[1, 2, 3, 4], [1, 2, 3, 4]]; }",
+        ] {
+            assert!(out.contains(f), "missing `{f}`:\n{out}");
+        }
     }
 }

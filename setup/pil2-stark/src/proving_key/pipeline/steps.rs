@@ -468,7 +468,7 @@ fn constraint_digest(air: &pil2_pilout::pilout::Air) -> u64 {
         num_rows: air.num_rows,
         stage_widths: air.stage_widths.clone(),
         expressions: air.expressions.clone(),
-        constraints: air.constraints.clone(),
+        constraints: air.constraints.iter().map(without_debug_line).collect(),
         air_values: air.air_values.clone(),
         custom_commits: air.custom_commits.clone(),
         ..Default::default()
@@ -478,9 +478,39 @@ fn constraint_digest(air: &pil2_pilout::pilout::Air) -> u64 {
     h.finish()
 }
 
+// debug_line names the source air, so equal constraint systems would otherwise hash apart
+fn without_debug_line(c: &pil2_pilout::pilout::Constraint) -> pil2_pilout::pilout::Constraint {
+    use pil2_pilout::pilout::constraint::Constraint as C;
+    let mut c = c.clone();
+    match c.constraint.as_mut() {
+        Some(C::EveryRow(x)) => x.debug_line = None,
+        Some(C::FirstRow(x)) => x.debug_line = None,
+        Some(C::LastRow(x)) => x.debug_line = None,
+        Some(C::EveryFrame(x)) => x.debug_line = None,
+        None => {}
+    }
+    c
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn constraint_digest_ignores_debug_lines_but_not_constraints() {
+        use pil2_pilout::pilout::{constraint, Air, Constraint};
+        let row = |idx: u32, line: &str| Constraint {
+            constraint: Some(constraint::Constraint::EveryRow(constraint::EveryRow {
+                expression_idx: Some(pil2_pilout::pilout::operand::Expression { idx }),
+                debug_line: Some(line.to_string()),
+            })),
+        };
+        let a = Air { constraints: vec![row(0, "a.pil:1")], ..Default::default() };
+        let b = Air { constraints: vec![row(0, "b.pil:9")], ..Default::default() };
+        let c = Air { constraints: vec![row(1, "a.pil:1")], ..Default::default() };
+        assert_eq!(constraint_digest(&a), constraint_digest(&b));
+        assert_ne!(constraint_digest(&a), constraint_digest(&c));
+    }
 
     #[test]
     fn circom_args_carry_the_level_the_field_and_the_libs() {

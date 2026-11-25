@@ -1,10 +1,10 @@
 //! The data of `GetSha256Inputs` (static, `helper_circuits/sha256_inputs.circom`): publics_info's
-//! definitions as the template's `DEFS` var.
+//! definitions as the final circuit's `vd_DEFS()`.
 
 use anyhow::{bail, Result};
 use serde_json::Value;
 
-/// `(nPublics, nDefs, "var DEFS[..] = [..];")` of a publics_info.
+/// `(nPublics, nDefs, "function vd_DEFS() { return [..]; }")` of a publics_info.
 pub fn sha256_defs(publics: &Value) -> Result<(u64, usize, String)> {
     let n_publics = publics["nPublics"].as_u64().unwrap_or(0);
     let defs = publics["definitions"].as_array().map_or(&[][..], Vec::as_slice);
@@ -20,9 +20,8 @@ pub fn sha256_defs(publics: &Value) -> Result<(u64, usize, String)> {
         v.extend([u64::from(avoid), u64::from(vk)]);
     }
     let list: Vec<String> = v.iter().map(u64::to_string).collect();
-    let n = list.len().max(1);
     let body = if list.is_empty() { "0".to_string() } else { list.join(", ") };
-    Ok((n_publics, defs.len(), format!("    var DEFS[{n}] = [{body}];\n")))
+    Ok((n_publics, defs.len(), format!("function vd_DEFS() {{ return [{body}]; }}\n")))
 }
 
 #[cfg(test)]
@@ -38,7 +37,7 @@ mod tests {
         ]});
         let (n, d, defs) = sha256_defs(&p).unwrap();
         assert_eq!((n, d), (5, 2));
-        assert_eq!(defs, "    var DEFS[12] = [0, 1, 2, 32, 0, 0, 1, 4, 1, 64, 1, 1];\n");
+        assert_eq!(defs, "function vd_DEFS() { return [0, 1, 2, 32, 0, 0, 1, 4, 1, 64, 1, 1]; }\n");
     }
 
     #[test]

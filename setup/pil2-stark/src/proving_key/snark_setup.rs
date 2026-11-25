@@ -251,7 +251,6 @@ fn gen_final_snark(
 
     // The final circuit: the recursivef's BN128 verifier and the publics hash, over BN128.
     let opts = StarkVerifierOptions {
-        skip_main: true,
         verkey_input: false,
         enable_input: false,
         input_challenges: false,

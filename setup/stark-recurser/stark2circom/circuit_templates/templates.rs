@@ -1,5 +1,7 @@
-//! The circom mains (generated text over `helper_circuits/`'s static templates) and the
-//! Solidity contracts, the only Tera left: `verifier.sol.tera` → [`gen_solidity`],
+//! The circom mains and the Solidity contracts. A main is data over static templates
+//! (`helper_circuits/recursion.circom`, `final_snark.circom`): its keys' dispatch
+//! (`circom_verifier::key_dispatch`), the vadcop data `vd_*()` and a `component main` line. The
+//! Solidity contracts are the only Tera left: `verifier.sol.tera` → [`gen_solidity`],
 //! `iverifier.sol.tera` → [`gen_iverifier`].
 
 use anyhow::{bail, Context, Result};
@@ -7,13 +9,10 @@ use serde_json::Value;
 use tera::{Context as TeraCtx, Tera};
 
 use super::get_sha256_inputs::sha256_defs;
-use super::stark_inputs::{assign_stark_inputs, define_stark_inputs, EnableInput, StarkInputOptions};
-use super::vadcop_inputs::{
-    agg_types_consistency, agg_vadcop_inputs, air_id_vars, assign_vadcop_inputs, define_vadcop_inputs,
-    init_vadcop_inputs, AggVadcopOptions, AssignVadcopOptions, VadcopSignals,
-};
+use super::vadcop_inputs::{air_id_vars, vadcop_data};
 use super::verify_global_constraints::gen_verify_global_constraints;
-use super::{parse_num_proof_values, CircomGenOptions};
+use super::CircomGenOptions;
+use crate::stark2circom::circom_verifier::{key_dispatch, key_suffix};
 
 // ── Embedded Tera templates ───────────────────────────────────────────────────
 
@@ -27,69 +26,153 @@ pub(super) fn render(template_src: &str, ctx: &TeraCtx) -> Result<String> {
     tera.render("t", ctx).context("Failed to render Tera template")
 }
 
-// ── recursivef ────────────────────────────────────────────────────────────────
+// ── circom mains ──────────────────────────────────────────────────────────────
 
-/// The recursivef circuit: its verifier on the proof inputs, rootC (and the publics) public.
-pub fn gen_recursivef(stark_info: &Value, verifier_filenames: &[String]) -> Result<String> {
-    let def_opts = StarkInputOptions { add_publics: true, is_final: false, parallel: false, shared_publics: false };
-    let publics = if stark_info["nPublics"].as_u64().unwrap_or(0) > 0 { ", publics" } else { "" };
-    Ok(format!(
-        "pragma circom 2.1.0;\npragma custom_templates;\n\n{}\ntemplate Main() {{\n    signal input rootC[4];\n\n{}\n{}\n    sV.rootC <== rootC;\n}}\n\ncomponent main {{public [ rootC{publics} ]}}= Main();\n",
-        includes(verifier_filenames),
-        define_stark_inputs(stark_info, "", &def_opts)?,
-        assign_stark_inputs("sV", "", stark_info, &def_opts, &EnableInput::None)?,
-    ))
+/// A main's head: pragmas, the verifier files and `lib`, the keys' dispatch.
+fn head(files: &[String], lib: &str, stark_infos: &[&Value], gl: bool, custom_pragma: bool) -> String {
+    let mut out = String::from("pragma circom 2.1.0;\n");
+    if custom_pragma {
+        out += "pragma custom_templates;\n";
+    }
+    out += "\n";
+    out += &files.iter().map(|f| format!("include \"{f}\";\n")).collect::<String>();
+    out += &format!("include \"{lib}\";\n\n");
+    let sfxs: Vec<String> = stark_infos.iter().map(|si| if gl { key_suffix(si) } else { String::new() }).collect();
+    out + &key_dispatch(&sfxs, gl)
 }
 
-/// `s` when `c`, else nothing.
-fn when(c: bool, s: impl Into<String>) -> String {
-    if c {
-        s.into()
+/// `component main {public [..]} = <call>;`.
+fn main_line(publics: &[&str], call: &str) -> String {
+    if publics.is_empty() {
+        format!("\ncomponent main = {call};\n")
     } else {
-        String::new()
+        format!("\ncomponent main {{public [{}]}} = {call};\n", publics.join(", "))
     }
 }
 
-/// `include` lines, one per verifier file.
-fn includes(files: &[String]) -> String {
-    files.iter().map(|f| format!("include \"{f}\";\n")).collect()
+const GLOBALS: [&str; 4] = ["publics", "proofValues", "globalChallenge", "rootCAgg"];
+const SV: [&str; 5] =
+    ["sv_circuitType", "sv_aggregatedProofs", "sv_aggregationTypes", "sv_airgroupvalues", "sv_stage1Hash"];
+
+/// The recursivef circuit: its verifier on the proof, rootC (and the publics) public.
+pub fn gen_recursivef(stark_info: &Value, verifier_filenames: &[String]) -> Result<String> {
+    let vd = vadcop_data(&Value::Null, &[], &[], 0, 0)?;
+    Ok(head(verifier_filenames, "recursion.circom", &[stark_info], true, true)
+        + &vd
+        + &main_line(&["rootC", "publics"], "Recursivef()"))
 }
 
-// ── recursion/final ───────────────────────────────────────────────────────────
-
-/// The final circuit: the recursivef's verifier and the publics hash (`GetSha256Inputs`, static).
+/// The final circuit: the recursivef's BN128 verifier and the publics hash (`FinalSnark`, static).
 pub fn gen_recursion_final(
     stark_info: &Value,
     verifier_filenames: &[String],
     publics: Option<&Value>,
 ) -> Result<String> {
-    let def_opts = StarkInputOptions { add_publics: true, is_final: true, parallel: false, shared_publics: false };
     let (n_sha, n_defs, defs) = sha256_defs(publics.unwrap_or(&Value::Null))?;
-    // Incoming publics: [rootCVadcopFinal(4) | is_vadcop_final_proof(1) | real publics]; the flag is not hashed.
-    let n_proof = stark_info["nPublics"].as_u64().unwrap_or(0).saturating_sub(5);
     // A custom-tree verifier wants the pragma on every file that includes it.
-    let mut out = String::from("pragma circom 2.1.0;\n");
-    if stark_info["starkStruct"]["merkleTreeCustom"].as_bool() == Some(true) {
-        out += "pragma custom_templates;\n";
+    let custom = stark_info["starkStruct"]["merkleTreeCustom"].as_bool() == Some(true);
+    Ok(head(verifier_filenames, "final_snark.circom", &[stark_info], false, custom)
+        + &defs
+        + &main_line(&[], &format!("FinalSnark({n_sha}, {n_defs})")))
+}
+
+/// The compressed vadcop_final circuit. The incoming proof commits `[is_vadcop_final_proof | vk(4) | inputs]`
+/// as ONE public array; this proof re-exposes the flag-free rest as `publics_stripped`.
+pub fn gen_final_compressed(
+    stark_info: &Value,
+    verifier_filenames: &[String],
+    opts: &CircomGenOptions,
+) -> Result<String> {
+    let n_publics = stark_info["nPublics"].as_u64().unwrap_or(0) as usize;
+    let has_publics = if opts.has_recursion { n_publics > 4 } else { n_publics > 0 };
+    let (n, n_real) = if has_publics { (n_publics, n_publics.saturating_sub(1)) } else { (0, 0) };
+    let vd = vadcop_data(&Value::Null, &[], &[], 0, 0)?;
+    Ok(head(verifier_filenames, "recursion.circom", &[stark_info], true, true)
+        + &vd
+        + &main_line(&[], &format!("FinalCompressed({n}, {n_real})")))
+}
+
+/// The compressor of a basic air.
+pub fn gen_compressor(stark_info: &Value, verifier_filenames: &[String], vadcop_info: &Value) -> Result<String> {
+    let (ag, air) = air_id_vars(stark_info)?;
+    let vd = vadcop_data(vadcop_info, &[], &[], ag, air)?;
+    Ok(head(verifier_filenames, "recursion.circom", &[stark_info], true, true)
+        + &vd
+        + &main_line(&GLOBALS[..3], "Compressor()"))
+}
+
+/// A recursive1: one basic proof, one compressor proof, or `batch_size > 1` proofs of one air.
+pub fn gen_recursive1(
+    stark_info: &Value,
+    verifier_filenames: &[String],
+    vadcop_info: &Value,
+    _airgroup_id: usize,
+    opts: &CircomGenOptions,
+) -> Result<String> {
+    let k = opts.batch_size.max(1);
+    if k > super::MAX_RECURSIVE1_BATCH {
+        bail!("gen_recursive1: batch_size {k} exceeds the cap of {}", super::MAX_RECURSIVE1_BATCH);
     }
-    out += "\n";
-    out += &includes(verifier_filenames);
-    out += "include \"sha256_inputs.circom\";\n\ntemplate Main() {\n";
-    out += &defs;
-    out += "    signal output publicsHash;\n\n";
-    out += &define_stark_inputs(stark_info, "", &def_opts)?;
-    out += "\n";
-    out += &assign_stark_inputs("sV", "", stark_info, &def_opts, &EnableInput::None)?;
-    out += "\n    signal rootC[4];\n    for (var i = 0; i < 4; i++) {\n        rootC[i] <== publics[i];\n    }\n";
-    out += "    // The fold-layer flag: verified, not hashed.\n    signal is_vadcop_final_proof;\n    is_vadcop_final_proof <== publics[4];\n";
-    out += "    is_vadcop_final_proof * (1 - is_vadcop_final_proof) === 0;\n";
-    if n_proof >= 4 {
-        out += "    // An aggregate's program VK (slots 5..9) is the key it verified under, not a key it chose.\n";
-        out += "    for (var i = 0; i < 4; i++) {\n        (1 - is_vadcop_final_proof) * (rootC[i] - publics[5 + i]) === 0;\n    }\n";
+    let (ag, air) = air_id_vars(stark_info)?;
+    let vd = vadcop_data(vadcop_info, &[], &[], ag, air)?;
+    // Only a single compressor slot's values are public inputs; batched slots stay private (recursive2's nPublics).
+    let main = match (k, opts.has_compressor) {
+        (1, false) => main_line(&GLOBALS, "Recursive1()"),
+        (1, true) => main_line(&[&SV[..], &GLOBALS[..]].concat(), "Recursive1Compressed()"),
+        (k, c) => main_line(&GLOBALS, &format!("Recursive1Batched({k}, {})", u8::from(c))),
+    };
+    Ok(head(verifier_filenames, "recursion.circom", &[stark_info], true, true) + &vd + &main)
+}
+
+/// A recursive2 over `opts.agg_arity` proofs of airgroup `airgroup_id`.
+pub fn gen_recursive2(
+    stark_info: &Value,
+    verifier_filenames: &[String],
+    vadcop_info: &Value,
+    airgroup_id: usize,
+    basic_vk: &[Vec<String>],
+    opts: &CircomGenOptions,
+) -> Result<String> {
+    // `pub` in a library crate, so an external caller reaches this ahead of the CLI's `--agg-arity` check.
+    let agg_arity = opts.agg_arity;
+    if !proofman_common::global_info::is_valid_aggregation_arity(agg_arity) {
+        bail!(
+            "gen_recursive2: unsupported aggregation arity {agg_arity}; valid values: {:?}",
+            proofman_common::global_info::VALID_AGGREGATION_ARITIES
+        );
     }
-    out += &format!("    signal publicsProof[{n_proof}];\n    for (var i = 0; i < {n_proof}; i++) {{\n        publicsProof[i] <== publics[i + 5];\n    }}\n\n");
-    out += &format!("    publicsHash <== GetSha256Inputs({n_sha}, {n_defs}, DEFS)(publicsProof, rootC);\n}}\n\ncomponent main = Main();\n");
-    Ok(out)
+    let mut basics = vec![Vec::new(); airgroup_id + 1];
+    basics[airgroup_id] = basic_vk.to_vec();
+    let vd = vadcop_data(vadcop_info, &basics, &[], airgroup_id as u64, 0)?;
+    Ok(head(verifier_filenames, "recursion.circom", &[stark_info], true, true)
+        + &vd
+        + &main_line(&GLOBALS, &format!("Recursive2({agg_arity})")))
+}
+
+/// The vadcop_final over one recursive2 proof per airgroup, and the global constraints.
+pub fn gen_vadcop_final(
+    stark_infos: &[Value],
+    verifier_filenames: &[String],
+    vadcop_info: &Value,
+    basic_vk: &[Vec<Vec<String>>],
+    agg_vk: &[Vec<String>],
+) -> Result<String> {
+    let n_ag = vadcop_info["aggTypes"].as_array().map_or(0, Vec::len);
+    if stark_infos.len() != n_ag.max(1) || agg_vk.len() < n_ag || basic_vk.len() < n_ag {
+        bail!(
+            "gen_vadcop_final: {n_ag} airgroups, {} starkinfos, {} recursive2 and {} recursive1 key sets",
+            stark_infos.len(),
+            agg_vk.len(),
+            basic_vk.len()
+        );
+    }
+    let sis: Vec<&Value> = stark_infos.iter().collect();
+    let vd = vadcop_data(vadcop_info, basic_vk, agg_vk, 0, 0)?;
+    Ok(head(verifier_filenames, "final_vadcop.circom", &sis, true, true)
+        + &vd
+        + "\n"
+        + &gen_verify_global_constraints(vadcop_info)
+        + &main_line(&GLOBALS[..1], &format!("VadcopFinal({n_ag})")))
 }
 
 // ── Solidity contracts ────────────────────────────────────────────────────────
@@ -210,495 +293,6 @@ fn capitalise(s: &str) -> String {
         None => String::new(),
         Some(c) => c.to_uppercase().to_string() + chars.as_str(),
     }
-}
-
-// ── VADCOP templates ──────────────────────────────────────────────────────────
-
-/// The compressed vadcop_final circuit. The incoming proof commits `[is_vadcop_final_proof | vk(4) | inputs]`
-/// as ONE public array (the witness fill reads public inputs first, in order); this proof re-exposes
-/// the flag-free rest as `publics_stripped`.
-pub fn gen_final_compressed(
-    stark_info: &Value,
-    verifier_filenames: &[String],
-    opts: &CircomGenOptions,
-) -> Result<String> {
-    let n_publics = stark_info["nPublics"].as_u64().unwrap_or(0) as usize;
-    let n_real = n_publics.saturating_sub(1);
-    let has_publics = if opts.has_recursion { n_publics > 4 } else { n_publics > 0 };
-    let def_opts = StarkInputOptions { add_publics: false, is_final: false, parallel: false, shared_publics: false };
-    let mut out = format!(
-        "pragma circom 2.1.0;\npragma custom_templates;\n\n{}\ntemplate FinalCompressed() {{\n",
-        includes(verifier_filenames)
-    );
-    if has_publics {
-        out += &format!("    signal input publics[{n_publics}];\n    signal output publics_stripped[{n_real}];\n");
-    }
-    out += &define_stark_inputs(stark_info, "", &def_opts)?;
-    out += "\n";
-    out += &assign_stark_inputs("sV", "", stark_info, &def_opts, &EnableInput::None)?;
-    out += "\n";
-    if has_publics {
-        out +=
-            &format!("    for (var i = 0; i < {n_publics}; i++) {{\n        sV.publics[i] <== publics[i];\n    }}\n");
-        out += &format!(
-            "    for (var i = 0; i < {n_real}; i++) {{\n        publics_stripped[i] <== publics[i + 1];\n    }}\n"
-        );
-    }
-    out += "}\n\ncomponent main = FinalCompressed();\n";
-    Ok(out)
-}
-
-/// Port of `vadcop/templates/compressor.circom.ejs`.
-pub fn gen_compressor(stark_info: &Value, verifier_filenames: &[String], vadcop_info: &Value) -> Result<String> {
-    let airgroup_id = stark_info["airgroupId"].as_u64().unwrap_or(0) as usize;
-    let n_publics = vadcop_info["nPublics"].as_u64().unwrap_or(0) as usize;
-    let num_proof_values = parse_num_proof_values(&vadcop_info["numProofValues"]);
-
-    let def_opts = StarkInputOptions { add_publics: false, is_final: false, parallel: false, shared_publics: false };
-
-    let mut pub_names: Vec<&str> = Vec::new();
-    if n_publics > 0 {
-        pub_names.push("publics");
-    }
-    if num_proof_values > 0 {
-        pub_names.push("proofValues");
-    }
-    pub_names.push("globalChallenge");
-
-    let mut out = format!(
-        "pragma circom 2.1.0;\npragma custom_templates;\n\n{}include \"elliptic_curve.circom\";\ninclude \"circuit_type.circom\";\ninclude \"vadcop_hashes.circom\";\n\ntemplate Compressor() {{\n{}\n",
-        includes(verifier_filenames),
-        air_id_vars(stark_info)?
-    );
-    out += &when(n_publics > 0, format!("    // --> AIR public inputs\n    signal input publics[{n_publics}];\n\n"));
-    out += "    // --> VADCOP inputs\n";
-    out += &when(num_proof_values > 0, format!("    signal input proofValues[{num_proof_values}][3];\n"));
-    out += "    signal input globalChallenge[3];\n\n    // --> AIR STARK proof data\n";
-    out += &define_stark_inputs(stark_info, "", &def_opts)?;
-    out += "\n    // --> VADCOP outputs\n";
-    out += &define_vadcop_inputs(vadcop_info, airgroup_id, "sv", VadcopSignals::Output, None);
-    out += "\n    // --> Verify the STARK proof\n";
-    out += &assign_stark_inputs("sV", "", stark_info, &def_opts, &EnableInput::None)?;
-    out += "\n";
-    out += &when(
-        n_publics > 0,
-        format!("    for (var i=0; i< {n_publics}; i++) {{\n        sV.publics[i] <== publics[i];\n    }}\n\n"),
-    );
-    out += &init_vadcop_inputs("sV", "sv", "", airgroup_id, stark_info, vadcop_info, None)?;
-    out += &format!("\n}}\n\ncomponent main {{public [{}]}} = Compressor();\n", pub_names.join(", "));
-    Ok(out)
-}
-
-/// Port of `vadcop/templates/recursive1.circom.ejs`; `batch_size > 1` renders k proofs of one air.
-pub fn gen_recursive1(
-    stark_info: &Value,
-    verifier_filenames: &[String],
-    vadcop_info: &Value,
-    airgroup_id: usize,
-    opts: &CircomGenOptions,
-) -> Result<String> {
-    let has_compressor = opts.has_compressor;
-    let k = opts.batch_size.max(1);
-    if k > super::MAX_RECURSIVE1_BATCH {
-        bail!("gen_recursive1: batch_size {k} exceeds the cap of {}", super::MAX_RECURSIVE1_BATCH);
-    }
-    let n_publics = vadcop_info["nPublics"].as_u64().unwrap_or(0) as usize;
-    let num_proof_values = parse_num_proof_values(&vadcop_info["numProofValues"]);
-
-    let def_opts = StarkInputOptions { add_publics: false, is_final: false, parallel: false, shared_publics: false };
-    // The k proofs are of one air and one run, so their verifiers read the template's publics.
-    let assign_opts =
-        StarkInputOptions { add_publics: !has_compressor, is_final: false, parallel: k > 1, shared_publics: true };
-
-    let head = format!(
-        "pragma circom 2.1.0;\npragma custom_templates;\n\ninclude \"iszero.circom\";\ninclude \"circuit_type.circom\";\n{}",
-        if k == 1 { "" } else { "include \"agg_values.circom\";\ninclude \"acc_points.circom\";\n" }
-    );
-    let hashes = when(!has_compressor, "include \"elliptic_curve.circom\";\ninclude \"vadcop_hashes.circom\";\n");
-    let globals = format!(
-        "{}{}    signal input globalChallenge[3];\n\n    signal input rootCAgg[4];\n\n",
-        when(n_publics > 0, format!("    signal input publics[{n_publics}];\n")),
-        when(num_proof_values > 0, format!("    signal input proofValues[{num_proof_values}][3];\n"))
-    );
-
-    // Only a single compressor slot re-publishes the set it was handed; anything folded is output.
-    let mut publics_names: Vec<String> = Vec::new();
-    let mut out = format!(
-        "{head}{}{hashes}\ntemplate Recursive1() {{\n{}\n",
-        includes(verifier_filenames),
-        air_id_vars(stark_info)?
-    );
-    if k == 1 {
-        let outer = if has_compressor { VadcopSignals::Input } else { VadcopSignals::Output };
-        out += &define_vadcop_inputs(vadcop_info, airgroup_id, "sv", outer, Some(&mut publics_names));
-        out += "\n";
-        out += &define_stark_inputs(stark_info, "", &def_opts)?;
-        out += "\n";
-        out += &globals;
-        out += &assign_stark_inputs("sV", "", stark_info, &assign_opts, &EnableInput::None)?;
-        out += "\n\n";
-        out += &if !has_compressor {
-            init_vadcop_inputs("sV", "sv", "", airgroup_id, stark_info, vadcop_info, None)?
-        } else {
-            let av_opts = AssignVadcopOptions { add_prefix_agg_types: true, ..Default::default() };
-            assign_vadcop_inputs("sV", vadcop_info, airgroup_id, "sv", &av_opts)
-        };
-        out += "\n";
-    } else {
-        out += &define_vadcop_inputs(vadcop_info, airgroup_id, "sv", VadcopSignals::Output, None);
-        out += "\n";
-        out += &globals;
-        let letters: Vec<String> = (0..k).map(|i| ((b'a' + i as u8) as char).to_string()).collect();
-        let prefixes: Vec<String> = letters.iter().map(|l| format!("{l}_sv")).collect();
-        // Compressor slots receive their values; basic slots mint them.
-        let kind = if has_compressor { VadcopSignals::Input } else { VadcopSignals::Internal };
-        let av_opts = AssignVadcopOptions { add_prefix_agg_types: true, set_enable_input: true };
-        let (mut assign, mut vadcop) = (String::new(), String::new());
-        for (l, pfx) in letters.iter().zip(&prefixes) {
-            let comp = format!("v{}", l.to_uppercase());
-            out += &define_vadcop_inputs(vadcop_info, airgroup_id, pfx, kind, None);
-            out += "\n";
-            out += &define_stark_inputs(stark_info, l, &def_opts)?;
-            out += "\n";
-            let enable = if has_compressor { EnableInput::None } else { EnableInput::Expr(format!("1 - {l}_isNull")) };
-            assign += &assign_stark_inputs(&comp, l, stark_info, &assign_opts, &enable)?;
-            assign += "\n";
-            vadcop += &if has_compressor {
-                assign_vadcop_inputs(&comp, vadcop_info, airgroup_id, pfx, &av_opts)
-            } else {
-                init_vadcop_inputs(&comp, pfx, l, airgroup_id, stark_info, vadcop_info, Some(&format!("{l}_isNull")))?
-            };
-            vadcop += "\n";
-        }
-        if !has_compressor {
-            out += "    // 1 = empty slot, dropped from the fold and the count.\n";
-            out += &letters.iter().map(|l| format!("    signal input {l}_isNull;\n")).collect::<String>();
-            out += "\n";
-            out += &letters.iter().map(|l| format!("    {l}_isNull * ({l}_isNull - 1) === 0;\n")).collect::<String>();
-        }
-        out += "\n";
-        out += &assign;
-        out += &vadcop;
-        out += "\n";
-        out += &agg_types_consistency(vadcop_info, airgroup_id, &prefixes, has_compressor);
-        out += "\n\n";
-        let agg_opts = AggVadcopOptions { own_circuit_type: true, force_null: true };
-        out += &agg_vadcop_inputs(vadcop_info, airgroup_id, &prefixes, "sv", &agg_opts);
-        out += "\n\n    // An all-empty batch would prove nothing, and vadcop_final drops the count that shows it.\n";
-        out += "    signal {binary} noProofs <== IsZero()(sv_aggregatedProofs);\n    noProofs === 0;\n\n";
-        out += "    // The air's own type: the aggregated one would make recursive2 select rootCAgg.\n    sv_circuitType <== circuitType;\n";
-    }
-
-    // Only a single compressor slot's sv_* are public inputs; batched slots stay private (recursive2's nPublics).
-    let mut pub_names: Vec<String> = Vec::new();
-    if has_compressor && k == 1 {
-        pub_names.extend(publics_names);
-    }
-    if n_publics > 0 {
-        pub_names.push("publics".into());
-    }
-    if num_proof_values > 0 {
-        pub_names.push("proofValues".into());
-    }
-    pub_names.push("globalChallenge".into());
-    pub_names.push("rootCAgg".into());
-    out += &format!("}}\n\ncomponent main {{public [{}]}} = Recursive1();\n", pub_names.join(", "));
-    Ok(out)
-}
-
-/// Port of `vadcop/templates/recursive2.circom.ejs`.
-pub fn gen_recursive2(
-    stark_info: &Value,
-    verifier_filenames: &[String],
-    vadcop_info: &Value,
-    airgroup_id: usize,
-    basic_vk: &[Vec<String>],
-    opts: &CircomGenOptions,
-) -> Result<String> {
-    // `pub` in a library crate, so an external caller reaches this ahead of the CLI's
-    // `--agg-arity` check. Reject anything outside the supported set before it becomes a
-    // panicking slice index (`slot_prefixes[1..]` at 0) or nonsense slot names (past 'z').
-    let agg_arity = opts.agg_arity;
-    if !proofman_common::global_info::is_valid_aggregation_arity(agg_arity) {
-        bail!(
-            "gen_recursive2: unsupported aggregation arity {agg_arity}; valid values: {:?}",
-            proofman_common::global_info::VALID_AGGREGATION_ARITIES
-        );
-    }
-
-    let n_publics_raw = stark_info["nPublics"].as_u64().unwrap_or(0) as usize;
-    let n_publics_vad = vadcop_info["nPublics"].as_u64().unwrap_or(0) as usize;
-    let num_proof_values = parse_num_proof_values(&vadcop_info["numProofValues"]);
-    let air_groups_len = vadcop_info["air_groups"].as_array().map(|a| a.len()).unwrap_or(0);
-    let airs_0_len =
-        vadcop_info["airs"].as_array().and_then(|a| a.first()).and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0);
-    let multi_air = air_groups_len > 1 || airs_0_len > 1;
-    let airs_in_group = vadcop_info["airs"]
-        .as_array()
-        .and_then(|a| a.get(airgroup_id))
-        .and_then(|v| v.as_array())
-        .map(|a| a.len())
-        .unwrap_or(0);
-
-    let def_opts = StarkInputOptions { add_publics: false, is_final: false, parallel: false, shared_publics: false };
-    let par_opts = StarkInputOptions { add_publics: false, is_final: false, parallel: true, shared_publics: false };
-    let av_opts = AssignVadcopOptions { add_prefix_agg_types: true, set_enable_input: multi_air };
-
-    // rootCBasics inline array assignments
-    let rootc_basics: String = basic_vk
-        .iter()
-        .enumerate()
-        .map(|(i, vk)| format!("    rootCBasics[{i}] = [{}];", vk.join(",")))
-        .collect::<Vec<_>>()
-        .join("\n");
-
-    // Slot names come from the index, so N=3 still emits a/b/c and the generated
-    // circom is unchanged.
-    let slot_names: Vec<String> = (0..agg_arity).map(|i| ((b'a' + i as u8) as char).to_string()).collect();
-    let slot_prefixes: Vec<String> = slot_names.iter().map(|s| format!("{s}_sv")).collect();
-
-    let sel_fn = if multi_air { "SelectVerificationKeyNull" } else { "SelectVerificationKey" };
-
-    let mut pub_names: Vec<&str> = Vec::new();
-    if n_publics_vad > 0 {
-        pub_names.push("publics");
-    }
-    if num_proof_values > 0 {
-        pub_names.push("proofValues");
-    }
-    pub_names.push("globalChallenge");
-    pub_names.push("rootCAgg");
-
-    let mut out = format!(
-        "pragma circom 2.1.0;\npragma custom_templates;\n\ninclude \"select_vk.circom\";\ninclude \"agg_values.circom\";\ninclude \"acc_points.circom\";\n\n{}",
-        includes(verifier_filenames)
-    );
-    out += &format!(
-        "template Recursive2() {{\n    var airgroupId = {airgroup_id};\n    var circuitType = circuitTypeOf(airgroupId, 0);\n    var rootCBasics[{airs_in_group}][4];\n\n{rootc_basics}\n"
-    );
-    out += &define_vadcop_inputs(vadcop_info, airgroup_id, "sv", VadcopSignals::Output, None);
-    out += "\n";
-    out += &when(n_publics_vad > 0, format!("    signal input publics[{n_publics_vad}];\n"));
-    out += &when(num_proof_values > 0, format!("    signal input proofValues[{num_proof_values}][3];\n"));
-    out += "    signal input globalChallenge[3];\n    signal input rootCAgg[4];\n\n";
-    let slots: Vec<(String, String, String)> = slot_names
-        .iter()
-        .zip(&slot_prefixes)
-        .map(|(name, prefix)| (name.clone(), name.to_uppercase(), prefix.clone()))
-        .collect();
-    for (name, _, prefix) in &slots {
-        out += &define_vadcop_inputs(vadcop_info, airgroup_id, prefix, VadcopSignals::Input, None);
-        out += "\n";
-        out += &define_stark_inputs(stark_info, name, &def_opts)?;
-        out += "\n";
-    }
-    out += &agg_types_consistency(vadcop_info, airgroup_id, &slot_prefixes, false);
-    out += "\n";
-    for (name, upper, _) in &slots {
-        out += &assign_stark_inputs(&format!("v{upper}"), name, stark_info, &par_opts, &EnableInput::None)?;
-        out += "\n";
-    }
-    for (_, upper, prefix) in &slots {
-        out += &assign_vadcop_inputs(&format!("v{upper}"), vadcop_info, airgroup_id, prefix, &av_opts);
-        out += "\n";
-    }
-    for (_, upper, prefix) in &slots {
-        out += &format!("    v{upper}.rootC <== {sel_fn}({airs_in_group}, airgroupId)({prefix}_circuitType, rootCBasics, rootCAgg);\n");
-    }
-    out += "\n";
-    out += &agg_vadcop_inputs(vadcop_info, airgroup_id, &slot_prefixes, "sv", &Default::default());
-    out += "\n\n    for (var i=0; i<4; i++) {\n";
-    for (_, upper, _) in &slots {
-        out += &format!("        v{upper}.publics[{} + i] <== rootCAgg[i];\n", n_publics_raw - 4);
-    }
-    out += &format!("    }}\n}}\n\ncomponent main {{public [{}]}} = Recursive2();\n", pub_names.join(", "));
-    Ok(out)
-}
-
-/// Port of `vadcop/templates/final.circom.ejs`.
-pub fn gen_vadcop_final(
-    stark_infos: &[Value],
-    verifier_filenames: &[String],
-    vadcop_info: &Value,
-    basic_vk: &[Vec<Vec<String>>],
-    agg_vk: &[Vec<String>],
-) -> Result<String> {
-    let stark_info_0 = stark_infos.first().unwrap_or(&Value::Null);
-    let agg_types = vadcop_info["aggTypes"].as_array().cloned().unwrap_or_default();
-    let n_publics = vadcop_info["nPublics"].as_u64().unwrap_or(0) as usize;
-    let num_proof_values = parse_num_proof_values(&vadcop_info["numProofValues"]);
-    let proof_values_map = vadcop_info["proofValuesMap"].as_array().cloned().unwrap_or_default();
-    let multi_air_groups = vadcop_info["air_groups"].as_array().map(|a| a.len()).unwrap_or(0) > 1;
-    let air_groups_len = vadcop_info["air_groups"].as_array().map(|a| a.len()).unwrap_or(0);
-    let airs_0_len =
-        vadcop_info["airs"].as_array().and_then(|a| a.first()).and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0);
-    let multi_air = air_groups_len > 1 || airs_0_len > 1;
-
-    let def_opts = StarkInputOptions { add_publics: false, is_final: false, parallel: false, shared_publics: false };
-    let av_opts = AssignVadcopOptions { add_prefix_agg_types: true, set_enable_input: multi_air };
-
-    // Pre-render per-airgroup define and assign sections
-    let mut define_sections: Vec<String> = Vec::new();
-    let mut assign_sections: Vec<String> = Vec::new();
-
-    for (i, _) in agg_types.iter().enumerate() {
-        let si = if multi_air_groups { stark_infos.get(i).unwrap_or(stark_info_0) } else { stark_info_0 };
-
-        let mut section = String::new();
-        section.push_str(&define_vadcop_inputs(vadcop_info, i, &format!("s{i}_sv"), VadcopSignals::Input, None));
-        section.push_str(&define_stark_inputs(si, &format!("s{i}"), &def_opts)?);
-        define_sections.push(section);
-
-        let n_pub_raw = si["nPublics"].as_u64().unwrap_or(0) as usize;
-        let agg_vk_i = agg_vk.get(i).with_context(|| format!("no recursive2 verification key for airgroup {i}"))?;
-        let basic_vk_i =
-            basic_vk.get(i).with_context(|| format!("no recursive1 verification keys for airgroup {i}"))?;
-        let airs_i_len = vadcop_info["airs"]
-            .as_array()
-            .and_then(|a| a.get(i))
-            .and_then(|v| v.as_array())
-            .map(|a| a.len())
-            .unwrap_or(0);
-        let sel_fn = if multi_air { "SelectVerificationKeyNull" } else { "SelectVerificationKey" };
-
-        let vk_lines: String = basic_vk_i
-            .iter()
-            .enumerate()
-            .map(|(j, bvk)| format!("    s{i}_sv_rootCBasics[{j}] = [{}];", bvk.join(",")))
-            .collect::<Vec<_>>()
-            .join("\n");
-
-        let mut section = String::new();
-        section.push_str(&assign_stark_inputs(&format!("sV{i}"), &format!("s{i}"), si, &def_opts, &EnableInput::None)?);
-        section.push_str(&assign_vadcop_inputs(&format!("sV{i}"), vadcop_info, i, &format!("s{i}_sv"), &av_opts));
-        section.push_str(&format!("    var s{i}_sv_rootCAgg[4] = [{}];\n", agg_vk_i.join(",")));
-        section.push_str(&format!("    var s{i}_sv_rootCBasics[{airs_i_len}][4];\n\n"));
-        section.push_str(&vk_lines);
-        section.push('\n');
-        section.push_str(&format!(
-            "    sV{i}.rootC <== {sel_fn}({airs_i_len}, {i})(s{i}_sv_circuitType, s{i}_sv_rootCBasics, s{i}_sv_rootCAgg);\n"
-        ));
-        section.push_str(&format!(
-            "    for (var i = 0; i < 4; i++) {{\n        sV{i}.publics[{} + i] <== s{i}_sv_rootCAgg[i];\n    }}\n",
-            n_pub_raw - 4
-        ));
-        assign_sections.push(section);
-    }
-
-    // A null proof leaves its airgroup's values unconstrained, so the global checks must
-    // see what an airgroup with no instances contributes, never the prover's values.
-    // A single airgroup can never be null (the proof count below), so it needs no mask.
-    let mask_null = multi_air && agg_types.len() > 1;
-    let curve = vadcop_info["curve"].as_str().unwrap_or("None");
-    let lattice_size = vadcop_info["latticeSize"].as_u64().unwrap_or(0) as usize;
-    let src = |i: usize, what: &str| if mask_null { format!("s{i}_masked_{what}") } else { format!("s{i}_sv_{what}") };
-    let mut null_sections: Vec<String> = Vec::new();
-    if mask_null {
-        for (i, ag) in agg_types.iter().enumerate() {
-            let mut section = String::new();
-            if curve == "None" {
-                section.push_str(&format!(
-                    "    signal s{i}_masked_stage1Hash[{lattice_size}];\n    for (var k = 0; k < {lattice_size}; k++) {{\n        s{i}_masked_stage1Hash[k] <== (1 - s{i}_sv_isNull) * s{i}_sv_stage1Hash[k];\n    }}\n"
-                ));
-            } else {
-                section.push_str(&format!(
-                    "    signal s{i}_masked_stage1Hash[2][5];\n    for (var k = 0; k < 2; k++) {{\n        for (var l = 0; l < 5; l++) {{\n            s{i}_masked_stage1Hash[k][l] <== (1 - s{i}_sv_isNull) * s{i}_sv_stage1Hash[k][l];\n        }}\n    }}\n"
-                ));
-            }
-            let types = ag.as_array().cloned().unwrap_or_default();
-            if !types.is_empty() {
-                section.push_str(&format!("    signal s{i}_masked_airgroupvalues[{}][3];\n", types.len()));
-                for (j, t) in types.iter().enumerate() {
-                    // The identity of the aggregation: 0 for a sum, 1 for a product.
-                    let v = format!("s{i}_sv_airgroupvalues[{j}]");
-                    let first = if t["aggType"].as_u64() == Some(1) {
-                        format!("{v}[0] + s{i}_sv_isNull * (1 - {v}[0])")
-                    } else {
-                        format!("(1 - s{i}_sv_isNull) * {v}[0]")
-                    };
-                    section.push_str(&format!(
-                        "    s{i}_masked_airgroupvalues[{j}] <== [{first}, (1 - s{i}_sv_isNull) * {v}[1], (1 - s{i}_sv_isNull) * {v}[2]];\n"
-                    ));
-                }
-            }
-            null_sections.push(section);
-        }
-    }
-
-    // (verifyGlobalConstraints input, source) for each airgroup that has airgroupvalues
-    let airgroupvalues_wires: Vec<(String, String)> = agg_types
-        .iter()
-        .enumerate()
-        .filter(|(_, ag)| ag.as_array().map(|a| a.len()).unwrap_or(0) > 0)
-        .map(|(i, _)| (format!("s{i}_airgroupvalues"), src(i, "airgroupvalues")))
-        .collect();
-    let stage1hash_srcs: Vec<String> = (0..agg_types.len()).map(|i| src(i, "stage1Hash")).collect();
-
-    let has_pv = num_proof_values > 0 || !proof_values_map.is_empty();
-    let n_ag = agg_types.len();
-    let mut out = format!(
-        "pragma circom 2.1.0;\npragma custom_templates;\n\n{}include \"iszero.circom\";\ninclude \"select_vk.circom\";\ninclude \"agg_values.circom\";\ninclude \"vadcop_hashes.circom\";\n\n{}\n\n",
-        includes(verifier_filenames),
-        gen_verify_global_constraints(vadcop_info)
-    );
-    out += "template Final() {\n    signal output is_vadcop_final_proof <== 1;\n\n";
-    out += &when(n_publics > 0, format!("    signal input publics[{n_publics}];\n"));
-    out += &when(has_pv, format!("    signal input proofValues[{num_proof_values}][3];\n"));
-    out += "    signal input globalChallenge[3];\n\n";
-    for sec in define_sections.iter().chain(&assign_sections).chain(&null_sections) {
-        out += sec;
-        out += "\n";
-    }
-    // The global challenge is the transcript of the publics, stage-1 proof values and contributions.
-    let pv: Vec<String> = proof_values_map.iter().map(|v| v["stage"].as_u64().unwrap_or(0).to_string()).collect();
-    let w = if curve == "None" { lattice_size } else { 10 };
-    out += &format!(
-        "    component verifyChallenges = VerifyGlobalChallenges({n_publics}, {}, [{}], {n_ag}, {w});\n",
-        pv.len(),
-        if pv.is_empty() { "0".to_string() } else { pv.join(", ") }
-    );
-    out += &if n_publics > 0 {
-        "    verifyChallenges.publics <== publics;\n".to_string()
-    } else {
-        "    verifyChallenges.publics <== [0];\n".into()
-    };
-    out += &if pv.is_empty() {
-        "    verifyChallenges.proofValues <== [[0, 0, 0]];\n".to_string()
-    } else {
-        "    verifyChallenges.proofValues <== proofValues;\n".into()
-    };
-    for (i, src) in stage1hash_srcs.iter().enumerate() {
-        out += &if curve == "None" {
-            format!("    verifyChallenges.stage1Hash[{i}] <== {src};\n")
-        } else {
-            let flat: Vec<String> = (0..10).map(|k| format!("{src}[{}][{}]", k / 5, k % 5)).collect();
-            format!("    verifyChallenges.stage1Hash[{i}] <== [{}];\n", flat.join(", "))
-        };
-    }
-    out += "    verifyChallenges.globalChallenge <== globalChallenge;\n\n";
-    out += "    // Verify global constraints\n    component verifyGlobalConstraints = VerifyGlobalConstraints();\n";
-    out += &when(n_publics > 0, "    verifyGlobalConstraints.publics <== publics;\n");
-    out += &when(has_pv, "    verifyGlobalConstraints.proofValues <== proofValues;\n");
-    out += "    verifyGlobalConstraints.globalChallenge <== globalChallenge;\n";
-    for (dst, src) in &airgroupvalues_wires {
-        out += &format!("    verifyGlobalConstraints.{dst} <== {src};\n");
-    }
-    out += &format!("    signal {{binary}} isNull[{n_ag}];\n    signal nAggregatedProofs[{n_ag}];\n");
-    for i in 0..n_ag {
-        out += &if multi_air {
-            format!("    isNull[{i}] <== s{i}_sv_isNull;\n")
-        } else {
-            format!("    isNull[{i}] <== IsZero()(s{i}_sv_circuitType);\n")
-        };
-        out += &format!("    nAggregatedProofs[{i}] <== s{i}_sv_aggregatedProofs;\n");
-    }
-    out += &if multi_air {
-        format!("    signal totalAggregatedProofs <== AggregateProofsNull({n_ag})(nAggregatedProofs, isNull);\n    signal noAggregatedProofs <== IsZero()(totalAggregatedProofs);\n    noAggregatedProofs === 0;\n")
-    } else {
-        format!("    _ <== AggregateProofsNull({n_ag})(nAggregatedProofs, isNull);\n")
-    };
-    out += &format!("}}\n\ncomponent main {}= Final();\n", if n_publics > 0 { "{public [publics]} " } else { "" });
-    Ok(out)
 }
 
 #[cfg(test)]
@@ -836,20 +430,16 @@ mod tests {
         );
     }
 
-    /// The include graph of the final circuit around a recursivef with custom trees, which circom
-    /// checks before anything else: every file on the way to a custom template declares
-    /// `pragma custom_templates;` (CG04 otherwise), and no template is defined twice (T2008). The
-    /// final circuit's head (its pragmas, the verifier's include and the publics hash, with its own
-    /// includes) and the verifier's (its pragmas and includes), as the templates render them, are
-    /// compiled over the libraries of the snark setup, with a main that instantiates
-    /// `CustomPoseidon`, `LessThanGoldilocks` and two `RangeCheck`s, whose custom gates the r1cs
-    /// has. The whole circuit, from a real recursivef, is compiled by setup-snark's
-    /// `pilfflonk_final_circuit` test.
+    /// The whole final circuit around a recursivef with custom trees, as setup-snark compiles it: the
+    /// static library, the key's data and constraints, the main's dispatch. circom checks the include
+    /// graph (CG04: `pragma custom_templates;` on every file on the way to a custom template), every
+    /// template call and signal access, and the r1cs has the custom gates of the Poseidon tree and of
+    /// the publics hash.
     ///
     /// Needs circomlib, from `npm install` in `setup/pil2-stark`; without it the test says so and
     /// passes.
     #[test]
-    fn custom_final_includes_compile() {
+    fn custom_final_compiles() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let circomlib = root.join("setup/pil2-stark/node_modules/circomlib/circuits");
         if !circomlib.is_dir() {
@@ -861,28 +451,20 @@ mod tests {
 
         let stark_info = recursivef_stark_info(true);
         let verifier_info = json!({ "constraintDag": { "version": 1, "field": "gl", "extDim": 3, "nodes": [[5, 1, 0, 0]], "roots": [[0, 0, "c"]] } });
-        let opts = Pil2CircomOptions { skip_main: true, ..Pil2CircomOptions::default() };
         let root_c = ["1".to_string(), "0".to_string(), "0".to_string(), "0".to_string()];
-        let verifier = gen_stark_verifier_bn128(Some(&root_c), &stark_info, &verifier_info, &opts).unwrap();
-        let verifier_head = &verifier[..verifier.find("\ntemplate ").expect("a template in the verifier")];
-        let circuit = final_circuit(true);
-        let circuit_head = &circuit[..circuit.find("template Main()").expect("the final circuit's Main")];
+        let verifier =
+            gen_stark_verifier_bn128(Some(&root_c), &stark_info, &verifier_info, &Pil2CircomOptions::default())
+                .unwrap();
+        let publics =
+            json!({"nPublics": 1, "definitions": [{"name": "x", "initialPos": 0, "nValues": 1, "chunks": [1, 64]}]});
+        let circuit =
+            gen_recursion_final(&stark_info, &["recursivef.verifier.circom".to_string()], Some(&publics)).unwrap();
 
-        let dir = std::env::temp_dir().join(format!("custom_final_includes_{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("custom_final_{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
-        fs::write(dir.join("recursivef.verifier.circom"), verifier_head).unwrap();
-        const MAIN: &str = r#"template Main() {
-    signal input in[4];
-    signal output hash[5] <== CustomPoseidon(4)(in, 0);
-    signal output gl <== LessThanGoldilocks()(in[0]);
-    RangeCheck(65)(in[1]);
-    RangeCheck(154)(in[2]);
-}
-
-component main = Main();
-"#;
-        fs::write(dir.join("final.circom"), format!("{circuit_head}{MAIN}")).unwrap();
+        fs::write(dir.join("recursivef.verifier.circom"), verifier).unwrap();
+        fs::write(dir.join("final.circom"), circuit).unwrap();
 
         // The libraries of `snark_setup.rs`'s final compile, in its order.
         let out = Command::new(&circom)
@@ -900,27 +482,17 @@ component main = Main();
         let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
         assert!(out.status.success(), "circom failed:\n{stderr}{}", String::from_utf8_lossy(&out.stdout));
 
-        // The custom templates are compiled as such, the custom ones of LessThanGoldilocks among
-        // them: a Num2Bytes(64) on its in and one on in + 2^64 - p. RangeCheck(154) takes two, on
-        // its low 80 bits and on the rest.
         let r1cs = read_r1cs_from_bytes::<Bn128>(&fs::read(dir.join("final.r1cs")).unwrap()).unwrap();
-        let gate = |id: u32| {
-            let gate = &r1cs.custom_gates[id as usize];
-            let parameters: Vec<String> = gate.parameters.iter().map(Bn128::to_string).collect();
-            format!("{}({})", gate.template_name, parameters.join(", "))
-        };
-        let mut uses: Vec<String> = r1cs.custom_gates_uses.iter().map(|gate_use| gate(gate_use.id)).collect();
-        uses.sort();
-        assert_eq!(
-            uses,
-            ["Num2Bytes(64)", "Num2Bytes(64)", "Num2Bytes(65)", "Num2Bytes(74)", "Num2Bytes(80)", "PoseidonT(5)"]
-        );
+        let mut names: Vec<String> = r1cs.custom_gates.iter().map(|g| g.template_name.clone()).collect();
+        names.sort();
+        names.dedup();
+        assert!(names.contains(&"PoseidonT".to_string()) && names.contains(&"Num2Bytes".to_string()), "{names:?}");
         let _ = fs::remove_dir_all(&dir);
     }
 }
 
 #[cfg(test)]
-mod recursive1_batch_tests {
+mod main_tests {
     use super::*;
 
     /// Two airs in the group, so type 0 stays reserved for a null proof.
@@ -933,82 +505,42 @@ mod recursive1_batch_tests {
     }
 
     fn stark_info() -> Value {
-        serde_json::json!({
-            "airId": 1, "airgroupId": 0, "circuitType": 5, "nStages": 2, "nPublics": 12, "nConstants": 2,
-            "mapSectionsN": { "cm1": 3, "cm2": 6, "cm3": 3 },
-            "customCommits": [], "customCommitsMap": [], "evMap": [{"type": "cm", "id": 0, "openingPos": 0}],
-            "airValuesMap": [], "challengesMap": [], "openingPoints": [0], "qDeg": 1, "qDim": 3, "cExpId": 0, "security": {"regime": "test"},
-            "starkStruct": {
-                "nBits": 10, "nBitsExt": 11, "merkleTreeArity": 2, "transcriptArity": 2,
-                "merkleTreeCustom": false, "verificationHashType": "GL",
-                "lastLevelVerification": 4, "hashCommits": true,
-                "foldingFactors": [6], "logDegrees": [10, 4], "logDomainSizes": [11, 5],
-                "numQueries": 8, "grindingBitsQueries": 24
-            }
-        })
+        serde_json::json!({ "airId": 1, "airgroupId": 0, "circuitType": 5 })
+    }
+
+    fn opts(k: usize, has_compressor: bool) -> CircomGenOptions {
+        CircomGenOptions { airgroup_id: Some(0), has_compressor, has_recursion: false, agg_arity: 2, batch_size: k }
     }
 
     fn gen(k: usize, has_compressor: bool) -> String {
-        let opts = CircomGenOptions {
-            airgroup_id: Some(0),
-            has_compressor,
-            has_recursion: false,
-            agg_arity: 2,
-            batch_size: k,
-        };
-        gen_recursive1(&stark_info(), &["v.circom".into()], &vadcop(), 0, &opts).unwrap()
+        gen_recursive1(&stark_info(), &["v.circom".into()], &vadcop(), 0, &opts(k, has_compressor)).unwrap()
     }
 
-    /// k=1 renders the circuit that shipped before batching: one `sV`, no prefixes, no fold.
+    /// A main is data: the verifier's include, the keys' dispatch, the vadcop data and the main line.
     #[test]
-    fn one_slot_is_the_unbatched_circuit() {
+    fn mains_are_data_over_static_templates() {
         let out = gen(1, false);
-        assert!(out.contains("component sV = StarkVerifier"), "{out}");
-        assert!(!out.contains("a_sv_"), "no slot prefixes at k=1");
-        assert!(!out.contains("agg_values.circom"), "no aggregation at k=1");
-        assert!(out.contains("sv_aggregatedProofs <== 1;"));
+        assert!(out.contains("include \"v.circom\";\ninclude \"recursion.circom\";"), "{out}");
+        assert!(out.contains("function svd_nBits(k) { return sv0_nBits(); }"), "{out}");
+        assert!(out.contains("roots <== ConstraintRoots0()(evals, challenges"), "{out}");
+        assert!(out.contains("function vd_airId() { return 1; }"), "{out}");
+        let templates: Vec<&str> = out.lines().filter(|l| l.starts_with("template ")).collect();
+        assert_eq!(templates, ["template ConstraintRootsAt(k) {"], "{out}");
+        assert!(out
+            .ends_with("component main {public [publics, proofValues, globalChallenge, rootCAgg]} = Recursive1();\n"));
     }
 
     #[test]
-    fn each_slot_gets_its_own_verifier_switched_by_its_own_null_flag() {
-        let out = gen(3, false);
-        for (l, comp) in [("a", "vA"), ("b", "vB"), ("c", "vC")] {
-            // `parallel`, like recursive2's slots: the k verifiers are independent.
-            assert!(out.contains(&format!("component {comp} = parallel StarkVerifier")), "slot {l} verifier");
-            assert!(out.contains(&format!("signal input {l}_isNull;")), "slot {l} flag");
-            assert!(out.contains(&format!("{l}_isNull * ({l}_isNull - 1) === 0;")), "slot {l} binary");
-            assert!(out.contains(&format!("{comp}.enable <== 1 - {l}_isNull;")), "slot {l} enable");
-        }
-        assert!(!out.contains("vD"), "only k verifiers");
-    }
-
-    /// Slots mint their types, so the consistency check must follow them.
-    #[test]
-    fn the_consistency_check_comes_after_the_slots_mint_their_types() {
-        let out = gen(2, false);
-        let mint = out.find("a_sv_aggregationTypes <== ").expect("the slot mints its types");
-        let read = out.find("aggregationTypes[i] <== a_sv_aggregationTypes[i]").expect("the check reads them");
-        assert!(mint < read, "the check at {read} reads what is only assigned at {mint}");
-    }
-
-    /// Every verifier reads the template's own `publics`; prefixing named a signal nothing declares.
-    #[test]
-    fn every_slot_reads_the_templates_own_publics() {
-        let out = gen(3, false);
-        assert!(out.contains("vA.publics[i] <== publics[i];"), "{out}");
-        assert!(out.contains("vC.publics[i] <== publics[i];"));
-        for l in ["a", "b", "c"] {
-            assert!(!out.contains(&format!("{l}_publics[")), "slot {l} must not have publics of its own");
-        }
+    fn each_recursive1_shape_has_its_template() {
+        assert!(gen(1, true).ends_with("component main {public [sv_circuitType, sv_aggregatedProofs, sv_aggregationTypes, sv_airgroupvalues, sv_stage1Hash, publics, proofValues, globalChallenge, rootCAgg]} = Recursive1Compressed();\n"));
+        assert!(gen(2, false).ends_with("= Recursive1Batched(2, 0);\n"));
+        assert!(gen(3, true).ends_with("= Recursive1Batched(3, 1);\n"));
     }
 
     #[test]
-    fn the_fold_keeps_the_airs_circuit_type() {
-        let out = gen(2, false);
-        assert!(out.contains("var circuitType = circuitTypeOf(airgroupId, airId + 1);"), "{out}");
-        assert!(out.contains("include \"circuit_type.circom\";"), "{out}");
-        assert!(out.contains("sv_circuitType <== circuitType;"), "the air's own type\n{out}");
-        assert!(!out.contains("sv_circuitType <== 1;"), "must not claim the aggregated type");
+    fn past_the_cap_it_refuses() {
+        let o = opts(super::super::MAX_RECURSIVE1_BATCH + 1, false);
+        assert!(gen_recursive1(&stark_info(), &["v.circom".into()], &vadcop(), 0, &o).is_err());
     }
 
     /// Each recursive2 accepts only its own airgroup's types, and so does each final slot.
@@ -1019,74 +551,38 @@ mod recursive1_batch_tests {
             "airs": [[{"name": "a"}, {"name": "b"}], [{"name": "c"}]], "curve": "None", "latticeSize": 368,
             "nPublics": 2, "numProofValues": [0], "hash": "blake3"
         });
-        let opts = CircomGenOptions {
+        let vk = vec!["1".to_string(), "2".into(), "3".into(), "4".into()];
+        let si = |ag: u64| serde_json::json!({ "airId": 0, "airgroupId": ag });
+        let o = CircomGenOptions {
             airgroup_id: Some(1),
             has_compressor: false,
             has_recursion: true,
             agg_arity: 2,
             batch_size: 1,
         };
-        let vk = vec!["1".to_string(), "2".into(), "3".into(), "4".into()];
-        let rec2 =
-            gen_recursive2(&stark_info(), &["v.circom".into()], &vadcop, 1, std::slice::from_ref(&vk), &opts).unwrap();
-        assert!(rec2.contains("var airgroupId = 1;"), "{rec2}");
-        assert!(rec2.contains("var circuitType = circuitTypeOf(airgroupId, 0);"), "{rec2}");
-        assert!(rec2.contains(", airgroupId)("), "{rec2}");
+        let rec2 = gen_recursive2(&si(1), &["v.circom".into()], &vadcop, 1, std::slice::from_ref(&vk), &o).unwrap();
+        assert!(rec2.contains("function vd_airgroupId() { return 1; }"), "{rec2}");
+        assert!(
+            rec2.contains("function vd_nBasics(i) { if (i == 0) { return 0; } if (i == 1) { return 1; } return 0; }"),
+            "{rec2}"
+        );
+        assert!(rec2.ends_with("= Recursive2(2);\n"), "{rec2}");
 
         let fin = gen_vadcop_final(
-            &[stark_info(), stark_info()],
+            &[si(0), si(1)],
             &["v0.circom".into(), "v1.circom".into()],
             &vadcop,
             &[vec![vk.clone(), vk.clone()], vec![vk.clone()]],
             &[vk.clone(), vk],
         )
         .unwrap();
-        assert!(fin.contains("SelectVerificationKeyNull(2, 0)("), "{fin}");
-        assert!(fin.contains("SelectVerificationKeyNull(1, 1)("), "{fin}");
-    }
-
-    /// A short batch has to prove, so the fold is null-aware and the count comes from the flags.
-    #[test]
-    fn a_short_batch_folds_through_the_null_templates() {
-        let out = gen(2, false);
-        assert!(out.contains("AggregateProofsNull(2)"), "{out}");
-        assert!(out.contains("AggregateAirgroupValuesNull()"));
-        assert!(out.contains("agg_values.circom"), "the null templates have to be included");
-    }
-
-    /// A valid recursive1 carrying nothing, and vadcop_final discards the count that would expose it.
-    #[test]
-    fn an_all_empty_batch_is_unprovable() {
-        for has_compressor in [false, true] {
-            let out = gen(2, has_compressor);
-            assert!(out.contains("noProofs <== IsZero()(sv_aggregatedProofs);"), "{out}");
-            assert!(out.contains("noProofs === 0;"));
-        }
-    }
-
-    /// The values arrive with the proof, so the flag comes from the type rather than an input.
-    #[test]
-    fn the_compressor_path_takes_its_null_flag_from_the_proof() {
-        let out = gen(2, true);
-        assert!(out.contains("signal input a_sv_circuitType;"), "{out}");
-        assert!(out.contains("a_sv_isNull <== IsZero()(a_sv_circuitType);"));
-        assert!(out.contains("vA.enable <== 1 - a_sv_isNull;"));
-        assert!(!out.contains("signal input a_isNull;"), "no separate flag when the type carries it");
-        // Private, or `plonk2pil`'s nPublics runs past the starkinfo r1 borrows from r2.
-        let main = out.rsplit("component main").next().unwrap();
-        assert!(!main.contains("a_sv_"), "no slot value belongs in the public list: {main}");
-    }
-
-    #[test]
-    fn past_the_cap_it_refuses() {
-        let opts = CircomGenOptions {
-            airgroup_id: Some(0),
-            has_compressor: false,
-            has_recursion: false,
-            agg_arity: 2,
-            batch_size: super::super::MAX_RECURSIVE1_BATCH + 1,
-        };
-        assert!(gen_recursive1(&stark_info(), &["v.circom".into()], &vadcop(), 0, &opts).is_err());
+        assert!(fin.contains("include \"final_vadcop.circom\";"), "{fin}");
+        assert!(
+            fin.contains("function svd_nBits(k) { if (k == 0) { return sv0_nBits(); } return sv1_nBits(); }"),
+            "{fin}"
+        );
+        assert!(fin.contains("template VerifyGlobalConstraints() {"), "{fin}");
+        assert!(fin.ends_with("component main {public [publics]} = VadcopFinal(2);\n"), "{fin}");
     }
 }
 
@@ -1094,41 +590,15 @@ mod recursive1_batch_tests {
 mod solidity_version_tests {
     use super::*;
 
-    fn recursion_final(n_publics: u64) -> String {
-        let stark_info = serde_json::json!({
-            "airId": 0, "airgroupId": 0, "nStages": 2, "nPublics": n_publics, "nConstants": 2,
-            "mapSectionsN": { "cm1": 3, "cm2": 6, "cm3": 3 },
-            "customCommits": [], "customCommitsMap": [], "evMap": [{"type": "cm", "id": 0, "openingPos": 0}],
-            "airValuesMap": [], "challengesMap": [], "openingPoints": [0], "qDeg": 1, "qDim": 3, "cExpId": 0, "security": {"regime": "test"},
-            "starkStruct": {
-                "nBits": 10, "nBitsExt": 11, "merkleTreeArity": 2, "transcriptArity": 2,
-                "merkleTreeCustom": false, "verificationHashType": "BN128",
-                "lastLevelVerification": 4, "hashCommits": true,
-                "foldingFactors": [6], "logDegrees": [10, 4], "logDomainSizes": [11, 5],
-                "numQueries": 8, "grindingBitsQueries": 24
-            }
-        });
-        gen_recursion_final(&stark_info, &["v.circom".into()], None).unwrap()
-    }
-
-    /// An aggregate (flag 0) must declare as its program VK the key it was verified under, or a
-    /// fold over a child verified under its own declared key would wrap under the recurser's key.
+    /// The final circuit's main: the publics definitions as data, the static FinalSnark.
     #[test]
-    fn recursion_final_binds_an_aggregate_program_vk_to_its_root_c() {
-        let out = recursion_final(73);
-        assert!(
-            out.contains("(1 - is_vadcop_final_proof) * (rootC[i] - publics[5 + i]) === 0;"),
-            "aggregate program VK not bound to rootC:\n{out}"
-        );
+    fn recursion_final_is_data_over_final_snark() {
+        let si = serde_json::json!({ "nPublics": 73, "starkStruct": { "merkleTreeCustom": false } });
+        let out = gen_recursion_final(&si, &["v.circom".into()], None).unwrap();
+        assert!(out.contains("include \"final_snark.circom\";"), "{out}");
+        assert!(out.contains("function vd_DEFS() { return [0]; }"), "{out}");
+        assert!(out.ends_with("\ncomponent main = FinalSnark(0, 0);\n"), "{out}");
     }
-
-    /// Fewer than four real publics leave no program VK to bind, and publics[5 + i] would not exist.
-    #[test]
-    fn recursion_final_without_room_for_a_program_vk_emits_no_binding() {
-        let out = recursion_final(4 + 1 + 3);
-        assert!(!out.contains("rootC[i] - publics[5 + i]"), "{out}");
-    }
-
     fn zisk_publics() -> Value {
         serde_json::json!({
             "nPublics": 68,

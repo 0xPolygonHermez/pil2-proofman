@@ -1,0 +1,42 @@
+pragma circom 2.1.0;
+pragma custom_templates;
+
+include "merkle.circom";
+
+/*
+    The BN128 verifier's Merkle openings of a Goldilocks blake3 tree (roots of four words): the family
+    half of stark_verifier_bn128.circom, which the generated verifier picks by its include. The
+    Poseidon halves (bn128_open_poseidon.circom, bn128_open_custom.circom) export the same templates.
+*/
+
+function bn_rootW() { return 4; }
+function bn_sibW(arity) { return geo_sibW(arity); }
+
+// One opened leaf of nVals elements of eSize limbs, below the levels sent in clear.
+template BN128Open(eSize, nVals, arity, lastLevels, ml, leafBits, nBits0) {
+    signal input {binary} queries[nBits0];
+    signal input values[nVals][eSize];
+    signal input siblings[geo_len1(ml)][geo_sibW(arity)];
+    signal input last[geo_lastSize(arity, lastLevels)][4];
+    signal input root[4];
+    signal input {binary} enable;
+
+    // circuits.bn128's b3_field and selectval, not circuits.gl's: their pick is the include path's.
+    assert(b3_field_is_gl() == 0);
+    if (lastLevels > 0) {
+        VerifyTreeOpening(eSize, nVals, arity, lastLevels, ml, leafBits)(QueryKeys(arity, ml + lastLevels, leafBits, nBits0)(queries), values, siblings, last, [0, 0, 0, 0], enable);
+        _ <== root;
+    } else {
+        VerifyTreeOpening(eSize, nVals, arity, lastLevels, ml, leafBits)(QueryKeys(arity, ml + lastLevels, leafBits, nBits0)(queries), values, siblings, [[0, 0, 0, 0]], root, enable);
+        _ <== last;
+    }
+}
+
+// The levels sent in clear hash to the committed root.
+template BN128RootCheck(lastLevels, arity, leafBits) {
+    signal input last[geo_lastSize(arity, lastLevels)][4];
+    signal input root[4];
+    signal input {binary} enable;
+
+    VerifyMerkleRoot(lastLevels, arity, 1 << leafBits)(last, root, enable);
+}

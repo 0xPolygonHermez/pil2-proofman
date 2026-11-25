@@ -313,25 +313,24 @@ pub fn gen_verify_global_constraints(vadcop_info: &Value) -> String {
     // ── Emit VerifyGlobalConstraints template ─────────────────────────────────
     out.push_str("template VerifyGlobalConstraints() {\n\n");
 
-    // Collect input signal names
+    // Fixed inputs (vadcop_final wires them statically); each airgroup's values, from its padded row.
+    let max_agg = agg_types.iter().map(|a| a.as_array().map_or(0, Vec::len)).max().unwrap_or(0).max(1);
+    out.push_str(&format!("    signal input airgroupvalues[{}][{max_agg}][3];\n", agg_types.len()));
+    out.push_str(&format!(
+        "    signal input publics[{n_publics}];\n    signal input proofValues[{num_proof_values}][3];\n"
+    ));
     let mut inputs_list: Vec<String> = Vec::new();
-
-    // airgroupvalues
     for (i, ag) in agg_types.iter().enumerate() {
         let len = ag.as_array().map(|a| a.len()).unwrap_or(0);
-        out.push_str(&format!("    signal input s{i}_airgroupvalues[{len}][3];\n"));
+        out.push_str(&format!(
+            "    signal s{i}_airgroupvalues[{len}][3];\n    for (var j = 0; j < {len}; j++) {{ s{i}_airgroupvalues[j] <== airgroupvalues[{i}][j]; }}\n"
+        ));
         inputs_list.push(format!("s{i}_airgroupvalues"));
     }
-
-    // publics
     if n_publics > 0 {
-        out.push_str(&format!("    signal input publics[{n_publics}];\n"));
         inputs_list.push("publics".into());
     }
-
-    // proofValues
     if num_proof_values > 0 {
-        out.push_str(&format!("    signal input proofValues[{num_proof_values}][3];\n"));
         inputs_list.push("proofValues".into());
     }
 

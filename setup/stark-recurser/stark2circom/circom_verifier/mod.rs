@@ -3,8 +3,9 @@
 //! Generates a `stark_verifier.circom` from `starkInfo` + `verifierInfo`.
 //! Supports GL (Poseidon1, Poseidon2, blake3) and BN128 (Poseidon, or blake3 over a GL STARK) verifiers.
 //!
-//! Both are the static library `helper_circuits/verifier/` plus per-key data and constraints: `lib_gl`
-//! (FRI or STIR) and `lib_bn128` (FRI, Goldilocks emulated over BN128); they share the transcript.
+//! Both are the static library `helper_circuits/verifier/` (`StarkVerifierGL(k)`, `StarkVerifierBN128(k)`)
+//! plus per key only data and constraints: `lib_gl` (FRI or STIR) and `lib_bn128` (FRI, Goldilocks
+//! emulated over BN128). A circuit's main reaches its keys through [`key_dispatch`].
 //! Field and hash circuits live in `circom_verifier/circuits.gl/` and `circom_verifier/circuits.bn128/`.
 //!
 //! Entry points:
@@ -24,13 +25,12 @@ use pil_info::core::dag::lower_code::{LowerCtx, LowerTables};
 use pil_info::FieldCfg;
 use serde_json::Value;
 
-pub(crate) use lib_gl::gen_stark_verifier_gl;
+pub(crate) use lib_gl::{gen_stark_verifier_gl, key_suffix};
 pub(crate) use lib_bn128::gen_stark_verifier_bn128;
 pub use lib_bn128::gen_stark_verifier_bn128_blake3;
 
 #[derive(Debug, Clone)]
 pub struct Pil2CircomOptions {
-    pub skip_main: bool,
     pub verkey_input: bool,
     pub enable_input: bool,
     pub input_challenges: bool,
@@ -41,7 +41,6 @@ pub struct Pil2CircomOptions {
 impl Default for Pil2CircomOptions {
     fn default() -> Self {
         Self {
-            skip_main: false,
             verkey_input: false,
             enable_input: false,
             input_challenges: false,
@@ -67,6 +66,37 @@ pub fn gen_stark_verifier(
         "BN128" => gen_stark_verifier_bn128(const_root, stark_info, verifier_info, opts),
         other => bail!("gen_stark_verifier: unsupported hash type '{other}'"),
     }
+}
+
+/// The compilation's access to its keys, whose functions and `ConstraintRoots` carry `sfxs[k]`: the data
+/// `svd_<name>(k)` and, for GL keys, `ConstraintRootsAt(k)` (a BN128 key's `ConstraintEval` is called directly).
+pub(crate) fn key_dispatch(sfxs: &[String], gl: bool) -> String {
+    let mut out = lib_params::dispatch(sfxs);
+    if gl {
+        out += "
+// Key k's constraints at xi.
+template ConstraintRootsAt(k) {
+";
+        out += "    signal input evals[svd_nEvals(k)][3];
+    signal input challenges[svd_nChallenges(k)][3];
+";
+        out += "    signal input publics[geo_len1(svd_nPublics(k))];
+    signal input proofvalues[geo_len1(svd_nProofValues(k))][3];
+";
+        out += "    signal input airvalues[geo_len1(svd_nAirValues(k))][3];
+    signal input airgroupvalues[geo_len1(svd_nAirgroupValues(k))][3];
+";
+        out += "    signal output roots[svd_nRoots(k)][3];
+
+";
+        for (k, s) in sfxs.iter().enumerate() {
+            out += &format!("    if (k == {k}) {{ roots <== ConstraintRoots{s}()(evals, challenges, publics, proofvalues, airvalues, airgroupvalues); }}
+");
+        }
+        out += "}
+";
+    }
+    out
 }
 
 /// The validated constraint DAG of `vi` and the resolver of `si`.
@@ -97,7 +127,7 @@ mod render_reference {
             None => [w(&vk), "0".into(), "0".into(), "0".into()],
         };
         let hash = env("BN_HASH");
-        let opts = super::Pil2CircomOptions { hash: hash.clone(), skip_main: true, ..Default::default() };
+        let opts = super::Pil2CircomOptions { hash: hash.clone(), ..Default::default() };
         let v = if hash == "blake3" {
             super::gen_stark_verifier_bn128_blake3(Some(&root), &si, &vi, &opts)
         } else {

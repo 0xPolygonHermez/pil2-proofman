@@ -216,11 +216,8 @@ pub(crate) fn constraint_eval_bn128(dag: &ConstraintDag, ctx: &LowerCtx) -> Resu
     let t = ctx.tables();
     let last = code.last().map_or(0, |i| i.dest);
     let last = b.alias.get(&last).cloned().unwrap_or_else(|| format!("tmp_{last}"));
-    let publics = if t.n_publics > 0 {
-        format!("    signal input {{maxNum}} publics[{}];\n", t.n_publics)
-    } else {
-        String::new()
-    };
+    // Always declared (zero entries without publics): the static verifier wires it.
+    let publics = format!("    signal input {{maxNum}} publics[{}];\n", t.n_publics);
     Ok(format!(
         "// The constraints at xi, folded, times Zh.\ntemplate ConstraintEval() {{\n    signal input {{maxNum}} challenges[{}][3];\n    signal input {{maxNum}} evals[{}][3];\n{publics}    signal input {{maxNum}} Zh[3];\n    signal output {{maxNum}} evalP[3];\n\n{}\n\n    evalP <== {last};\n}}\n",
         t.challenges.len(),

@@ -106,3 +106,22 @@ function stir_nHints(stir, M, T) {
     if (stir == 0) { return 0; }
     return stir_hintOff(T, M - 1);
 }
+
+// Query-batch slots: L_0 tree j's width, fold tree j+1's coset members and path levels (0 past the last).
+function geo_slotW(S0, nTrees, j) {
+    if (j < nTrees) { return S0[j + 1] - S0[j]; }
+    return 0;
+}
+function geo_slotC(STEPS, nq, j) {
+    if (j < nq) { return geo_foldExp(STEPS, j + 1); }
+    return 0;
+}
+function geo_slotM(arity, lastLevels, STEPS, nq, j) {
+    if (j < nq) { return geo_foldLevels(arity, lastLevels, STEPS, j + 1); }
+    return 0;
+}
+// The bits of fold step s + 1's domain, 0 past the last.
+function geo_nextBits(STEPS, nSteps, s) {
+    if (s + 1 < nSteps) { return STEPS[s + 1]; }
+    return 0;
+}

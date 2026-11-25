@@ -15,7 +15,6 @@ pub(crate) mod circom_verifier;
 
 // ── Re-exports at the original paths (backward-compatible public API) ─────────
 
-pub use circuit_templates::stark_inputs;
 pub use circuit_templates::templates;
 pub use circuit_templates::{gen_circom_circuit, CircomGenOptions, CircuitTemplate, GenCircomCircuitInput};
 pub use circuit_templates::templates::{
