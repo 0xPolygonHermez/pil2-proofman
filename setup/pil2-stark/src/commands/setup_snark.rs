@@ -139,7 +139,7 @@ fn set_up_recursivef_if_missing(opts: &SetupSnarkOptions, hash: HashFamily) -> R
 mod tests {
     use std::path::Path;
 
-    use pil2_stark_recurser::plonk2pil::r1cs_types::read_r1cs_from_bytes;
+    use pil2_stark_recurser::plonk2pil::r1cs::types::read_r1cs_from_bytes;
     use pilfflonk_setup::command::PROVING_KEY_DIR;
     use pilfflonk_setup::layout::max_degree;
     use pilfflonk_setup::solidity::VERIFIER_SOL_FILE;

@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use anyhow::{bail, Context, Result};
 use pil2_pilout::pilout_proxy::PilOutProxy;
-use pil2_stark_recurser::plonk2pil::{self, r1cs_types::PlonkOptions};
+use pil2_stark_recurser::plonk2pil::{self, r1cs::types::PlonkOptions, SetupKind};
 use pil2_stark_recurser::stark2circom::{
     gen_circom_circuit, gen_stark_verifier, gen_stark_verifier_bn128_blake3, CircuitTemplate, GenCircomCircuitInput,
     StarkVerifierOptions,
@@ -100,13 +100,15 @@ pub enum Step {
     /// Background build of the compiled circuit's witness library.
     WitnessLib,
     Plonk2Pil {
-        kind: &'static str,
+        kind: SetupKind,
         opts: PlonkOptions,
     },
     WriteFixed {
         source: ConstSource,
     },
     CompilePil,
+    /// The trusted checker: r1cs ⇔ plonk equations ⇔ fixed columns ⇔ PIL; the setup fails on a mismatch.
+    CheckPlonk,
     /// pil_info (or `reuse` of `ctx.reuse`), starkinfo/verifierinfo/expressionsinfo JSON, `.bin`,
     /// plonk `.const`; `starkinfo_only` (recursive1) writes just the starkinfo the const tree reads,
     /// which the const tree then removes.
@@ -149,12 +151,13 @@ impl Step {
                 let stem = ctx.compiled.as_deref().context("plonk2pil before the circom compile")?;
                 let r1cs = ctx.build_dir.join("build").join(format!("{stem}.r1cs"));
                 let data = fs::read(&r1cs).with_context(|| format!("Failed to read R1CS: {}", r1cs.display()))?;
-                let r = plonk2pil::plonk2pil(&data, kind, opts)
+                let r = plonk2pil::plonk2pil(&data, *kind, opts)
                     .with_context(|| format!("plonk2pil failed for {}", ctx.circuit))?;
                 ctx.plonk = Some(r);
                 Ok(())
             }
             Step::WriteFixed { source: ConstSource::Plonk } => write_plonk_fixed(ctx),
+            Step::CheckPlonk => check_plonk(ctx),
             Step::WriteFixed { source: ConstSource::Pilout } => write_basic_const(ctx, None),
             Step::WriteFixed { source: ConstSource::UserFixed } => {
                 let fixed = ctx.fixed_dir.as_ref().map(|d| d.join(format!("{}.fixed", ctx.name)));
@@ -276,6 +279,16 @@ fn circom_prologue(
         fs::copy(&dat, ctx.file("dat"))?;
     }
     ctx.compiled = Some(stem);
+    Ok(())
+}
+
+fn check_plonk(ctx: &mut PipelineCtx) -> Result<()> {
+    let stem = ctx.compiled.as_deref().context("check_plonk before the circom compile")?;
+    let r1cs = fs::read(ctx.build_dir.join("build").join(format!("{stem}.r1cs")))?;
+    // checks ctx.plonk in memory: WriteFixed and the .const writer are trusted
+    let report = plonk2pil::check::load::check_result(&r1cs, ctx.plonk()?, ctx.pilout()?.as_ref())
+        .with_context(|| format!("{}: the plonk layout does not implement its r1cs", ctx.circuit))?;
+    tracing::info!("{} plonk check OK: {report}", ctx.circuit);
     Ok(())
 }
 

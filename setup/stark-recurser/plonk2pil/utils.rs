@@ -5,18 +5,6 @@ use std::collections::HashMap;
 use proofman_fields::Field;
 
 use super::field::PlonkField;
-use super::r1cs::to_plonk::PlonkConstraint;
-use super::r1cs_types::FixedPol;
-
-/// log2(v): floor(log2(v)) for a u32.  Returns 0 for v == 0.
-#[inline]
-pub fn log2(v: u32) -> u32 {
-    if v == 0 {
-        0
-    } else {
-        31 - v.leading_zeros()
-    }
-}
 
 /// Compute n coset shift factors of `F`'s connection argument: K, K^2, ..., K^n.
 pub fn get_ks<F: PlonkField>(n: usize) -> Vec<F> {
@@ -135,69 +123,6 @@ pub fn fft4_constants<F: Field>(params: &[F]) -> [F; 9] {
         panic!("Invalid FFT4 type: {fft_type}");
     }
     c
-}
-
-pub fn build_fixed_pols<F: Clone>(airgroup_name: &str, cv: &[Vec<F>], sv: &[Vec<F>]) -> Vec<FixedPol<F>> {
-    let mut pols = Vec::with_capacity(cv.len() + sv.len());
-    for (k, cv_values) in cv.iter().enumerate() {
-        pols.push(FixedPol { name: format!("{}.C", airgroup_name), index: k, values: cv_values.clone() });
-    }
-    for (j, sv_values) in sv.iter().enumerate() {
-        pols.push(FixedPol { name: format!("{}.S", airgroup_name), index: j, values: sv_values.clone() });
-    }
-    pols
-}
-
-/// Per-row bookkeeping for the plonk "piggyback" band, shared by both compressor setups.
-///
-/// The band is a fixed list of 3-cell plonk gates: gate `g` occupies `a[3g..3g+2]`. Which
-/// gates actually fire on a row is decided by the gate's selector in `compressor.pil`;
-/// which gates the setup is allowed to fill must be exactly that set, or a constraint gets
-/// placed into a gate that is never evaluated (silently unenforced — unsound) or into cells
-/// a custom gate already owns (a real overlap). [`PlonkBand`] makes both a hard error:
-/// each row declares its allowed-gate mask via [`PlonkBand::allow`] (the mirror of the PIL
-/// selectors), and every placement goes through [`PlonkBand::put`].
-pub struct PlonkBand {
-    allowed: Vec<u16>,
-    written: Vec<u16>,
-}
-
-impl PlonkBand {
-    pub fn new(n: usize) -> Self {
-        Self { allowed: vec![0u16; n], written: vec![0u16; n] }
-    }
-
-    /// Declare the gates whose PIL selector fires on `row` (bit `g` = gate `g`).
-    pub fn allow(&mut self, row: usize, mask: u16) {
-        self.allowed[row] = mask;
-    }
-
-    /// Place plonk constraint `c` into gate `g` of `row`.
-    pub fn put<F>(&mut self, s_map: &mut [Vec<u32>], row: usize, g: usize, c: &PlonkConstraint<F>) {
-        assert!(
-            self.allowed[row] & (1 << g) != 0,
-            "plonk gate {g} placed at row {row}, but its PIL selector does not fire there \
-             (allowed mask {:#012b}) — the constraint would be unenforced",
-            self.allowed[row]
-        );
-        if self.written[row] & (1 << g) == 0 {
-            // First write to this gate: its cells must still be free, i.e. the gate does not
-            // overlap the cells the row's custom gate owns. Later writes to the same gate are
-            // refinements of an already-placed constraint with the same selector constants.
-            for j in 0..3 {
-                assert_eq!(
-                    s_map[3 * g + j][row],
-                    0,
-                    "plonk gate {g} at row {row} overlaps a custom-gate cell a[{}]",
-                    3 * g + j
-                );
-            }
-            self.written[row] |= 1 << g;
-        }
-        s_map[3 * g][row] = c.wires[0];
-        s_map[3 * g + 1][row] = c.wires[1];
-        s_map[3 * g + 2][row] = c.wires[2];
-    }
 }
 
 /// Time-derived hex suffix for scratch file names.

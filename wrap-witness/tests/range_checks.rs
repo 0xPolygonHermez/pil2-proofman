@@ -32,11 +32,11 @@ use std::sync::OnceLock;
 use std::time::Instant;
 
 use pil2_stark_recurser::plonk2pil::r1cs::types::{read_r1cs_header, PlonkOptions};
-use pil2_stark_recurser::plonk2pil::setups::poseidon_bn128::wrap::RANGE_MUL_COLUMN;
-use pil2_stark_recurser::plonk2pil::{plonk2pil, PlonkResult};
+use pil2_stark_recurser::plonk2pil::gen::layouts::RANGE_MUL_COLUMN;
+use pil2_stark_recurser::plonk2pil::{plonk2pil, PlonkResult, SetupKind};
 use pilfflonk_wrap_witness::{witness_from_circom, WrapArtifacts, WrapWitness};
 use proofman_common::exec_format::{ExecFile, RANGE_CHECK_CHUNK_COLS};
-use proofman_common::hash_family::BN128_WRAP_FAMILY;
+use proofman_common::hash_family::HashFamily;
 use proofman_fields::{Bn128, Field, PrimeField, QuotientMap};
 use proofman_pilfflonk::{check, AirShape, CheckOptions, FrBytes, ProvingKey, Witness, WitnessShape};
 
@@ -108,8 +108,8 @@ fn build_circuit() -> Circuit {
 
 /// plonk2pil's wrap of `r1cs`.
 fn wrap(r1cs: &[u8]) -> PlonkResult<Bn128> {
-    let options = PlonkOptions { hash_id: BN128_WRAP_FAMILY.into(), ..Default::default() };
-    plonk2pil(r1cs, "wrap", &options).unwrap()
+    let options = PlonkOptions { hash: HashFamily::Poseidon1, ..Default::default() };
+    plonk2pil(r1cs, SetupKind::Wrap, &options).unwrap()
 }
 
 fn write_exec(res: &PlonkResult<Bn128>, path: &Path) {

@@ -1,10 +1,17 @@
-//! The constants of circom's `PoseidonT(5)` (`circuits.bn128/custom/poseidon.circom`) that the
-//! setup writes into fixed columns: the round constants, `POSEIDON_C_ORIGINAL(5)` of
+//! Data shared by the generator and the checker (no code): circom's `PoseidonT(5)`
+//! (`circuits.bn128/custom/poseidon.circom`) constants the setup writes into fixed columns: the round constants, `POSEIDON_C_ORIGINAL(5)` of
 //! `poseidon_constants_original.circom`, in decimal. The MDS matrix, `POSEIDON_M_ORIGINAL(5)`, is the
 //! PIL's (`pil/circuits/poseidon_bn128.pil`), since only the gate's constraints read it. A test reads
 //! both off the circom file.
 
 use proofman_fields::Bn128;
+
+use crate::plonk2pil::field::PlonkField;
+
+/// `x` in `F`, which has to be BN128: the constants are its elements.
+pub fn lift<F: PlonkField>(x: &Bn128) -> F {
+    F::from_canonical_le(&x.to_le_bytes()).expect("PoseidonT's constants are elements of BN128")
+}
 
 /// The lanes of the state.
 pub const WIDTH: usize = 5;

@@ -1,37 +1,26 @@
 //! plonk2pil: Convert R1CS constraint systems to PIL (Polynomial Identity Language).
 //!
-//! This module is the Rust port of the `recurser-js` pipeline.
-//! It reads R1CS binary files, converts constraints to PLONK format, and runs
-//! one of several setup routines to produce PIL source and fixed polynomials.
+//! It reads an r1cs, converts its constraints to PLONK, and lays them out with [`gen`], the one
+//! generator, into a PIL source, fixed columns and an exec.
 //!
 //! The reader, the PLONK conversion and the `.exec` writer are generic over the r1cs's field
-//! ([`field::PlonkField`]: Goldilocks or BN128). The setup families are over one field each: the
-//! STARK recursion's (Poseidon1, Poseidon2, blake3) over Goldilocks, and the final SNARK wrap's
-//! (PoseidonBN128, [`proofman_common::hash_family::BN128_WRAP_FAMILY`]) over BN128.
-//!
-//! The main entry point is [`plonk2pil`], which dispatches to the appropriate
-//! setup variant based on the `setup_type` argument.
+//! ([`field::PlonkField`]: Goldilocks or BN128). The STARK recursion's airs (compressor,
+//! aggregation) are over Goldilocks, the final SNARK wraps over BN128.
 
-pub mod estimate;
+pub mod check;
+pub mod consts;
 pub mod field;
+pub mod gen;
 pub mod merge_copies;
-pub mod packers;
 pub mod r1cs;
-pub mod setups;
 pub mod utils;
-
-// Re-export old flat module names as aliases for backward compatibility
-pub use r1cs::to_plonk as r1cs2plonk;
-pub use r1cs::types as r1cs_types;
-pub use setups::poseidon1::aggregation as aggregation_setup;
-pub use setups::poseidon1::compressor as compressor_setup;
 
 use anyhow::{bail, Result};
 use proofman_common::exec_format::{ExecLayout, GATE_BAND_FORMAT_VERSION, GATE_BAND_HEADER_WORDS, GATE_BAND_WORDS};
-use proofman_common::hash_family::BN128_WRAP_FAMILY;
 use proofman_fields::Bn128;
 
-use field::{PlonkField, R1csPrime};
+use field::PlonkField;
+pub use gen::SetupKind;
 use r1cs::types::{r1cs_prime, read_r1cs_from_bytes, read_r1cs_header, PlonkOptions};
 pub use r1cs::types::{FixedPol, SetupResult};
 
@@ -65,85 +54,61 @@ pub struct PlonkResult<V = u64> {
 }
 
 /// How a [`PlonkResult`] holds a fixed value, which names the field of the r1cs it is the result
-/// of, and so the families that set it up: `u64` and [`Bn128`] (sealed).
+/// of, and so the kinds set up over it: `u64` and [`Bn128`] (sealed).
 pub trait FixedValue: sealed::FieldSetups {}
 
 impl FixedValue for u64 {}
 impl FixedValue for Bn128 {}
 
-mod sealed {
-    use anyhow::{bail, ensure, Result};
-    use proofman_common::hash_family::BN128_WRAP_FAMILY;
-    use proofman_fields::{Bn128, Goldilocks, PrimeField64};
+pub(crate) mod sealed {
+    use proofman_fields::{Bn128, Goldilocks, PrimeField64, QuotientMap};
 
     use super::field::PlonkField;
-    use super::packers;
-    use super::r1cs::types::{PlonkOptions, R1csFile, SetupResult};
+    use super::SetupKind;
 
-    /// The families over a field, behind [`super::FixedValue`].
+    /// The kinds over a field, behind [`super::FixedValue`].
     pub trait FieldSetups: Sized {
         /// The field of the r1cs.
-        type Field: PlonkField;
+        type Field: PlonkField + QuotientMap<u64>;
 
-        /// The setup types of the families over [`Self::Field`].
-        const SETUP_TYPES: &'static [&'static str];
-
-        /// Runs the setup `setup_type` of the family `options.hash_id` on `r1cs`.
-        fn setup(
-            r1cs: &R1csFile<Self::Field>,
-            setup_type: &str,
-            options: &PlonkOptions,
-        ) -> Result<SetupResult<Self::Field>>;
+        /// The kinds set up over [`Self::Field`].
+        const SETUP_KINDS: &'static [SetupKind];
 
         /// A value of a fixed column, as the result holds it.
         fn from_field(value: Self::Field) -> Self;
+
+        /// The field element a held value is.
+        fn to_field(&self) -> Self::Field;
     }
 
-    /// The STARK recursion's families, over Goldilocks. Each value is its canonical word, as the
-    /// STARK setup takes plonk2pil's columns and a `.const` file stores them.
+    /// The STARK recursion's airs, over Goldilocks. Each value is its canonical word, as the STARK
+    /// setup takes plonk2pil's columns and a `.const` file stores them.
     impl FieldSetups for u64 {
         type Field = Goldilocks;
 
-        const SETUP_TYPES: &'static [&'static str] = &["compressor", "aggregation"];
-
-        fn setup(
-            r1cs: &R1csFile<Goldilocks>,
-            setup_type: &str,
-            options: &PlonkOptions,
-        ) -> Result<SetupResult<Goldilocks>> {
-            ensure!(
-                options.hash_id != BN128_WRAP_FAMILY,
-                "plonk2pil: the {BN128_WRAP_FAMILY} family sets up an r1cs over BN128, and this one is over Goldilocks"
-            );
-            packers::refuse_bn128_gates(r1cs)?;
-            Ok(match setup_type {
-                "compressor" => packers::pack_compressor(r1cs, options),
-                "aggregation" => packers::pack_aggregation(r1cs, options),
-                other => bail!("Invalid setup type: '{other}'. Must be one of: {}", Self::SETUP_TYPES.join(", ")),
-            })
-        }
+        const SETUP_KINDS: &'static [SetupKind] = &[SetupKind::Compressor, SetupKind::Aggregation];
 
         fn from_field(value: Goldilocks) -> u64 {
             value.as_canonical_u64()
         }
+
+        fn to_field(&self) -> Goldilocks {
+            Goldilocks::new(*self)
+        }
     }
 
-    /// The final SNARK wrap's family, over BN128, whose fixed columns go to the pilfflonk setup as
-    /// they are.
+    /// The final SNARK wraps, over BN128, whose fixed columns go to the pilfflonk setup as they are.
     impl FieldSetups for Bn128 {
         type Field = Bn128;
 
-        const SETUP_TYPES: &'static [&'static str] = &["wrap"];
-
-        fn setup(r1cs: &R1csFile<Bn128>, setup_type: &str, options: &PlonkOptions) -> Result<SetupResult<Bn128>> {
-            match setup_type {
-                "wrap" => packers::pack_wrap(r1cs, options),
-                other => bail!("Invalid setup type: '{other}'. Must be one of: {}", Self::SETUP_TYPES.join(", ")),
-            }
-        }
+        const SETUP_KINDS: &'static [SetupKind] = &[SetupKind::Wrap];
 
         fn from_field(value: Bn128) -> Bn128 {
             value
+        }
+
+        fn to_field(&self) -> Bn128 {
+            *self
         }
     }
 }
@@ -233,39 +198,22 @@ pub fn write_exec_file<F: PlonkField>(
     buff
 }
 
-/// Read an R1CS file and run the specified setup to produce PIL and fixed polynomials.
+/// Reads an r1cs and sets it up as a `kind` of `options.hash` (see [`gen::setup`]).
 ///
-/// # Arguments
-/// * `r1cs_data` - Raw bytes of the R1CS binary file.
-/// * `setup_type` - One of `"compressor"`, `"aggregation"` over Goldilocks, `"wrap"` over BN128.
-/// * `options` - Optional configuration (airgroup name, max constraint degree, the family).
-///
-/// # Returns
-/// A [`PlonkResult`] containing the exec buffer, PIL source, and fixed polynomials.
-///
-/// The result's type says the field: a [`PlonkResult`] (`u64` values) is the STARK recursion's,
-/// over Goldilocks, and a `PlonkResult<Bn128>` the final SNARK wrap's, over BN128, as
-/// [`read_r1cs_from_bytes`] reads an r1cs into the field it is asked for. An r1cs over the other
-/// field is refused, saying which families set it up, and one over any other prime as unknown; so
-/// is a family that is not over the field.
-pub fn plonk2pil<V: FixedValue>(r1cs_data: &[u8], setup_type: &str, options: &PlonkOptions) -> Result<PlonkResult<V>> {
-    if !V::SETUP_TYPES.contains(&setup_type) {
-        bail!("Invalid setup type: '{}'. Must be one of: {}", setup_type, V::SETUP_TYPES.join(", "));
+/// The result's type says the field: a [`PlonkResult`] (`u64` values) is a STARK recursion air's,
+/// over Goldilocks, and a `PlonkResult<Bn128>` a SNARK wrap's, over BN128. A kind not over that
+/// field, or an r1cs over another, is refused naming both.
+pub fn plonk2pil<V: FixedValue>(r1cs_data: &[u8], kind: SetupKind, options: &PlonkOptions) -> Result<PlonkResult<V>> {
+    let field = V::Field::PRIME;
+    if !V::SETUP_KINDS.contains(&kind) {
+        bail!("plonk2pil: a {kind} is not set up over {field:?}; over {field:?}: {:?}", V::SETUP_KINDS);
     }
-
-    match r1cs_prime(&read_r1cs_header(r1cs_data)?)? {
-        prime if prime == V::Field::PRIME => {}
-        R1csPrime::Bn128 => bail!(
-            "plonk2pil: an r1cs over BN128 is set up by the {BN128_WRAP_FAMILY} family, into a PlonkResult<Bn128>, \
-             and not by the STARK recursion's families, which are over Goldilocks"
-        ),
-        R1csPrime::Goldilocks => bail!(
-            "plonk2pil: an r1cs over Goldilocks is set up by the STARK recursion's families, into a PlonkResult, \
-             and not by the {BN128_WRAP_FAMILY} family, which is over BN128"
-        ),
+    let prime = r1cs_prime(&read_r1cs_header(r1cs_data)?)?;
+    if prime != field {
+        bail!("plonk2pil: the r1cs is over {prime:?}, and a {kind} is set up over {field:?}");
     }
     let r1cs = read_r1cs_from_bytes::<V::Field>(r1cs_data)?;
-    let res = V::setup(&r1cs, setup_type, options)?;
+    let res = gen::setup(&r1cs, kind, options)?;
 
     let exec = write_exec_file(r1cs.header.n_vars, &res.plonk_additions, &res.s_map, &res.gate_bands, res.band_aux);
 
@@ -291,48 +239,19 @@ fn fixed_values<V: FixedValue>(pol: FixedPol<V::Field>) -> FixedPol<V> {
 #[cfg(test)]
 mod tests {
     use super::r1cs::to_plonk::*;
+    use super::field::R1csPrime;
     use super::r1cs::types::read_r1cs_from_bytes;
     use super::*;
     use proofman_common::exec_format::{
         ExecFile, ExecGateBand, EXEC_FORMAT_VERSION, EXEC_FORMAT_VERSION_WIDE, EXEC_HEADER_WORDS, EXEC_MAGIC,
         EXEC_WIDE_HEADER_WORDS,
     };
+    use proofman_common::hash_family::HashFamily;
     use proofman_fields::{Field, Goldilocks, PrimeField, QuotientMap};
 
     /// The r1cs's wire count the writer's tests give it: version 3 records it, and version 2 does
     /// not. The writer does not check the wires against it; the reader of a witness does.
     const N_VARS: u32 = 100;
-
-    /// Run the real compressor packer end-to-end on an r1cs (exercises the row-count
-    /// assert + verify_merge_soundness). ESTIMATE_HASH picks the family; it defaults to
-    /// `hash_family::DEFAULT_HASH_ID`.
-    ///   ESTIMATE_R1CS=/path/x.r1cs [ESTIMATE_HASH=Poseidon2] \
-    ///     cargo test -p pil2-stark-recurser run_compressor --release -- --ignored --nocapture
-    #[test]
-    #[ignore]
-    fn run_compressor() {
-        use proofman_common::hash_family::GateRole;
-        let Ok(f) = std::env::var("ESTIMATE_R1CS") else {
-            eprintln!("set ESTIMATE_R1CS=/path/to/file.r1cs");
-            return;
-        };
-        let bytes = std::fs::read(&f).unwrap_or_else(|e| panic!("read {f}: {e}"));
-        let hash_id =
-            std::env::var("ESTIMATE_HASH").unwrap_or_else(|_| proofman_common::hash_family::DEFAULT_HASH_ID.into());
-        let opts = PlonkOptions {
-            airgroup_name: Some("Compressor".into()),
-            max_constraint_degree: Some(5),
-            hash_id,
-            merge_copies: true,
-            blake3_lanes: None,
-            min_n_bits: None,
-        };
-        let res: PlonkResult = plonk2pil(&bytes, "compressor", &opts).expect("compressor packing failed");
-        let r1cs = read_r1cs_from_bytes::<Goldilocks>(&bytes).unwrap();
-        let cgi = get_custom_gates_info(&r1cs);
-        let n_pos = cgi.n(GateRole::PoseidonCompression) + cgi.n(GateRole::PoseidonSponge);
-        eprintln!("\n=== {f}  compressor OK: nBits={} nUsed={} n_pos={}", res.n_bits, res.n_used, n_pos);
-    }
 
     /// Build a minimal Goldilocks R1CS with a single multiplication constraint and no custom gates.
     fn build_simple_r1cs_bytes() -> Vec<u8> {
@@ -438,7 +357,8 @@ mod tests {
         let seven = 7u64.to_le_bytes();
         let err = read_r1cs_header(&r1cs_bytes(&seven, &one(8))).and_then(|h| r1cs_prime(&h)).unwrap_err().to_string();
         assert!(err.contains("prime 7 (n8 = 8)"), "{err}");
-        let err = plonk2pil::<u64>(&r1cs_bytes(&seven, &one(8)), "compressor", &PlonkOptions::default()).unwrap_err();
+        let err = plonk2pil::<u64>(&r1cs_bytes(&seven, &one(8)), SetupKind::Compressor, &PlonkOptions::default())
+            .unwrap_err();
         assert!(err.to_string().contains("prime 7"), "{err}");
     }
 
@@ -522,58 +442,55 @@ mod tests {
         assert!(read_r1cs_from_bytes::<Goldilocks>(&data).is_err());
     }
 
-    /// The STARK recursion's families are over Goldilocks: asked for a `PlonkResult` of words,
-    /// plonk2pil refuses a BN128 r1cs up front, naming the family that sets it up, for both setup
-    /// types and whichever Goldilocks family.
+    /// The STARK recursion's airs are over Goldilocks: asked for a `PlonkResult` of words,
+    /// plonk2pil refuses a BN128 r1cs up front, for both kinds and whichever family.
     #[test]
-    fn the_goldilocks_families_refuse_a_bn128_r1cs() {
+    fn the_goldilocks_kinds_refuse_a_bn128_r1cs() {
         let bn128 = r1cs_bytes(&R1csPrime::Bn128.modulus_le(), &one(32));
-        for setup_type in ["compressor", "aggregation"] {
-            for hash_id in proofman_common::hash_family::FAMILIES {
-                let opts = PlonkOptions { hash_id: hash_id.to_string(), ..Default::default() };
-                let err = plonk2pil::<u64>(&bn128, setup_type, &opts).unwrap_err().to_string();
-                assert!(err.contains("an r1cs over BN128 is set up by the PoseidonBN128 family"), "{err}");
+        for kind in [SetupKind::Compressor, SetupKind::Aggregation] {
+            for hash in HashFamily::ALL {
+                let opts = PlonkOptions { hash, ..Default::default() };
+                let err = plonk2pil::<u64>(&bn128, kind, &opts).unwrap_err().to_string();
+                assert!(
+                    err.contains(&format!("the r1cs is over Bn128, and a {kind} is set up over Goldilocks")),
+                    "{err}"
+                );
             }
         }
     }
 
-    /// The wrap's family is over BN128: it refuses a Goldilocks r1cs, and the other families refuse
-    /// to set up a BN128 one into a `PlonkResult<Bn128>`.
+    /// A kind is refused on the field it is not over, naming both; the wraps are Poseidon1's and
+    /// blake3's over BN128.
     #[test]
-    fn the_wrap_family_and_the_bn128_field_go_together() {
+    fn setup_kind_is_refused_on_the_wrong_field() {
         let goldilocks = build_simple_r1cs_bytes();
-        let wrap = PlonkOptions { hash_id: BN128_WRAP_FAMILY.to_string(), ..Default::default() };
-        let err = plonk2pil::<Bn128>(&goldilocks, "wrap", &wrap).unwrap_err().to_string();
-        assert!(err.contains("an r1cs over Goldilocks is set up by the STARK recursion's families"), "{err}");
-        let err = plonk2pil::<u64>(&goldilocks, "compressor", &wrap).unwrap_err().to_string();
-        assert!(err.contains("the PoseidonBN128 family sets up an r1cs over BN128"), "{err}");
-
         let bn128 = r1cs_bytes(&R1csPrime::Bn128.modulus_le(), &one(32));
-        for hash_id in proofman_common::hash_family::FAMILIES {
-            let opts = PlonkOptions { hash_id: hash_id.to_string(), ..Default::default() };
-            let err = plonk2pil::<Bn128>(&bn128, "wrap", &opts).unwrap_err().to_string();
-            assert!(err.contains(&format!("the {hash_id} family is over Goldilocks")), "{err}");
-        }
-        let err = plonk2pil::<Bn128>(&bn128, "compressor", &wrap).unwrap_err().to_string();
-        assert!(err.contains("Must be one of: wrap"), "{err}");
-        let err = plonk2pil::<u64>(&goldilocks, "wrap", &PlonkOptions::default()).unwrap_err().to_string();
-        assert!(err.contains("Must be one of: compressor, aggregation"), "{err}");
+        let p1 = PlonkOptions { hash: HashFamily::Poseidon1, ..Default::default() };
+        let err = plonk2pil::<Bn128>(&goldilocks, SetupKind::Wrap, &p1).unwrap_err().to_string();
+        assert!(err.contains("the r1cs is over Goldilocks, and a wrap is set up over Bn128"), "{err}");
+        let err = plonk2pil::<Bn128>(&bn128, SetupKind::Compressor, &p1).unwrap_err().to_string();
+        assert!(err.contains("a compressor is not set up over Bn128"), "{err}");
+        let err = plonk2pil::<u64>(&goldilocks, SetupKind::Wrap, &p1).unwrap_err().to_string();
+        assert!(err.contains("a wrap is not set up over Goldilocks"), "{err}");
+        let p2 = PlonkOptions { hash: HashFamily::Poseidon2, ..Default::default() };
+        let err = plonk2pil::<Bn128>(&bn128, SetupKind::Wrap, &p2).unwrap_err().to_string();
+        assert!(err.contains("there is no BN128 wrap of Poseidon2"), "{err}");
 
-        let res = plonk2pil::<Bn128>(&bn128, "wrap", &wrap).unwrap();
+        let res = plonk2pil::<Bn128>(&bn128, SetupKind::Wrap, &p1).unwrap();
         let exec = ExecFile::<Bn128>::from_words(&res.exec).unwrap_or_else(|e| panic!("{e}"));
         assert_eq!(exec.layout.version(), EXEC_FORMAT_VERSION_WIDE, "a BN128 exec is version 3");
         assert_eq!(exec.layout.n_vars(), Some(4), "the r1cs's nVars, which the additions are numbered from");
         assert!(res.pil_str.contains("require \"poseidon_bn128/wrap.pil\";"), "{}", res.pil_str);
     }
 
-    /// A Goldilocks r1cs with a gate of the BN128 wrap is refused: the STARK families would leave
+    /// A Goldilocks r1cs with a gate of the BN128 wraps is refused: the STARK layouts would leave
     /// it unplaced.
     #[test]
     fn a_goldilocks_r1cs_with_a_wrap_gate_is_refused() {
         let mut r1cs = read_r1cs_from_bytes::<Goldilocks>(&build_simple_r1cs_bytes()).unwrap();
         r1cs.custom_gates.push(r1cs::types::CustomGate { template_name: "PoseidonT".into(), parameters: vec![] });
-        let err = packers::refuse_bn128_gates(&r1cs).unwrap_err().to_string();
-        assert!(err.contains("uses PoseidonT, a gate of the PoseidonBN128 family"), "{err}");
+        let err = gen::refuse_bn128_gates(&r1cs).unwrap_err().to_string();
+        assert!(err.contains("uses PoseidonT, a gate of the BN128 wraps"), "{err}");
     }
 
     /// One map entry, by row and column, out of the packed u32 pairs.
@@ -889,13 +806,5 @@ mod tests {
         );
         assert_eq!(read_gl.unwrap_or_else(|e| panic!("{e}")), ExecFile::from_words(&gl).unwrap());
         assert_eq!(read_bn.unwrap_or_else(|e| panic!("{e}")), ExecFile::from_words(&bn).unwrap());
-    }
-
-    #[test]
-    fn test_invalid_setup_type() {
-        let data = build_simple_r1cs_bytes();
-        let options = PlonkOptions::default();
-        let result = plonk2pil::<u64>(&data, "invalid_type", &options);
-        assert!(result.is_err());
     }
 }

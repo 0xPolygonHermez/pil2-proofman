@@ -565,9 +565,7 @@ fn main() -> anyhow::Result<()> {
                 airgroups: args.airgroups,
                 airs: args.airs,
                 im_pols_stages: args.impols,
-                blake3_lanes: args
-                    .blake3_lanes
-                    .unwrap_or(pil2_stark_recurser::plonk2pil::setups::blake3::DEFAULT_LANES),
+                blake3_lanes: args.blake3_lanes.unwrap_or(pil2_stark_recurser::plonk2pil::gen::blocks::DEFAULT_LANES),
             };
             // Expression trees in large AIRs (e.g. ZisK) can be thousands of levels deep,
             // which overflows the default 8 MB main-thread stack. Run on a thread with the

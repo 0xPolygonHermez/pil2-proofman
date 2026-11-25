@@ -15,7 +15,7 @@ use pil2_stark_recurser::plonk2pil::r1cs::to_plonk::{r1cs2plonk, PlonkAddition, 
 use pil2_stark_recurser::plonk2pil::r1cs::types::{
     r1cs_prime, read_r1cs_from_bytes, read_r1cs_header, LinearCombination, PlonkOptions, R1csFile,
 };
-use pil2_stark_recurser::plonk2pil::plonk2pil;
+use pil2_stark_recurser::plonk2pil::{plonk2pil, SetupKind};
 use proofman_fields::{Bn128, Field, PrimeField};
 
 use common::{compile_and_witness, manifest, missing_prerequisite, read_wtns, Scratch};
@@ -106,7 +106,7 @@ fn a_bn128_circuit_converts_to_plonk_gates_that_hold_on_its_witness() {
     let (merged_cs, merged_adds, _) = r1cs2plonk_merged(&r1cs, true);
     assert!(plonk_holds(&merged_cs, &merged_adds, &witness), "the copy-merged gates fail on the witness");
 
-    // The STARK recursion's families still refuse it: they are over Goldilocks.
-    let err = plonk2pil::<u64>(&r1cs_bytes, "aggregation", &PlonkOptions::default()).unwrap_err().to_string();
-    assert!(err.contains("an r1cs over BN128 is set up by the PoseidonBN128 family"), "{err}");
+    // The STARK recursion's airs still refuse it: they are over Goldilocks.
+    let err = plonk2pil::<u64>(&r1cs_bytes, SetupKind::Aggregation, &PlonkOptions::default()).unwrap_err().to_string();
+    assert!(err.contains("the r1cs is over Bn128, and a aggregation is set up over Goldilocks"), "{err}");
 }

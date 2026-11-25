@@ -53,7 +53,7 @@ fn recursion_batch_fit(hash: HashFamily, n_bits: usize, lanes: usize, inner_si: 
     if per_proof == 0 {
         return None;
     }
-    let capacity = pil2_stark_recurser::plonk2pil::setups::blake3::blake3_capacity(1usize << n_bits, lanes) as u64;
+    let capacity = pil2_stark_recurser::plonk2pil::gen::blocks::blake3_capacity(1usize << n_bits, lanes) as u64;
     let k = capacity / per_proof;
     Some(BatchFit { k: (k as usize).max(1), per_proof, capacity, lanes, n_queries: geom.n_queries })
 }
@@ -317,7 +317,7 @@ pub(crate) fn fit_batch(cfg: &RecursiveCfg, ctx: &mut PipelineCtx) -> Result<()>
     let domain_bits = cfg.domain_bits;
     let inner = &ctx.verifiers.first().context("recursive circuit without its inner proof")?.stark_info;
     // Budgets are affine in k, so the largest k that fits also fills the domain.
-    let lanes = pil2_stark_recurser::plonk2pil::setups::blake3::DEFAULT_LANES;
+    let lanes = pil2_stark_recurser::plonk2pil::gen::blocks::DEFAULT_LANES;
     let fit = recursion_batch_fit(cfg.family, domain_bits, lanes, inner);
     if let Some(fit) = fit {
         let head = format!(
@@ -584,11 +584,11 @@ mod batch_fit_tests {
         })
     }
 
-    const L: usize = pil2_stark_recurser::plonk2pil::setups::blake3::DEFAULT_LANES;
+    const L: usize = pil2_stark_recurser::plonk2pil::gen::blocks::DEFAULT_LANES;
 
     /// The recurser's own, so a block-geometry change moves test and code together.
     fn capacity(n_bits: usize) -> u64 {
-        pil2_stark_recurser::plonk2pil::setups::blake3::blake3_capacity(1usize << n_bits, L) as u64
+        pil2_stark_recurser::plonk2pil::gen::blocks::blake3_capacity(1usize << n_bits, L) as u64
     }
 
     #[test]

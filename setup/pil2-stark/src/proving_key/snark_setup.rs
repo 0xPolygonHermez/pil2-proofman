@@ -10,17 +10,17 @@ use serde_json::Value;
 use proofman_starks_lib_c::{generate_fflonk_zkey_c, generate_plonk_zkey_c, get_plonk_circuit_stats_c};
 
 use crate::commands::compile_pil::{run_compile_pil, CompilePilOptions};
+use pil2_pilout::pilout_proxy::PilOutProxy;
 use pil2_stark_recurser::stark2circom::templates::{gen_solidity, gen_iverifier, SnarkVerifier};
 use pil2_stark_recurser::stark2circom::{CircomGenOptions, CircuitTemplate, StarkVerifierOptions};
 use crate::output::witness_gen::WitnessTracker;
-use pil2_stark_recurser::plonk2pil::r1cs_types::PlonkOptions;
-use pil2_stark_recurser::plonk2pil::setups::blake3_bn128::wrap as blake3_wrap;
-use pil2_stark_recurser::plonk2pil::setups::poseidon_bn128::wrap;
-use pil2_stark_recurser::plonk2pil::{self, PlonkResult};
+use pil2_stark_recurser::plonk2pil::gen::layouts::{wrap_knobs, WrapKnobs};
+use pil2_stark_recurser::plonk2pil::r1cs::types::PlonkOptions;
+use pil2_stark_recurser::plonk2pil::{self, PlonkResult, SetupKind};
 use pilfflonk_setup::command::{DEFAULT_MAX_Q_DEGREE, PROVING_KEY_DIR};
 use pilfflonk_setup::solidity::VERIFIER_SOL_FILE;
 use pilfflonk_setup::{run_setup_pilfflonk_with_external_fixed, ExternalFixedColumn, SetupPilfflonkOptions};
-use proofman_common::hash_family::{HashFamily, BLAKE3_BN128_WRAP_FAMILY, BN128_WRAP_FAMILY};
+use proofman_common::hash_family::HashFamily;
 use proofman_fields::Bn128;
 use proofman_pilfflonk::{CalldataLayout, FrBytes, JsonFile, PilfflonkGlobalInfo, Vkey};
 use crate::commands::common::parse_root_strings;
@@ -312,7 +312,7 @@ fn gen_final_snark(
         FinalSnark::Fflonk => gen_rapidsnark_key(config, witness_tracker, &r1cs_final, &final_dir, const_root, true),
         FinalSnark::Plonk => gen_rapidsnark_key(config, witness_tracker, &r1cs_final, &final_dir, const_root, false),
         FinalSnark::Pilfflonk => {
-            let mut family = if blake3 { WrapFamily::BLAKE3 } else { WrapFamily::POSEIDON };
+            let mut family = WrapFamily::of(if blake3 { HashFamily::Blake3 } else { HashFamily::Poseidon1 });
             family.extra_muls = config.extra_muls.unwrap_or(family.extra_muls);
             gen_pilfflonk_key(config, witness_tracker, &build_path, &pil_dir, &final_dir, const_root, &family)
         }
@@ -565,27 +565,19 @@ fn gen_wrap_exps(proving_key: &Path, archspec: &str) -> Result<()> {
     Ok(())
 }
 
-/// The plonk2pil family of the pilfflonk wrap's AIR, and the knobs its pilfflonk setup takes.
+/// The hash of the pilfflonk wrap's AIR (Poseidon1 for every Poseidon key, blake3), and the knobs
+/// its pilfflonk setup takes.
 struct WrapFamily {
-    hash_id: &'static str,
+    hash: HashFamily,
     max_constraint_degree: usize,
     extra_muls: u64,
 }
 
 impl WrapFamily {
-    /// The final circuit of a Poseidon key: PoseidonBN128 in layout L1 ([`wrap`]).
-    const POSEIDON: Self = Self {
-        hash_id: BN128_WRAP_FAMILY,
-        max_constraint_degree: wrap::MAX_CONSTRAINT_DEGREE,
-        extra_muls: wrap::EXTRA_MULS,
-    };
-
-    /// The final circuit of a blake3 key ([`blake3_wrap`]).
-    const BLAKE3: Self = Self {
-        hash_id: BLAKE3_BN128_WRAP_FAMILY,
-        max_constraint_degree: blake3_wrap::MAX_CONSTRAINT_DEGREE,
-        extra_muls: blake3_wrap::EXTRA_MULS,
-    };
+    fn of(hash: HashFamily) -> Self {
+        let WrapKnobs { max_constraint_degree, extra_muls } = wrap_knobs(hash).expect("a wrap family");
+        Self { hash, max_constraint_degree, extra_muls }
+    }
 }
 
 /// The files of the pilfflonk wrap of a circuit ([`set_up_wrap_air`]).
@@ -627,20 +619,19 @@ impl WrapKey {
 
 /// Sets up the AIR plonk2pil makes of the circuit `r1cs`, over BN128, for pilfflonk, writing
 /// `files` and `provingKey/` under `key_dir`:
-/// 1. plonk2pil lays out the r1cs in the final SNARK wrap's family ([`BN128_WRAP_FAMILY`],
-///    PoseidonBN128 in layout L1, with range checks), and its PIL and exec are written. The PIL has
-///    the std group its buses' terms to the family's degree, [`wrap::MAX_CONSTRAINT_DEGREE`],
-///    plonk2pil's by default;
+/// 1. plonk2pil lays out the r1cs as the BN128 wrap of `family.hash` (Poseidon1's in layout L1, or
+///    blake3's, with range checks), and its PIL and exec are written. The PIL has the std group its
+///    buses' terms to the family's degree ([`wrap_knobs`]), plonk2pil's by default;
 /// 2. pil2com compiles the PIL over BN128, with `includes` (plonk2pil's PIL and the std):
 ///    `--field bn128`, which only a pil2com that has `--field` takes (`PIL2C_EXEC`,
 ///    pilfflonk/docs/README.md#compile-pil). One that ignores it compiles over Goldilocks, and the
 ///    setup refuses the pilout, saying so;
 /// 3. setup-pilfflonk sets the pilout up with plonk2pil's fixed columns, which the pilout declares
 ///    `#pragma fixed_external`, at the family's knobs, and writes its Solidity verifier. Its degree
-///    search goes up to the PIL's degree, [`wrap::MAX_CONSTRAINT_DEGREE`], which the AIR's own
+///    search goes up to the PIL's degree, the family's, which the AIR's own
 ///    constraints reach: there `Q` needs no im pol, where a lower bound adds some (9 at 5 and 49 at
 ///    2 for fibonacci-square's final circuit), and a higher one finds the same. Its `--extra-muls`
-///    is [`wrap::EXTRA_MULS`]. It refuses a ptau with fewer powers `[τ^i]₁` than the layout's
+///    is the family's. It refuses a ptau with fewer powers `[τ^i]₁` than the layout's
 ///    largest degree, `13·N + 12` with range checks, saying how many it holds and how many it
 ///    needs, before it writes any file of the key.
 fn set_up_wrap_air(
@@ -651,15 +642,14 @@ fn set_up_wrap_air(
     key_dir: &Path,
     family: &WrapFamily,
 ) -> Result<WrapKey> {
-    tracing::info!("plonk2pil: the {} wrap of {}...", family.hash_id, r1cs.display());
+    tracing::info!("plonk2pil: the {} BN128 wrap of {}...", family.hash, r1cs.display());
     let r1cs_data = fs::read(r1cs).with_context(|| format!("Failed to read {}", r1cs.display()))?;
-    let options = PlonkOptions { hash_id: family.hash_id.into(), ..Default::default() };
-    let PlonkResult::<Bn128> { exec, pil_str, fixed_pols, .. } = plonk2pil::plonk2pil(&r1cs_data, "wrap", &options)
+    let options = PlonkOptions { hash: family.hash, ..Default::default() };
+    let res: PlonkResult<Bn128> = plonk2pil::plonk2pil(&r1cs_data, SetupKind::Wrap, &options)
         .with_context(|| format!("plonk2pil failed for {}", r1cs.display()))?;
     drop(r1cs_data);
-    fs::write(&files.pil, pil_str)?;
-    crate::proving_key::pipeline::steps::write_exec(&files.exec, &exec)?;
-    drop(exec);
+    fs::write(&files.pil, &res.pil_str)?;
+    crate::proving_key::pipeline::steps::write_exec(&files.exec, &res.exec)?;
 
     tracing::info!("Compiling {} over BN128...", files.pil.display());
     run_compile_pil(&CompilePilOptions {
@@ -669,6 +659,14 @@ fn set_up_wrap_air(
         field: Some("bn128".to_string()),
         ..Default::default()
     })?;
+    let pilout = PilOutProxy::new(&files.pilout.to_string_lossy())
+        .map_err(|e| anyhow::anyhow!("Failed to load pilout {}: {e}", files.pilout.display()))?
+        .pilout;
+    let r1cs_data = fs::read(r1cs)?; // re-read: peak memory unchanged
+    let report = plonk2pil::check::load::check_result(&r1cs_data, &res, &pilout)
+        .with_context(|| format!("{}: the wrap layout does not implement its r1cs", r1cs.display()))?;
+    tracing::info!("wrap plonk check OK: {report}");
+    drop((r1cs_data, pilout));
 
     tracing::info!("Running the pilfflonk setup of {}...", files.pilout.display());
     let setup = SetupPilfflonkOptions {
@@ -681,7 +679,8 @@ fn set_up_wrap_air(
         no_packing: false,
         solidity: true,
     };
-    let external = fixed_pols
+    let external = res
+        .fixed_pols
         .into_iter()
         .map(|p| ExternalFixedColumn {
             name: p.name,
@@ -847,7 +846,7 @@ pub(crate) mod tests {
     use std::process::Command;
 
     use pilfflonk_setup::layout::max_degree;
-    use pil2_stark_recurser::plonk2pil::setups::poseidon_bn128::wrap::RANGE_MUL_COLUMN;
+    use pil2_stark_recurser::plonk2pil::gen::layouts::RANGE_MUL_COLUMN;
     use proofman_common::exec_format::{ExecFile, EXEC_FORMAT_VERSION_WIDE, RANGE_CHECK_BAND_KIND};
     use proofman_pilfflonk::{AirFile, PilfflonkInfo, SetupParams, WitnessShape};
 
@@ -886,12 +885,13 @@ pub(crate) mod tests {
     }
 
     /// The key whose globalInfo is `global_info` was set up at the wrap family's knobs, as
-    /// [`set_up_wrap_air`] sets it up: its degree search up to [`wrap::MAX_CONSTRAINT_DEGREE`],
-    /// [`wrap::EXTRA_MULS`], and `Q` whole.
+    /// [`set_up_wrap_air`] sets up the Poseidon1 wrap: its degree search up to its knobs' degree,
+    /// their extra muls, and `Q` whole.
     pub(crate) fn assert_set_up_at_the_family_knobs(global_info: &PilfflonkGlobalInfo) {
+        let wrap = WrapFamily::of(HashFamily::Poseidon1);
         let knobs = SetupParams {
-            max_constraint_degree: wrap::MAX_CONSTRAINT_DEGREE as u64,
-            extra_muls: wrap::EXTRA_MULS,
+            max_constraint_degree: wrap.max_constraint_degree as u64,
+            extra_muls: wrap.extra_muls,
             max_q_degree: DEFAULT_MAX_Q_DEGREE,
             packing: true,
         };
@@ -1076,16 +1076,23 @@ pub(crate) mod tests {
         // An official ptau cut down to 64 powers: none is that small.
         let small = dir.join("small.ptau");
         ptau::truncated_copy(&ptau::official(64), &small, 64);
-        let refused = set_up_wrap_air(&r1cs, &files, &includes, &small, &dir.join("refused"), &WrapFamily::POSEIDON)
-            .err()
-            .expect("refused");
+        let refused = set_up_wrap_air(
+            &r1cs,
+            &files,
+            &includes,
+            &small,
+            &dir.join("refused"),
+            &WrapFamily::of(HashFamily::Poseidon1),
+        )
+        .err()
+        .expect("refused");
         let refused = format!("{refused:#}");
         assert!(refused.contains("holds 64 powers [τ^i]₁, fewer than the "), "{refused}");
 
         // More powers than the 8·N + 7 = 1031 the layout of N = 2^7 rows needs.
         let ptau = ptau::official(2048);
         let key_dir = dir.join("key");
-        let key = set_up_wrap_air(&r1cs, &files, &includes, &ptau, &key_dir, &WrapFamily::POSEIDON)
+        let key = set_up_wrap_air(&r1cs, &files, &includes, &ptau, &key_dir, &WrapFamily::of(HashFamily::Poseidon1))
             .unwrap_or_else(|e| panic!("{e:#}"));
         let needed = max_degree(&key.vkey.layout);
         assert_eq!(needed, 8 * (1 << key.vkey.power) + 7, "the largest degree of layout L1 with no range check");

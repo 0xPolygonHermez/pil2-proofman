@@ -1,6 +1,6 @@
 //! One pure builder per circuit kind: parameters in, `Vec<Step>` out (no I/O).
 
-use pil2_stark_recurser::plonk2pil::r1cs_types::PlonkOptions;
+use pil2_stark_recurser::plonk2pil::{r1cs::types::PlonkOptions, SetupKind};
 use proofman_common::hash_family::HashFamily;
 
 use anyhow::{bail, Result};
@@ -60,10 +60,10 @@ pub struct RecursiveCfg {
 }
 
 /// The plonk2pil circuit type of a recursion template.
-fn plonk_kind(template: RecursiveTemplate) -> &'static str {
+fn plonk_kind(template: RecursiveTemplate) -> SetupKind {
     match template {
-        RecursiveTemplate::Compressor => "compressor",
-        _ => "aggregation",
+        RecursiveTemplate::Compressor => SetupKind::Compressor,
+        _ => SetupKind::Aggregation,
     }
 }
 
@@ -78,7 +78,7 @@ fn plonk_opts(
     PlonkOptions {
         airgroup_name: Some(name),
         max_constraint_degree,
-        hash_id: family.as_str().to_string(),
+        hash: family,
         merge_copies: true,
         blake3_lanes,
         min_n_bits,
@@ -87,7 +87,7 @@ fn plonk_opts(
 
 /// plonk2pil's fixed columns and PIL, then (after `settle`) a fresh STARK tail and its const tree.
 fn plonk_tail(settle: Option<Step>) -> Vec<Step> {
-    let mut s = vec![Step::WriteFixed { source: ConstSource::Plonk }, Step::CompilePil];
+    let mut s = vec![Step::WriteFixed { source: ConstSource::Plonk }, Step::CompilePil, Step::CheckPlonk];
     s.extend(settle);
     s.extend([Step::StarkTail { reuse: false, starkinfo_only: false }, Step::ConstTree { required: true }]);
     s
@@ -233,7 +233,7 @@ pub fn steps_for_compressed_final(cfg: &CompressedFinalCfg) -> Vec<Step> {
     let mut s = vec![
         prologue(Some(verifier), Some(CircuitTemplate::FinalCompressed), CircomOpt::O2),
         Step::WitnessLib,
-        Step::Plonk2Pil { kind: "aggregation", opts },
+        Step::Plonk2Pil { kind: SetupKind::Aggregation, opts },
     ];
     s.extend(plonk_tail(Some(settings)));
     s.extend([Step::WriteVerifierRs, Step::WitnessWait]);
@@ -265,7 +265,7 @@ pub fn steps_for_vadcop_final(cfg: &VadcopFinalCfg) -> Vec<Step> {
     let mut s = vec![
         prologue(Some(verifier), Some(CircuitTemplate::VadcopFinal), CircomOpt::O1),
         Step::WitnessLib,
-        Step::Plonk2Pil { kind: "aggregation", opts },
+        Step::Plonk2Pil { kind: SetupKind::Aggregation, opts },
     ];
     s.extend(plonk_tail(Some(pin)));
     s.extend([Step::WriteVerifierRs, Step::WitnessWait]);
@@ -281,7 +281,7 @@ pub fn steps_for_recursivef(cfg: &RecursivefCfg) -> Vec<Step> {
     let mut s = vec![
         prologue(Some(verifier), Some(CircuitTemplate::Recursivef), CircomOpt::O2),
         Step::WitnessLib,
-        Step::Plonk2Pil { kind: "aggregation", opts },
+        Step::Plonk2Pil { kind: SetupKind::Aggregation, opts },
     ];
     s.extend(plonk_tail(None));
     s
@@ -336,6 +336,7 @@ pub fn steps_for_recursive(cfg: &RecursiveCfg) -> Vec<Step> {
         Step::WitnessLib,
         Step::WriteFixed { source: ConstSource::Plonk },
         Step::CompilePil,
+        Step::CheckPlonk,
         // recursive1 keeps only the const tree's temp starkinfo: its airs share the first one's.
         Step::StarkTail { reuse: cfg.reuse, starkinfo_only: t == T::Recursive1 },
         Step::ConstTree { required: true },
@@ -360,6 +361,7 @@ mod tests {
                 Step::Plonk2Pil { .. } => "plonk2pil",
                 Step::WriteFixed { .. } => "write_fixed",
                 Step::CompilePil => "compile_pil",
+                Step::CheckPlonk => "check_plonk",
                 Step::StarkTail { .. } => "stark_tail",
                 Step::ConstTree { .. } => "const_tree",
                 Step::WriteVerifierRs => "write_verifier_rs",

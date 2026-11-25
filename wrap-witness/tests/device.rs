@@ -27,11 +27,11 @@ use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 use pil2_stark_recurser::plonk2pil::r1cs::types::PlonkOptions;
-use pil2_stark_recurser::plonk2pil::{plonk2pil, PlonkResult};
+use pil2_stark_recurser::plonk2pil::{plonk2pil, PlonkResult, SetupKind};
 use pilfflonk_wrap_witness::{WrapArtifacts, WrapWitness};
 use proofman_common::exec_format::blake3_wrap_cols::{A, D_INV};
 use proofman_common::exec_format::BLAKE3_WRAP_BLOCK_ROWS;
-use proofman_common::hash_family::BLAKE3_BN128_WRAP_FAMILY;
+use proofman_common::hash_family::HashFamily;
 use proofman_fields::{Bn128, Field, QuotientMap};
 use proofman_pilfflonk::{
     check, gpu_available, prove, prove_exec, stage_columns, stage_columns_exec, CheckOptions, Device, FrBytes,
@@ -39,7 +39,7 @@ use proofman_pilfflonk::{
 };
 
 use common::{build_final, circuits_bn128, missing_prerequisite, repo_root};
-use pil2_stark_recurser::plonk2pil::setups::blake3_bn128::wrap as blake3_wrap;
+use pil2_stark_recurser::plonk2pil::gen::layouts::wrap_knobs;
 use wrap_key::set_up_key_with;
 
 /// The circuit's files, its wrap and its key, built once for the tests of this binary.
@@ -82,8 +82,8 @@ fn build_circuit() -> Circuit {
         repo_root().join("setup/pil2-stark/node_modules/circomlib/circuits"),
     ];
     let r1cs = build_final(&dir, &fixtures.join("blake3_wrap.circom"), &libraries);
-    let options = PlonkOptions { hash_id: BLAKE3_BN128_WRAP_FAMILY.into(), ..Default::default() };
-    let res: PlonkResult<Bn128> = plonk2pil(&r1cs, "wrap", &options).unwrap();
+    let options = PlonkOptions { hash: HashFamily::Blake3, ..Default::default() };
+    let res: PlonkResult<Bn128> = plonk2pil(&r1cs, SetupKind::Wrap, &options).unwrap();
     let exec: Vec<u8> = res.exec.iter().flat_map(|w| w.to_le_bytes()).collect();
     fs::write(dir.join("final/final.exec"), exec).unwrap();
     let key_dir = dir.join("key");
@@ -94,8 +94,8 @@ fn build_circuit() -> Circuit {
         &key_dir,
         &res,
         33 << res.n_bits,
-        blake3_wrap::EXTRA_MULS,
-        blake3_wrap::MAX_CONSTRAINT_DEGREE as u64,
+        wrap_knobs(HashFamily::Blake3).unwrap().extra_muls,
+        wrap_knobs(HashFamily::Blake3).unwrap().max_constraint_degree as u64,
     );
     let zkin = serde_json::from_slice(&fs::read(fixtures.join("blake3_wrap.json")).unwrap()).unwrap();
     Circuit { dir, key, zkin }

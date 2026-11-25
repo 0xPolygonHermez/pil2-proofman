@@ -520,7 +520,7 @@ pub struct Blake3RecursionFit {
 /// `blocks` is a LOWER bound (per-flags bucketing rounds up, and a plonk band can size the air
 /// instead), so `needs_compressor` is sound when set and soft when clear.
 pub fn blake3_recursion_fit(counts: &HashCounts, lanes: usize) -> Blake3RecursionFit {
-    use pil2_stark_recurser::plonk2pil::setups::blake3::blake3_max_blocks;
+    use pil2_stark_recurser::plonk2pil::gen::blocks::blake3_max_blocks;
 
     let blocks = (counts.total() as usize).div_ceil(lanes.max(1));
     let capacity = blake3_max_blocks(1 << proofman_common::hash_family::recursive_bits_threshold("blake3"));
@@ -811,7 +811,7 @@ mod tests {
     /// Same boundary `needs_compressor` tests, off the recurser's constants so a layout change moves both.
     #[test]
     fn the_block_boundary_is_the_n_bits_boundary() {
-        use pil2_stark_recurser::plonk2pil::setups::blake3::{BLAKE3_CLOCKS, CLOCK_WRAP_ROWS};
+        use pil2_stark_recurser::plonk2pil::gen::blocks::{BLAKE3_CLOCKS, CLOCK_WRAP_ROWS};
 
         let n_bits = |blocks: usize| (blocks * BLAKE3_CLOCKS + CLOCK_WRAP_ROWS).next_power_of_two().trailing_zeros();
         let capacity = blake3_recursion_fit(&HashCounts::default(), 4).capacity;
