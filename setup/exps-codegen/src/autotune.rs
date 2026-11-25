@@ -1,6 +1,10 @@
 //! No-spill autotuner: for one AIR, find the largest chunk size that compiles
-//! with zero register spill (STACK=0 per `cuobjdump -res-usage`), bisecting down
-//! from the start size.
+//! with zero register spill (STACK=0 per `cuobjdump -res-usage`): from the start
+//! size it doubles while clean or halves while spilling, then bisects between the
+//! largest clean size and the smallest spilling one.
+//!
+//! Largest clean is the target because every cut costs traffic: the columns used on
+//! both sides are loaded again and the live temporaries go through scratch slots.
 
 use anyhow::Context;
 use crate::emit::{chunked_program, emit_air, emit_exprs_chunked_tu, ChunkedExpr, ChunkedPick, ExprKey, SLOTS_CAP};
@@ -13,25 +17,10 @@ use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 
 // No-spill bisection bounds.
-const CHUNK_MAX: usize = 512; // start chunk
+const CHUNK_MAX: usize = 512; // start chunk (a lower bound when it compiles clean)
 const CHUNK_MIN: usize = 64; // give-up floor
 const BIG_OPS: usize = 20000; // ops threshold for "large expressions"
-const BIG_START_CHUNK: usize = 250; // autotuner start chunk for AIRs with > BIG_OPS ops
-
-/// Start chunk for the recursion phases, whatever their op count.
-///
-/// This tuner takes the LARGEST chunk that does not spill, and largest is not fastest: past some size
-/// the register pressure costs more than the launches it saves, and the recursion AIRs sit past that
-/// point at CHUNK_MAX. Scoped to those phases rather than lowered globally because the optimum is
-/// per-AIR: the recursion AIRs are the same handful of shapes on every proof, while a basic AIR is
-/// whatever the project makes it -- opt.rs records Main preferring the opposite of Binary and Rom on
-/// the neighbouring fold decision. `--exps-chunk N` pins it per run.
-const RECURSION_START_CHUNK: usize = 250;
-
-/// Whether an AIR's phase (the `sym` prefix, see `proof_phase`) is one of the recursion ones.
-fn is_recursion_phase(sym: &str) -> bool {
-    ["compressor_", "recursive_", "final_"].iter().any(|p| sym.starts_with(p))
-}
+const BIG_START_CHUNK: usize = 250; // start chunk for AIRs with > BIG_OPS ops (cheaper first compiles)
 
 /// `cuobjdump -res-usage` lines: a function header and its resource line.
 static RE_FUNCTION: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"Function\s+(\S+?):\s*$").unwrap());
@@ -126,13 +115,7 @@ fn tune_inner(
     probe: &Path,
     out_dir: &Path,
 ) -> anyhow::Result<Option<usize>> {
-    let start = if is_recursion_phase(sym) {
-        RECURSION_START_CHUNK
-    } else if n_ops > BIG_OPS {
-        BIG_START_CHUNK
-    } else {
-        CHUNK_MAX
-    };
+    let start = if n_ops > BIG_OPS { BIG_START_CHUNK } else { CHUNK_MAX };
     // Every probe compiles into a subdir of its own and keeps its objects, so the winner is
     // staged from them: re-emitting and recompiling it after the bisection was one whole extra
     // round on the critical path of every refined AIR.
@@ -178,10 +161,31 @@ fn tune_inner(
         // the driver grow the context's local-memory pool, and the post-link audit would
         // reject the library.
         if st == 0 {
-            // Halving overshoots: a spill of a few bytes at one size costs the whole
-            // next size down, and with it double the cross-chunk slots. Bisect upward
-            // between this clean size and the last spilling one; keep the largest clean.
-            let (best_chunk, best_objs) = refine_up(sym, &compile_at, chunk, last_spill, objs)?;
+            // A clean first probe only bounds the answer from below: double until a size
+            // spills (or one chunk holds the whole program) to bracket it from above too.
+            let (mut lo, mut lo_objs, mut hi) = (chunk, objs, last_spill);
+            while hi.is_none() && lo < n_ops {
+                let up = (lo * 2).min(n_ops);
+                let ((st_up, objs_up), n_up) = compile_at(up)?;
+                match st_up {
+                    Some(0) => {
+                        eprintln!("  [tune] {sym} chunk={up} ({n_up} TUs, up) -> STACK=0");
+                        (lo, lo_objs) = (up, objs_up);
+                    }
+                    Some(st_up) => {
+                        eprintln!("  [tune] {sym} chunk={up} ({n_up} TUs, up) -> STACK={st_up}");
+                        hi = Some(up);
+                    }
+                    None => {
+                        eprintln!("  [tune] {sym} chunk={up} (up) -> compile failed, treated as spilling");
+                        hi = Some(up);
+                    }
+                }
+            }
+            // Halving and doubling both overshoot: a spill of a few bytes at one size costs
+            // the whole next size down, and with it double the cross-chunk slots. Bisect
+            // between the clean size and the spilling one; keep the largest clean.
+            let (best_chunk, best_objs) = refine_up(sym, &compile_at, lo, hi, lo_objs)?;
             for obj in &best_objs {
                 let dest = out_dir.join(obj.file_name().unwrap());
                 std::fs::copy(obj, &dest)
@@ -195,8 +199,8 @@ fn tune_inner(
     Ok(None)
 }
 
-/// Bisection between a clean chunk `lo` and a spilling `hi` (None = `lo` was the
-/// first probe, nothing above it to try). Returns the largest clean chunk found
+/// Bisection between a clean chunk `lo` and a spilling `hi` (None = `lo` already holds
+/// the whole program, nothing above it to try). Returns the largest clean chunk found
 /// and its compiled objects.
 fn refine_up(
     sym: &str,
@@ -206,7 +210,7 @@ fn refine_up(
     lo_objs: Vec<PathBuf>,
 ) -> anyhow::Result<(usize, Vec<PathBuf>)> {
     let Some(mut hi) = hi else {
-        return Ok((lo, lo_objs)); // first probe was clean: nothing above it to try
+        return Ok((lo, lo_objs)); // the whole program in one clean chunk
     };
     let (mut lo, mut lo_objs) = (lo, lo_objs);
     while bracket_open(lo, hi) {
@@ -496,17 +500,5 @@ mod tests {
             [ExprKey::Single(18389), ExprKey::Single(17736), ExprKey::Single(1773), ExprKey::Pair(22004, 18389)];
         let got = spilling_exprs(&usage, sym, &candidates);
         assert_eq!(got, vec![ExprKey::Single(18389), ExprKey::Pair(22004, 18389)]);
-    }
-    /// The recursion phases take the smaller start chunk; a basic AIR keeps the old bounds. Pinned
-    /// because the discriminator is the `sym` prefix, which `make_sym` builds from `proof_phase` --
-    /// rename a phase there and this silently stops firing.
-    #[test]
-    fn only_the_recursion_phases_get_the_smaller_start() {
-        for sym in ["compressor_a0_0_b19_e12056", "recursive_a0_1_b21_e900", "final_a0_0_b18_e400"] {
-            assert!(super::is_recursion_phase(sym), "{sym} should be a recursion phase");
-        }
-        for sym in ["basic_a0_2_b19_e4634", "basic_a0_0_b19_e12056", "other_a0_0_b16_e10"] {
-            assert!(!super::is_recursion_phase(sym), "{sym} should not be");
-        }
     }
 }
