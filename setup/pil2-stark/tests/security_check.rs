@@ -26,7 +26,7 @@ fn todays_configs() -> Vec<(String, StarkStruct, u64)> {
         for blowup in [1usize, 2, 3] {
             for n_bits in [17usize, 20, 22] {
                 for fold in [3usize, 4] {
-                    let ss = generate_stark_struct(&settings(kind, blowup, fold), n_bits, "blake3");
+                    let ss = generate_stark_struct(&settings(kind, blowup, fold), n_bits, HashFamily::Blake3);
                     v.push((format!("{name} basic 2^{n_bits} blowup {blowup} fold {fold}"), ss, 200));
                 }
             }
@@ -35,7 +35,7 @@ fn todays_configs() -> Vec<(String, StarkStruct, u64)> {
             for n_bits in [17usize, 19] {
                 let user = StarkSettings { low_degree_test: Some(kind), ..Default::default() };
                 let s = recursive_stark_settings(t, HashFamily::Blake3, &user);
-                v.push((format!("{name} {tn} 2^{n_bits}"), generate_stark_struct(&s, n_bits, "blake3"), 135));
+                v.push((format!("{name} {tn} 2^{n_bits}"), generate_stark_struct(&s, n_bits, HashFamily::Blake3), 135));
             }
         }
     }
@@ -47,7 +47,7 @@ fn exact_agrees_with_float_on_todays_configs() {
     let mut n = 0;
     for (name, ss, batch) in todays_configs() {
         let ldt = std::panic::catch_unwind(|| solve_low_degree_test(&ss, batch));
-        let Ok(ldt) = ldt else { continue }; // a config the solver itself rejects is not a config
+        let Ok(Ok(ldt)) = ldt else { continue }; // a config the solver itself rejects is not a config
         let report = check_low_degree_test(&ss, &ldt, batch).unwrap_or_else(|e| panic!("{name}: {e}"));
         let float = ldt.total_security_bits() as i64;
         let exact = report.min_bits_floor as i64;
@@ -60,8 +60,8 @@ fn exact_agrees_with_float_on_todays_configs() {
 }
 
 fn solved(kind: LowDegreeTestKind) -> (StarkStruct, Solved) {
-    let ss = generate_stark_struct(&settings(kind, 2, 3), 20, "blake3");
-    let ldt = solve_low_degree_test(&ss, 200);
+    let ss = generate_stark_struct(&settings(kind, 2, 3), 20, HashFamily::Blake3);
+    let ldt = solve_low_degree_test(&ss, 200).unwrap();
     (ss, ldt)
 }
 
@@ -135,13 +135,13 @@ fn rounding_is_against_the_prover() {
     // error = ((2·75.5⁵ + 3·75.5·γ·ρ)·n/(3ρ√ρ) + 75.5/√ρ)/|F|, compared to the float solver.
     let q = pil2_stark_setup::types::security::check::exact::goldilocks_cubic_field_size();
     let eta = 1.0 / 300.0;
-    let exact = ExactRegime::Jbr { eta: Rational::from_f64(eta) }.error_linear(2, 1 << 10, &q);
+    let exact = ExactRegime::Jbr { eta: Rational::from_f64(eta).unwrap() }.error_linear(2, 1 << 10, &q);
     let float = DecodingRegime::Jbr.instantiate(q.to_f64(), 0.0).error_linear(&0.25, 1 << 10);
     // never below the float value (up to float noise), and within it for an exact-√ρ rate.
     let (e, f) = (exact.clone() * q.clone(), float * q.to_f64());
     assert!((e.to_f64() / f - 1.0).abs() < 1e-9, "exact {} vs float {}", e.to_f64(), f);
     // Odd μ: exact is on the pessimistic side of the float value.
-    let exact3 = ExactRegime::Jbr { eta: Rational::from_f64(eta) }.error_linear(3, 1 << 10, &q);
+    let exact3 = ExactRegime::Jbr { eta: Rational::from_f64(eta).unwrap() }.error_linear(3, 1 << 10, &q);
     let float3 = DecodingRegime::Jbr.instantiate(q.to_f64(), 0.0).error_linear(&0.125, 1 << 10);
     assert!((exact3 * q.clone()).to_f64() >= float3 * q.to_f64() * (1.0 - 1e-9));
 }

@@ -25,7 +25,7 @@ pub fn full(mut p: PilOut) -> Option<Full> {
     p.air_groups[0].airs[0].num_rows = Some(1 << N_BITS);
     for bits in 1..=3 {
         let settings = StarkSettings { initial_blowup_factor: Some(bits), ..Default::default() };
-        let ss = generate_stark_struct(&settings, N_BITS, "blake3");
+        let ss = generate_stark_struct(&settings, N_BITS, proofman_common::hash_family::HashFamily::Blake3);
         let Some(run) = common::run(&p, 0, 0, ss.n_bits_ext - ss.n_bits) else { continue };
         let r = stark_setup(&p, 0, 0, &ss, &PrepareOptions::default(), &Default::default()).ok()?;
         let si = StarkInfo::from_json(&serde_json::to_value(&r.starkinfo).ok()?).ok()?;

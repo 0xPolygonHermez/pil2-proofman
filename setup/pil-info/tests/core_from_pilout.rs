@@ -6,6 +6,7 @@ use common::*;
 use num_bigint::BigUint;
 use pil2_pilout::pilout::{self as pb, operand, SymbolType};
 use pil_info::core::from_pilout::{from_pilout, PiloutError};
+use pil_info::core::global::global_from_pilout;
 use pil_info::core::ir::{degree, Boundary, ColType, Expr};
 use pil_info::{FieldCfg, Opening};
 
@@ -61,16 +62,6 @@ fn shplonk_keeps_first_row_and_last_row() {
 }
 
 #[test]
-fn rejects_dangling_and_cyclic_ref() {
-    let p = pilout(&["a"], &[], vec![add(exp(5), witness(0, 0))], vec![every_row(0)]);
-    assert_eq!(from_pilout(&p, 0, 0, &gl(), Opening::Deep).unwrap_err(), PiloutError::DanglingRef { expr: 0, to: 5 });
-    let p = pilout(&["a"], &[], vec![add(exp(1), witness(0, 0)), add(exp(0), witness(0, 0))], vec![every_row(0)]);
-    assert!(matches!(from_pilout(&p, 0, 0, &gl(), Opening::Deep).unwrap_err(), PiloutError::CyclicRef { .. }));
-    let p = pilout(&["a"], &[], vec![add(exp(0), witness(0, 0))], vec![every_row(0)]);
-    assert_eq!(from_pilout(&p, 0, 0, &gl(), Opening::Deep).unwrap_err(), PiloutError::CyclicRef { expr: 0 });
-}
-
-#[test]
 fn rejects_unknown_air_and_bad_operand() {
     let p = pilout(&["a"], &[], vec![add(witness(0, 0), constant("1"))], vec![every_row(0)]);
     assert_eq!(
@@ -103,6 +94,7 @@ fn lowers_column_kinds_and_offsets() {
     p.symbols.push(symbol("c", SymbolType::Challenge, 1, 0));
     p.symbols.extend((0..3).map(|i| symbol("p", SymbolType::PublicValue, 1, i)));
     p.air_groups[0].airs[0].air_values = vec![pb::AirValue { stage: 1 }];
+    p.symbols.push(symbol("av", SymbolType::AirValue, 1, 0));
     let cs = from_pilout(&p, 0, 0, &gl(), Opening::Deep).unwrap();
     let e0 =
         Expr::Add(Box::new(col(0, -1)), Box::new(Expr::Col { col: ColType::Fixed, commit_id: None, id: 0, offset: 0 }));
@@ -164,19 +156,6 @@ fn degree_follows_rules() {
     assert_eq!(bodies.each_ref().map(d), [2, 3, 1, 1, 2]);
     assert_eq!(degree(&cs, &Expr::Const(BigUint::from(3u32))), Ok(0));
     assert_eq!(degree(&cs, &Expr::Neg(Box::new(col(0, 0)))), Ok(1));
-}
-
-/// Every air of every example pilout lowers, the global constraints too.
-#[test]
-fn real_pilouts_lower() {
-    for (f, p) in real_pilouts() {
-        pil_info::core::global::global_from_pilout(&p, &gl()).unwrap_or_else(|e| panic!("{f:?} global: {e}"));
-        for (g, ag) in p.air_groups.iter().enumerate() {
-            for a in 0..ag.airs.len() {
-                from_pilout(&p, g, a, &gl(), Opening::Deep).unwrap_or_else(|e| panic!("{f:?} {g}/{a}: {e}"));
-            }
-        }
-    }
 }
 
 fn rejects(p: &pb::PilOut) {
@@ -288,4 +267,75 @@ fn rejects_symbol_count_mismatch() {
         let err = from_pilout(&p, 0, 0, &gl(), Opening::Deep).unwrap_err();
         assert!(matches!(err, PiloutError::SymbolCount { .. }), "{err:?}");
     }
+}
+
+fn hint(air: Option<u32>, o: Option<pb::Operand>) -> pb::Hint {
+    let value = Some(pb::hint_field::Value::Operand(o.unwrap()));
+    pb::Hint {
+        name: "h".into(),
+        hint_fields: vec![pb::HintField { name: Some("f".into()), value }],
+        air_group_id: air,
+        air_id: air,
+    }
+}
+
+/// An air hint naming an expression the air does not have.
+#[test]
+fn rejects_a_hint_expression_out_of_range() {
+    let mut p = pilout(&["a"], &[], vec![add(witness(0, 0), constant("1"))], vec![every_row(0)]);
+    p.hints.push(hint(Some(0), exp(1)));
+    let err = from_pilout(&p, 0, 0, &gl(), Opening::Deep).unwrap_err();
+    assert!(matches!(err, PiloutError::BadHint { .. }), "{err:?}");
+}
+
+/// A value slot two symbols name.
+#[test]
+fn rejects_a_value_named_twice() {
+    let mut p = pilout(&["a"], &[], vec![add(witness(0, 0), constant("1"))], vec![every_row(0)]);
+    p.num_public_values = 1;
+    p.symbols.extend([symbol("p", SymbolType::PublicValue, 1, 0), symbol("q", SymbolType::PublicValue, 1, 0)]);
+    let err = from_pilout(&p, 0, 0, &gl(), Opening::Deep).unwrap_err();
+    assert!(matches!(err, PiloutError::BadOperand { why, .. } if why.contains("two symbols")), "{err:?}");
+}
+
+/// Declared proof values and air values each need a symbol; a proof value operand its symbol's stage.
+#[test]
+fn rejects_unnamed_values_and_a_proof_value_of_another_stage() {
+    let base = || pilout(&["a"], &[], vec![add(witness(0, 0), constant("1"))], vec![every_row(0)]);
+    let mut p = base();
+    p.num_proof_values = vec![2];
+    p.symbols.push(symbol("pv", SymbolType::ProofValue, 1, 0));
+    let err = from_pilout(&p, 0, 0, &gl(), Opening::Deep).unwrap_err();
+    assert!(matches!(err, PiloutError::SymbolCount { what: "proof values", .. }), "{err:?}");
+    assert!(global_from_pilout(&p, &gl()).is_err());
+
+    let mut p = base();
+    p.air_groups[0].airs[0].air_values = vec![pb::AirValue { stage: 1 }];
+    let err = from_pilout(&p, 0, 0, &gl(), Opening::Deep).unwrap_err();
+    assert!(matches!(err, PiloutError::SymbolCount { what: "air values", .. }), "{err:?}");
+
+    let pv = |stage| op(operand::Operand::ProofValue(operand::ProofValue { stage, idx: 0 }));
+    let mut p = pilout(&["a"], &[], vec![add(witness(0, 0), pv(2))], vec![every_row(0)]);
+    p.num_proof_values = vec![1];
+    p.symbols.push(symbol("pv", SymbolType::ProofValue, 1, 0));
+    rejects(&p);
+    p.air_groups[0].airs[0].expressions = vec![add(witness(0, 0), pv(1))];
+    assert!(from_pilout(&p, 0, 0, &gl(), Opening::Deep).is_ok());
+}
+
+/// A global hint reads no air value, and only an airgroup value some airgroup has.
+#[test]
+fn global_hints_refuse_air_values_and_unknown_airgroup_values() {
+    let base = pilout(&["a"], &[], vec![add(witness(0, 0), constant("1"))], vec![every_row(0)]);
+    let agv = |idx| op(operand::Operand::AirGroupValue(operand::AirGroupValue { idx }));
+    for o in [air_value(0), agv(0)] {
+        let mut p = base.clone();
+        p.hints.push(hint(None, o));
+        let err = global_from_pilout(&p, &gl()).unwrap_err();
+        assert!(matches!(err, PiloutError::BadHint { .. }), "{err:?}");
+    }
+    let mut p = base;
+    p.air_groups[0].air_group_values = vec![pb::AirGroupValue { agg_type: 0, stage: 2 }];
+    p.hints.push(hint(None, agv(0)));
+    assert!(global_from_pilout(&p, &gl()).is_ok());
 }

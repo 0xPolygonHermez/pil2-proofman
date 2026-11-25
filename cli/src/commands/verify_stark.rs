@@ -1,7 +1,7 @@
 // extern crate env_logger;
 use clap::Parser;
 use proofman_verifier::VadcopFinalProof;
-use proofman_common::{hash_family, initialize_logger, StarkInfo};
+use proofman_common::{hash_family::HashFamily, initialize_logger, StarkInfo};
 use proofman_fields::{Goldilocks, PrimeField64};
 use proofman::{expand_compressed_proof, verify_proof};
 use colored::Colorize;
@@ -53,8 +53,8 @@ impl VerifyStark {
         // makes `get_hash_family` throw out of the FFI before a single proof is verified. The
         // family the prover used travels with the proof; a wrong one here only costs a failed
         // verification, never a false accept, because it changes the transcript and the roots.
-        proof.hash.parse::<hash_family::HashFamily>().map_err(|e| format!("the proof's {e}"))?;
-        proofman_starks_lib_c::set_hash_family_c(&proof.hash);
+        let hash: HashFamily = proof.hash.parse().map_err(|e| format!("the proof's {e}"))?;
+        proofman_starks_lib_c::set_hash_family_c(hash.as_str());
 
         // The C++ verifier reads the flat proof.
         let stark_info: Option<StarkInfo> = match proof.compressed {
@@ -65,7 +65,7 @@ impl VerifyStark {
         let body: &[u64] = match &stark_info {
             Some(stark_info) if stark_info.multiproof => {
                 let verkey: Vec<u64> = serde_json::from_str(&std::fs::read_to_string(base.clone() + ".verkey.json")?)?;
-                expanded = expand_compressed_proof(&proof.proof_with_publics(), stark_info, &verkey, &proof.hash)?;
+                expanded = expand_compressed_proof(&proof.proof_with_publics(), stark_info, &verkey, hash)?;
                 &expanded[1 + proof.public_values.len()..]
             }
             _ => &proof.proof,

@@ -5,6 +5,7 @@ use std::collections::BTreeMap;
 use num_bigint::BigUint;
 use serde::{Deserialize, Serialize};
 
+use super::pilout_core::AggType;
 use crate::cfg::{FieldCfg, Opening};
 
 /// Index into the lowered expression table: numbered canonically and topologically (every `Ref` points below).
@@ -34,7 +35,7 @@ pub enum Expr {
     Sub(Box<Expr>, Box<Expr>),
     Mul(Box<Expr>, Box<Expr>),
     Neg(Box<Expr>),
-    Const(BigUint),
+    Const(Fe),
     /// `id` is the stage-offset column id (witness/custom) or the fixed index; `commit_id` is set for custom.
     Col {
         col: ColType,
@@ -125,6 +126,9 @@ pub struct NamedValue {
     pub stage: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub lengths: Lengths,
+    /// An airgroup value's aggregation; `Sum` for the other values.
+    #[serde(skip)]
+    pub agg_type: AggType,
 }
 
 /// A hint field: a string, one operand of an expression, or an array of fields.
@@ -141,21 +145,11 @@ pub struct HintField {
     pub value: HintValue,
 }
 
-/// A pilout hint of the air, its operands lowered like the air's expressions.
+/// A pilout hint, its operands lowered like the expressions; `fields` are a leading array's elements, else all.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Hint {
     pub name: String,
     pub fields: Vec<HintField>,
-}
-
-impl Hint {
-    /// The fields the prover generator reads: a leading array's elements, else all of them.
-    pub fn entries(&self) -> &[HintField] {
-        match self.fields.first() {
-            Some(HintField { value: HintValue::Array(a), .. }) => a,
-            _ => &self.fields,
-        }
-    }
 }
 
 /// A lookup the system cannot resolve (an id past its table).
@@ -164,6 +158,8 @@ pub struct Unresolved(pub String);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ConstraintSystem {
+    /// The air's name; empty when the pilout gives none.
+    pub name: String,
     pub field: FieldCfg,
     pub opening: Opening,
     pub n_stages: u32,
@@ -181,8 +177,6 @@ pub struct ConstraintSystem {
     pub airgroup_values: Vec<NamedValue>,
     pub hints: Vec<Hint>,
     pub custom_commits: Vec<CustomCommit>,
-    /// `aggType` of each of the airgroup's values.
-    pub airgroup_agg_types: Vec<i32>,
 }
 
 impl ConstraintSystem {
@@ -397,7 +391,7 @@ fn eval_of(cs: &ConstraintSystem, env: &Env, e: &Expr, t: &[Fe]) -> Result<Fe, U
     let p = cs.field.modulus();
     let get = |m: &BTreeMap<u32, Fe>, k: &u32| m.get(k).cloned().unwrap_or_default();
     let leaf = |e: &Expr| match e {
-        Expr::Const(c) => c % p,
+        Expr::Const(c) => c.clone(),
         Expr::Col { col, commit_id, id, offset } => {
             let k = ColRef { col: *col, commit_id: *commit_id, id: *id, offset: *offset };
             env.cols.get(&k).cloned().unwrap_or_default()

@@ -220,8 +220,8 @@ template StirCosetEval1(n, logK) {
     }
 }
 
-// StirCosetEval1 for F_p³ coefficients: the Horner passes run coordinate-wise in EvalPolBase at the
-// base point y = c^{2^k}, as do the scaling and the DFT.
+// StirCosetEval1 for F_p³ coefficients: the Horner passes run coordinate-wise at the base point
+// y = c^{2^k}, as do the scaling and the DFT.
 template StirCosetEval3(n, logK) {
     var K = 1 << logK;
     var nmax = (n + K - 1) \ K;

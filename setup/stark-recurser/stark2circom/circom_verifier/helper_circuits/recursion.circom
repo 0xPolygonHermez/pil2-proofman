@@ -291,11 +291,11 @@ template Recursive1() {
     signal output sv_aggregationTypes[nAgg];
     signal output sv_airgroupvalues[nAgg][3];
     signal output sv_stage1Hash[W];
-    signal input proof[svd_proofSize(0)];
     signal input publics[nPub];
     signal input proofValues[nPV][3];
     signal input globalChallenge[3];
     signal input rootCAgg[4];
+    signal input proof[svd_proofSize(0)];
 
     component sV = StarkVerifierGL(0);
     sV.proof <== proof;
@@ -327,11 +327,11 @@ template Recursive1Compressed() {
     signal input sv_aggregationTypes[nAgg];
     signal input sv_airgroupvalues[nAgg][3];
     signal input sv_stage1Hash[W];
-    signal input proof[svd_proofSize(0)];
     signal input publics[nPub];
     signal input proofValues[nPV][3];
     signal input globalChallenge[3];
     signal input rootCAgg[4];
+    signal input proof[svd_proofSize(0)];
 
     component sV = StarkVerifierGL(0);
     sV.proof <== proof;

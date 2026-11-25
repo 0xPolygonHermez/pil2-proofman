@@ -52,13 +52,15 @@ pub fn vadcop_data(
     };
     let airgroups = vi["air_groups"].as_array().map_or(0, Vec::len);
     let airs_0 = vi["airs"].get(0).and_then(Value::as_array).map_or(0, Vec::len);
+    let stage = |v: &Value, what: &str| v["stage"].as_u64().with_context(|| format!("{what} has no stage"));
     let pv: Vec<u64> = vi["proofValuesMap"]
         .as_array()
-        .map_or(vec![], |a| a.iter().map(|v| v["stage"].as_u64().unwrap_or(0)).collect());
+        .map_or(Ok(vec![]), |a| a.iter().map(|v| stage(v, "a proofValuesMap entry")).collect())?;
+    let n_publics = if vi.is_null() { 0 } else { vi["nPublics"].as_u64().context("vadcopInfo has no nPublics")? };
 
     let mut out =
         format!("\nfunction vd_airgroupId() {{ return {airgroup_id}; }}\nfunction vd_airId() {{ return {air_id}; }}\n");
-    out += &format!("function vd_nPublics() {{ return {}; }}\n", vi["nPublics"].as_u64().unwrap_or(0));
+    out += &format!("function vd_nPublics() {{ return {n_publics}; }}\n");
     out += &format!("function vd_nProofValues() {{ return {}; }}\n", parse_num_proof_values(&vi["numProofValues"]));
     out += &format!("function vd_nPVMap() {{ return {}; }}\nfunction vd_PV() {{ return {}; }}\n", pv.len(), list(&pv));
     out += &format!("function vd_W() {{ return {w}; }}\nfunction vd_ec() {{ return {}; }}\n", u8::from(ec));
@@ -76,8 +78,11 @@ pub fn vadcop_data(
     out += &format!("function vd_multiAir() {{ return {}; }}\n", u8::from(airgroups > 1 || airs_0 > 1));
     let types: Vec<Vec<u64>> = agg_types
         .iter()
-        .map(|ag| ag.as_array().map_or(vec![], |a| a.iter().map(|t| t["aggType"].as_u64().unwrap_or(0)).collect()))
-        .collect();
+        .map(|ag| {
+            let ag = ag.as_array().context("an aggTypes entry is not a list")?;
+            ag.iter().map(|t| t["aggType"].as_u64().context("an aggTypes entry has no aggType")).collect()
+        })
+        .collect::<Result<_>>()?;
     out += &indexed("nAgg", &types.iter().map(|t| t.len().to_string()).collect::<Vec<_>>(), "0");
     out += &indexed("AGG", &types.iter().map(|t| list(t)).collect::<Vec<_>>(), "[0]");
     let root = |vk: &[String]| format!("[{}]", vk.join(", "));

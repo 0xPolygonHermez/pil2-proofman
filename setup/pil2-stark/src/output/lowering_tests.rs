@@ -36,9 +36,9 @@ mod eval {
         E3::from_array(&[gl(r), gl(r), gl(r)])
     }
 
-    /// Flat length of a value map: 1 per stage-1 entry, 3 per other.
+    /// Flat length of a value map: `value_dim` of each entry.
     fn flat_len(stages: &[u32]) -> usize {
-        stages.iter().map(|&s| if s == 1 { 1 } else { 3 }).sum()
+        stages.iter().map(|&s| pil_info::core::ir::value_dim(s, 3)).sum()
     }
 
     /// Seeded inputs sized by `t`.

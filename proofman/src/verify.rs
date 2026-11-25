@@ -1,24 +1,38 @@
 use proofman_fields::PrimeField64;
 
 use proofman_starks_lib_c::{
-    constraint_dag_free_c, constraint_dag_new_c, get_n_publics_c, get_proof_size_c, stark_info_free_c,
-    stark_info_new_c, stark_verify_bn128_c, stark_verify_c,
+    constraint_dag_free_c, constraint_dag_new_c, get_n_publics_c, get_proof_size_c, get_proof_values_size_c,
+    stark_info_free_c, stark_info_new_c, stark_verify_bn128_c, stark_verify_c,
 };
 
 use colored::*;
 
-use proofman_common::{ProofCtx, ProofType, ProofmanResult, Setup};
+use proofman_common::{check_key_version, ProofCtx, ProofType, ProofmanResult, Setup};
 
 use std::os::raw::c_void;
 
+/// `<base>.{starkinfo,verifierinfo,verkey}.json`.
+fn key_paths(base: &str) -> (String, String, String) {
+    (format!("{base}.starkinfo.json"), format!("{base}.verifierinfo.json"), format!("{base}.verkey.json"))
+}
+
+/// The keyVersion gate in Rust: C++ `StarkInfo::load` exits the process on a stale key.
+fn starkinfo_readable(stark_info_path: &str) -> Result<(), String> {
+    let json = std::fs::read_to_string(stark_info_path).map_err(|e| format!("cannot read it: {e}"))?;
+    let value: serde_json::Value = serde_json::from_str(&json).map_err(|e| e.to_string())?;
+    check_key_version(&value).map_err(|e| e.to_string())
+}
+
+fn refuse(stark_info_path: &str, reason: &str) -> bool {
+    tracing::error!("··· {}", format!("\u{2717} Proof does not match {stark_info_path}: {reason}").bright_red().bold());
+    false
+}
+
 /// Verify one proof against the setup `<base>.{starkinfo,verifierinfo,verkey}.json`.
 ///
-/// `proof` is the proof body only (no publics prefix); its length and `publics`' are checked
-/// against the setup before anything is handed to C++. `stark_verify` walks both through raw
-/// pointers -- `pointer2json` reads `starkInfo.proofSize` words and `starkVerify` reads
-/// `starkInfo.nPublics` field elements, neither with a bound of its own -- so a proof loaded from
-/// an untrusted file (`proofman-cli verify-stark`) or received over the network must be measured
-/// here or it reads off the end of the allocation.
+/// `proof` is the proof body only (no publics prefix). C++ reads `proofSize` words, `nPublics`
+/// publics and `proofValuesSize` proof values through raw pointers with no bound of its own, so
+/// an untrusted proof is measured here first. Long buffers are accepted (pooled/padded).
 pub fn verify_proof<F: PrimeField64>(
     proof: &[u64],
     base: &str,
@@ -26,31 +40,31 @@ pub fn verify_proof<F: PrimeField64>(
     proof_values: Option<Vec<F>>,
     global_challenge: Option<Vec<F>>,
 ) -> bool {
-    let (stark_info_path, verifier_info_path, verkey_path) =
-        (format!("{base}.starkinfo.json"), format!("{base}.verifierinfo.json"), format!("{base}.verkey.json"));
+    let (stark_info_path, verifier_info_path, verkey_path) = key_paths(base);
+    if let Err(reason) = starkinfo_readable(&stark_info_path) {
+        return refuse(&stark_info_path, &reason);
+    }
     let p_stark_info = stark_info_new_c(stark_info_path.as_str(), false, false, false, true, false);
     let p_constraint_dag = constraint_dag_new_c(verifier_info_path.as_str(), p_stark_info);
 
     let proof_size = get_proof_size_c(p_stark_info) as usize;
     let n_publics = get_n_publics_c(p_stark_info) as usize;
+    let proof_values_size = get_proof_values_size_c(p_stark_info) as usize;
     let n_publics_given = publics.as_ref().map_or(0, |p| p.len());
-    // Short is a read past the end; long only means the caller handed us a pooled or padded
-    // buffer, which the verifier ignores -- so only short is rejected.
+    let n_proof_values_given = proof_values.as_ref().map_or(0, |p| p.len());
     let too_short = if proof.len() < proof_size {
         Some(format!("proof has {} words but the setup's proofSize is {proof_size}", proof.len()))
     } else if n_publics_given < n_publics {
         Some(format!("{n_publics_given} publics were given but the setup declares {n_publics}"))
+    } else if proof_values.is_some() && n_proof_values_given < proof_values_size {
+        Some(format!("{n_proof_values_given} proof values were given but the setup declares {proof_values_size}"))
     } else {
         None
     };
     if let Some(reason) = too_short {
-        tracing::error!(
-            "··· {}",
-            format!("\u{2717} Proof does not match {stark_info_path}: {reason}").bright_red().bold()
-        );
         constraint_dag_free_c(p_constraint_dag);
         stark_info_free_c(p_stark_info);
-        return false;
+        return refuse(&stark_info_path, &reason);
     }
 
     let global_challenge_ptr = match global_challenge {
@@ -86,9 +100,7 @@ pub fn verify_proof<F: PrimeField64>(
 }
 
 pub fn verify_proof_bn128<F: PrimeField64>(p_proof: *mut c_void, setup: &Setup<F>, publics: Option<Vec<F>>) -> bool {
-    let stark_info_path = setup.setup_path.display().to_string() + ".starkinfo.json";
-    let verifier_info_path = setup.setup_path.display().to_string() + ".verifierinfo.json";
-    let verkey_path = setup.setup_path.display().to_string() + ".verkey.json";
+    let (stark_info_path, verifier_info_path, verkey_path) = key_paths(&setup.setup_path.display().to_string());
 
     let p_stark_info = stark_info_new_c(stark_info_path.as_str(), false, false, false, true, false);
     let p_constraint_dag = constraint_dag_new_c(verifier_info_path.as_str(), p_stark_info);
@@ -150,4 +162,22 @@ pub fn verify_basic_proof<F: PrimeField64>(
     }
 
     Ok(is_valid)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::verify_proof;
+    use proofman_fields::Goldilocks;
+
+    // C++ StarkInfo::load would exit the process on these; the Rust gate returns false first.
+    #[test]
+    fn stale_or_missing_key_is_rejected_not_fatal() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path().join("air").display().to_string();
+        assert!(!verify_proof::<Goldilocks>(&[], &base, None, None, None));
+        std::fs::write(format!("{base}.starkinfo.json"), r#"{"keyVersion": 1}"#).unwrap();
+        assert!(!verify_proof::<Goldilocks>(&[], &base, None, None, None));
+        std::fs::write(format!("{base}.starkinfo.json"), "not json").unwrap();
+        assert!(!verify_proof::<Goldilocks>(&[], &base, None, None, None));
+    }
 }

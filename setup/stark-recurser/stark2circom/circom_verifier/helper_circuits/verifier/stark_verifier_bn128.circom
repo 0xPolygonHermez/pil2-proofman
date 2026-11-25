@@ -6,7 +6,7 @@ include "transcript.circom";
 
 /*
     The BN128 STARK verifier: Goldilocks emulated over BN128 with lazily reduced `{maxNum}` signals
-    (circuits.bn128/gl.circom or custom/gl.circom, whichever the generated verifier includes). Every
+    (circuits.bn128/gl.circom, with the range checks of the family bn128_open_<family>.circom includes). Every
     reduction (GLNorm / GLCNorm, the GL* quotients) is where the former templated verifier had it, so the circuit
     is the same. StarkVerifierBN128(k) (below) wires:
 

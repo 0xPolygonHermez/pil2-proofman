@@ -44,7 +44,42 @@ struct Search<'a> {
     memo: BTreeMap<(ExprId, usize, Set), Found>,
 }
 
-impl Search<'_> {
+/// The state of a product's split search: `a` within `l`, `b` within `max - l`, the best set so far.
+struct Split<'e> {
+    a: &'e Expr,
+    b: &'e Expr,
+    set: Set,
+    max: usize,
+    l: usize,
+    best: Found,
+}
+
+/// A suspended search call, resumed with the result of the call it made (the search is iterative: no recursion
+/// over the expression depth).
+enum Cont<'e> {
+    /// The lhs of an add/sub is done: search the rhs from its set.
+    AddRhs { b: &'e Expr, max: usize },
+    /// Both operands are done: the larger degree, at least 0.
+    AddDone { d1: i64 },
+    /// A `Ref`'s target is done: promote it when above `max`.
+    Promote { id: ExprId, max: usize },
+    /// A target's body is done: memoise it.
+    Memo { key: (ExprId, usize, Set) },
+    /// `a` of a split is done.
+    SplitLhs(Split<'e>),
+    /// `b` of a split is done.
+    SplitRhs(Split<'e>, i64),
+}
+
+/// Search `e` from a set within a degree, or return a result.
+enum Step<'e> {
+    Call(&'e Expr, Set, usize),
+    Ret(Found),
+}
+
+const NONE: Found = (None, -1);
+
+impl<'a> Search<'a> {
     /// Roots in constraint order, threading the set, each reached as the old cExp's `exp` reference.
     fn roots(&mut self) -> Option<Set> {
         let mut set = Set::new();
@@ -54,80 +89,118 @@ impl Search<'_> {
                 // the boundary selector as a degree-1 leaf: only its degree matters to the search
                 _ => Expr::Mul(Box::new(c.e.clone()), Box::new(selector())),
             };
-            set = self.expr(&root, &set, self.abs_max).0?;
+            set = self.expr(&root, set, self.abs_max).0?;
         }
         Some(set)
     }
 
-    fn target(&mut self, id: ExprId, set: &Set, max_deg: usize) -> Found {
-        let key = (id, max_deg, set.clone());
-        if let Some(r) = self.memo.get(&key) {
-            return r.clone();
+    /// `e` searched from `set` within `max_deg`: the set it needs and the degree it reads as.
+    fn expr<'e>(&mut self, e: &'e Expr, set: Set, max_deg: usize) -> Found
+    where
+        'a: 'e,
+    {
+        let mut stack = Vec::new();
+        let mut step = self.enter(e, set, max_deg, &mut stack);
+        loop {
+            step = match step {
+                Step::Call(e, set, max) => self.enter(e, set, max, &mut stack),
+                Step::Ret(r) => match stack.pop() {
+                    None => return r,
+                    Some(k) => self.resume(k, r, &mut stack),
+                },
+            };
         }
-        let r = match self.cs.exprs.get(id as usize) {
-            Some(e) => self.expr(e, set, max_deg),
-            None => (None, -1),
-        };
-        self.memo.insert(key, r.clone());
-        r
     }
 
-    fn expr(&mut self, e: &Expr, set: &Set, max_deg: usize) -> Found {
+    fn enter<'e>(&mut self, e: &'e Expr, set: Set, max_deg: usize, stack: &mut Vec<Cont<'e>>) -> Step<'e>
+    where
+        'a: 'e,
+    {
+        let cs: &'a ConstraintSystem = self.cs;
         match e {
             Expr::Add(a, b) | Expr::Sub(a, b) => {
-                let (Some(s1), d1) = self.expr(a, set, max_deg) else { return (None, -1) };
-                let (Some(s2), d2) = self.expr(b, &s1, max_deg) else { return (None, -1) };
-                (Some(s2), d1.max(d2).max(0))
+                stack.push(Cont::AddRhs { b, max: max_deg });
+                Step::Call(a, set, max_deg)
             }
             // the old arena lowers neg to mul(-1, x), whose degree-0 leaf is skipped
-            Expr::Neg(a) => self.expr(a, set, max_deg),
-            Expr::Mul(a, b) => self.mul(e, a, b, set, max_deg),
+            Expr::Neg(a) => Step::Call(a, set, max_deg),
+            Expr::Mul(a, b) if is_const_leaf(a) => Step::Call(b, set, max_deg),
+            Expr::Mul(a, b) if is_const_leaf(b) => Step::Call(a, set, max_deg),
+            Expr::Mul(a, b) => match degree_of(e, self.deg).map(|d| d as usize) {
+                Err(_) => Step::Ret(NONE),
+                Ok(here) if here <= max_deg => Step::Ret((Some(set), here as i64)),
+                Ok(_) => Self::split(Split { a, b, set, max: max_deg, l: 0, best: NONE }, stack),
+            },
+            Expr::Ref(_) if max_deg < 1 => Step::Ret(NONE),
+            Expr::Ref(id) if set.contains(id) => Step::Ret((Some(set), 1)),
             Expr::Ref(id) => {
-                if max_deg < 1 {
-                    return (None, -1);
+                stack.push(Cont::Promote { id: *id, max: max_deg });
+                let key = (*id, self.abs_max, set);
+                if let Some(r) = self.memo.get(&key) {
+                    return Step::Ret(r.clone());
                 }
-                if set.contains(id) {
-                    return (Some(set.clone()), 1);
-                }
-                match self.target(*id, set, self.abs_max) {
-                    (Some(mut s), d) if d > max_deg as i64 => {
-                        s.insert(*id);
-                        (Some(s), 1)
+                match cs.exprs.get(*id as usize) {
+                    Some(body) => {
+                        let set = key.2.clone();
+                        stack.push(Cont::Memo { key });
+                        Step::Call(body, set, self.abs_max)
                     }
-                    r => r,
+                    None => {
+                        self.memo.insert(key, NONE);
+                        Step::Ret(NONE)
+                    }
                 }
             }
-            leaf if !matches!(leaf, Expr::Col { .. }) => (Some(set.clone()), 0),
-            _ if max_deg < 1 => (None, -1),
-            _ => (Some(set.clone()), 1),
+            leaf if !matches!(leaf, Expr::Col { .. }) => Step::Ret((Some(set), 0)),
+            _ if max_deg < 1 => Step::Ret(NONE),
+            _ => Step::Ret((Some(set), 1)),
         }
     }
 
-    fn mul(&mut self, e: &Expr, a: &Expr, b: &Expr, set: &Set, max_deg: usize) -> Found {
-        if is_const_leaf(a) {
-            return self.expr(b, set, max_deg);
-        }
-        if is_const_leaf(b) {
-            return self.expr(a, set, max_deg);
-        }
-        let Ok(here) = degree_of(e, self.deg).map(|d| d as usize) else { return (None, -1) };
-        if here <= max_deg {
-            return (Some(set.clone()), here as i64);
-        }
-        let mut best: Found = (None, -1);
-        for l in 0..=max_deg {
-            let (Some(s1), d1) = self.expr(a, set, l) else { continue };
-            let (Some(s2), d2) = self.expr(b, &s1, max_deg - l) else { continue };
-            if best.0.as_ref().is_none_or(|p| s2.len() < p.len()) {
-                let done = s2.len() == set.len();
-                best = (Some(s2), d1 + d2);
-                // cannot do better than the starting set
-                if done {
-                    break;
-                }
+    fn resume<'e>(&mut self, k: Cont<'e>, r: Found, stack: &mut Vec<Cont<'e>>) -> Step<'e> {
+        match (k, r) {
+            (Cont::AddRhs { b, max }, (Some(s1), d1)) => {
+                stack.push(Cont::AddDone { d1 });
+                Step::Call(b, s1, max)
             }
+            (Cont::AddDone { d1 }, (Some(s2), d2)) => Step::Ret((Some(s2), d1.max(d2).max(0))),
+            (Cont::AddRhs { .. } | Cont::AddDone { .. }, _) => Step::Ret(NONE),
+            (Cont::Promote { id, max }, (Some(mut s), d)) if d > max as i64 => {
+                s.insert(id);
+                Step::Ret((Some(s), 1))
+            }
+            (Cont::Promote { .. }, r) => Step::Ret(r),
+            (Cont::Memo { key }, r) => {
+                self.memo.insert(key, r.clone());
+                Step::Ret(r)
+            }
+            (Cont::SplitLhs(m), (Some(s1), d1)) => {
+                let (b, rest) = (m.b, m.max - m.l);
+                stack.push(Cont::SplitRhs(m, d1));
+                Step::Call(b, s1, rest)
+            }
+            (Cont::SplitLhs(m), _) => Self::split(Split { l: m.l + 1, ..m }, stack),
+            (Cont::SplitRhs(mut m, d1), (Some(s2), d2)) if m.best.0.as_ref().is_none_or(|p| s2.len() < p.len()) => {
+                // cannot do better than the starting set
+                let done = s2.len() == m.set.len();
+                m.best = (Some(s2), d1 + d2);
+                if done {
+                    return Step::Ret(m.best);
+                }
+                Self::split(Split { l: m.l + 1, ..m }, stack)
+            }
+            (Cont::SplitRhs(m, _), _) => Self::split(Split { l: m.l + 1, ..m }, stack),
         }
-        best
+    }
+
+    /// Tries split `m.l` of a product, or returns the best one once every split is tried.
+    fn split<'e>(m: Split<'e>, stack: &mut Vec<Cont<'e>>) -> Step<'e> {
+        if m.l > m.max {
+            return Step::Ret(m.best);
+        }
+        let (a, set, l) = (m.a, m.set.clone(), m.l);
+        stack.push(Cont::SplitLhs(m));
+        Step::Call(a, set, l)
     }
 }
 

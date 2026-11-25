@@ -6,7 +6,7 @@ use crate::expr::expression::Expression;
 // Intermediate result types
 // ---------------------------------------------------------------------------
 
-/// A formatted constraint extracted from the protobuf.
+/// A constraint as the code generator reads it.
 #[derive(Debug, Clone)]
 pub struct ConstraintInfo {
     pub boundary: String,
@@ -18,7 +18,7 @@ pub struct ConstraintInfo {
     pub im_pol: bool,
 }
 
-/// A formatted symbol extracted from the protobuf.
+/// A symbol as the code generator reads it, projected from the layout.
 #[derive(Debug, Clone)]
 pub struct SymbolInfo {
     pub name: String,
@@ -32,7 +32,6 @@ pub struct SymbolInfo {
     pub airgroup_id: Option<usize>,
     pub commit_id: Option<usize>,
     pub lengths: Option<Vec<usize>>,
-    pub idx: Option<usize>,
     pub stage_pos: Option<usize>,
     pub im_pol: bool,
     pub exp_id: Option<usize>,
@@ -52,7 +51,6 @@ impl Default for SymbolInfo {
             airgroup_id: None,
             commit_id: None,
             lengths: None,
-            idx: None,
             stage_pos: None,
             im_pol: false,
             exp_id: None,
@@ -96,6 +94,6 @@ pub struct ShplonkAir {
     pub airgroup_values_map: Vec<SymbolInfo>,
     pub air_values_map: Vec<SymbolInfo>,
     pub constraints: Vec<ConstraintInfo>,
-    /// Sorted opening points (lex string order matching JS Array.sort()).
+    /// The opening points, sorted numerically.
     pub opening_points: Vec<i64>,
 }

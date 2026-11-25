@@ -49,7 +49,7 @@ jobs:
       - name: Set up Rust Toolchain
         run: curl https://sh.rustup.rs -sSf | sh -s -- -y
   test-stark-cpp:
-    # pil2-stark's CPU gtests: DEEP, the constraint-DAG verifier and the starkinfo loader.
+    # pil2-stark's CPU gtests: DEEP, the constraint-DAG verifier, the starkinfo loader, STIR and the polynomials.
     name: Test pil2-stark (C++ gtests)
     runs-on: ubuntu-latest
     steps:
@@ -63,12 +63,14 @@ jobs:
           sudo apt install -y build-essential libgmp-dev nlohmann-json3-dev nasm libsodium-dev libgtest-dev
           sudo apt-get install -y openmpi-bin openmpi-common libopenmpi-dev
       - name: Build
-        run: make -C pil2-stark -j"$(nproc)" deep_test constraint_dag_test stark_info_test
+        run: make -C pil2-stark -j"$(nproc)" deep_test constraint_dag_test stark_info_test stir_test polynomial_test
       - name: Run
         run: |
           pil2-stark/build/deepTests
           pil2-stark/build/constraintDagTests
           pil2-stark/build/starkInfoTests
+          pil2-stark/build/stirTests
+          pil2-stark/build/polynomialTests
   cargo-fmt:
     name: cargo fmt
     runs-on: ubuntu-latest

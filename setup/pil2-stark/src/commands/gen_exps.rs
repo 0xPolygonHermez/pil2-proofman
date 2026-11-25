@@ -50,15 +50,6 @@ pub fn run_gen_exps(opts: &GenExpsOptions) -> Result<()> {
         dry_run: false,
         optimize: true,
     };
-    let summary = proofman_exps_codegen::generate_all(&opts.proving_key, &cfg)?;
-    for (air, why) in &summary.skipped {
-        tracing::warn!("Expression kernel of {air} skipped (it stays on the interpreter): {why}");
-    }
-    tracing::info!(
-        "Expression kernels: {} generated -> {} .exps.so ({} skipped)",
-        summary.generated.len(),
-        summary.placed,
-        summary.skipped.len()
-    );
+    proofman_exps_codegen::generate_all_logged(&opts.proving_key, &cfg, "Expression kernels")?;
     Ok(())
 }

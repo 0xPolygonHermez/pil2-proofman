@@ -1,6 +1,6 @@
 use clap::Parser;
 use colored::Colorize;
-use proofman_exps_codegen::{generate_all, GenConfig};
+use proofman_exps_codegen::GenConfig;
 use std::path::PathBuf;
 
 /// Generate per-AIR Q-expression CUDA kernels and compile each into a
@@ -60,14 +60,7 @@ impl GenExpsCmd {
             dry_run: self.emit_only,
             optimize: !self.no_opt,
         };
-        let summary = generate_all(&self.proving_key, &cfg)?;
-        tracing::info!(
-            "{} {} kernels -> {} .exps.so ({} skipped)",
-            format!("{: >12}", "GenExps").bright_green().bold(),
-            summary.generated.len(),
-            summary.placed,
-            summary.skipped.len()
-        );
+        proofman_exps_codegen::generate_all_logged(&self.proving_key, &cfg, "GenExps")?;
         Ok(())
     }
 }

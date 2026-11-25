@@ -88,7 +88,7 @@ struct Resolver
 
     static std::tuple<uint64_t, uint64_t, uint64_t, int64_t> evKey(EvMap::eType t, uint64_t commitId, uint64_t id, int64_t prime)
     {
-        return {uint64_t(t), t == EvMap::custom ? commitId : 0, id, prime};
+        return std::tuple_cat(StarkInfo::colKey(t, commitId, id), std::make_tuple(prime));
     }
 
     // Values are packed consecutively, StarkInfo::valueDim elements each.
@@ -282,6 +282,14 @@ inline bool dagReads(const ConstraintDag &dag, DagSrc src)
     for (const DagLeaf &l : dag.leaves)
         if (l.src == src && l.dim > 0) return true;
     return false;
+}
+
+// The verifier's null-input refusal: publics/proofValues may be null only where nothing reads them.
+inline bool verifierInputsMissing(const StarkInfo &si, const ConstraintDag &dag, const void *publics, const void *proofValues,
+                                  bool challengesVadcop)
+{
+    const bool readsPublics = (si.nPublics > 0 && !challengesVadcop) || !si.customCommits.empty() || dagReads(dag, DagSrc::Public);
+    return (publics == nullptr && readsPublics) || (proofValues == nullptr && dagReads(dag, DagSrc::ProofValue));
 }
 
 // evals/challenges: 3 elements per evMap/challengesMap entry; publics: 1 per entry; proofValues/airValues/airgroupValues:

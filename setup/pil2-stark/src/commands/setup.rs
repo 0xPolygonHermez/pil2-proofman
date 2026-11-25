@@ -9,7 +9,7 @@ use rayon::prelude::*;
 
 use pil2_pilout::pilout::{self as pb};
 use prost::Message;
-use crate::output::global_info::{build_global_info_json, write_global_constraints, write_global_info_json};
+use crate::output::global_info::{global_info_json, write_global_constraints, write_global_info_json};
 use pil_info::PrepareOptions;
 use crate::commands::common::push_im_pols_stats;
 use crate::commands::recursive_setup::run_recursive_setup;
@@ -37,8 +37,7 @@ pub struct SetupOptions {
     pub hash: proofman_common::hash_family::HashFamily,
     /// Proofs each recursive2 circuit aggregates: 2, 3 or 4.
     pub agg_arity: usize,
-    /// Build the `vadcop_final_compressed` stage. Defaults per family -- see
-    /// `hash_family::compressed_final_by_default` -- and can be added later with the
+    /// Build the `vadcop_final_compressed` stage (default true); it can be added later with the
     /// `setup-compressed-final` subcommand.
     pub compressed_final: bool,
     /// Label written as `setupVersion` in globalInfo.json; the consumer (ZisK) checks it at load.
@@ -154,14 +153,14 @@ pub fn run_setup(opts: &SetupOptions) -> Result<()> {
     // Always write globalConstraints first — run_recursive_setup reads them from disk.
     // globalInfo.json is written now only for the non-recursive path; for recursive it is
     // written once at the end after hasCompressor flags are known.
-    write_global_constraints(&pilout, &pilout_name, &opts.build_dir, &settings_map)?;
+    write_global_constraints(&pilout, &opts.build_dir)?;
     if !opts.recursive {
         write_global_info_json(
             &pilout,
             &pilout_name,
             &opts.build_dir,
             &settings_map,
-            opts.hash.as_str(),
+            opts.hash,
             opts.agg_arity,
             opts.compressed_final,
             opts.setup_version.as_deref(),
@@ -191,7 +190,7 @@ pub fn run_setup(opts: &SetupOptions) -> Result<()> {
 
                 let air_settings = settings_map.resolve(&item.airgroup_name, &item.air_name);
 
-                let stark_struct = generate_basic_stark_struct(&air_settings, n_bits, opts.hash.as_str());
+                let stark_struct = generate_basic_stark_struct(&air_settings, n_bits, opts.hash);
 
                 let files_dir = PathBuf::from(&build_dir)
                     .join("provingKey")
@@ -256,16 +255,16 @@ pub fn run_setup(opts: &SetupOptions) -> Result<()> {
 
     if opts.recursive {
         tracing::info!("Starting recursive setup...");
-        let global_info_base = build_global_info_json(
+        let global_info_base = global_info_json(
             &pilout,
             &pilout_name,
             &settings_map,
-            opts.hash.as_str(),
+            opts.hash,
             opts.agg_arity,
             opts.compressed_final,
             opts.setup_version.as_deref(),
             &Default::default(),
-        );
+        )?;
         let summary = run_recursive_setup(&pilout, &pilout_name, opts, &settings_map, global_info_base)?;
 
         // Build final settings map: start from user-supplied settings and overlay any
@@ -280,7 +279,7 @@ pub fn run_setup(opts: &SetupOptions) -> Result<()> {
             &pilout_name,
             &opts.build_dir,
             &final_settings,
-            opts.hash.as_str(),
+            opts.hash,
             opts.agg_arity,
             opts.compressed_final,
             opts.setup_version.as_deref(),
@@ -365,6 +364,7 @@ mod tests {
                 stage,
                 ..Default::default()
             }],
+            num_proof_values: vec![1],
             ..Default::default()
         };
         let mut buf = Vec::new();

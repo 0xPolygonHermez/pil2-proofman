@@ -558,8 +558,8 @@ mod tests {
     #[test]
     fn blake3_is_an_arity_2_family_so_its_selectval_is_arity_2() {
         use proofman_common::hash_family::{has_forced_tree_geometry, merkle_tree_arity};
-        assert_eq!(merkle_tree_arity("blake3"), 2);
-        assert!(has_forced_tree_geometry("blake3"));
+        assert_eq!(merkle_tree_arity(HashFamily::Blake3), 2);
+        assert!(has_forced_tree_geometry(HashFamily::Blake3));
         let src = std::fs::read_to_string(pil_dir().join("blake3/aggregator.pil")).unwrap();
         assert!(src.contains("selectValueArity2(") && !src.contains("selectValueArity4("));
         assert!(src.contains("treeselector4(") && !src.contains("treeselector8("));

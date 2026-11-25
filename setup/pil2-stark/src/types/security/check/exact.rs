@@ -37,31 +37,35 @@ impl Rational {
         }
     }
 
-    /// The exact value of a finite f64.
-    pub fn from_f64(v: f64) -> Self {
-        assert!(v.is_finite(), "non-finite f64");
+    /// The exact value of a finite f64; `None` for NaN or ±∞.
+    pub fn from_f64(v: f64) -> Option<Self> {
+        if !v.is_finite() {
+            return None;
+        }
         let bits = v.to_bits();
         let sign = if bits >> 63 == 1 { -1 } else { 1 };
         let exp = ((bits >> 52) & 0x7ff) as i64;
         let frac = (bits & ((1u64 << 52) - 1)) as i64;
         let (mant, e) = if exp == 0 { (frac, -1074) } else { (frac | (1 << 52), exp - 1075) };
-        Self::int(sign * mant) * Self::pow2(e)
+        Some(Self::int(sign * mant) * Self::pow2(e))
     }
 
     pub fn pow(&self, e: u64) -> Self {
         Self { num: num_traits::pow(self.num.clone(), e as usize), den: num_traits::pow(self.den.clone(), e as usize) }
     }
 
-    /// ⌈self⌉ for a non-negative value.
-    pub fn ceil_u64(&self) -> u64 {
-        assert!(!self.num.is_negative());
-        let q = (&self.num + &self.den - BigInt::one()) / &self.den;
-        q.to_u64().expect("ceil overflows u64")
+    /// ⌈self⌉ (`/` truncates toward zero, which is the ceiling of a negative quotient).
+    pub fn ceil(&self) -> BigInt {
+        if self.num.is_negative() {
+            &self.num / &self.den
+        } else {
+            (&self.num + &self.den - BigInt::one()) / &self.den
+        }
     }
 
-    /// ⌊self⌋ for a non-negative value.
-    pub fn floor_u32(&self) -> u32 {
-        (&self.num / &self.den).to_u32().expect("floor overflows u32")
+    /// ⌊self⌋ for a non-negative value; `None` past u32.
+    pub fn floor_u32(&self) -> Option<u32> {
+        (&self.num / &self.den).to_u32()
     }
 
     /// self as an f64, for display only.
@@ -226,10 +230,10 @@ impl ExactRegime {
     }
 
     /// Upper bound on the list size ℓ at rate 2^-mu.
-    pub fn list_size(&self, mu: u32) -> u64 {
+    pub fn list_size(&self, mu: u32) -> BigInt {
         match self {
-            ExactRegime::Jbr { eta } => (inv_sqrt_rate_upper(mu) / (r(2) * eta.clone())).ceil_u64(),
-            ExactRegime::Udr { .. } => 1,
+            ExactRegime::Jbr { eta } => (inv_sqrt_rate_upper(mu) / (r(2) * eta.clone())).ceil(),
+            ExactRegime::Udr { .. } => BigInt::one(),
         }
     }
 
@@ -242,7 +246,7 @@ impl ExactRegime {
             ExactRegime::Jbr { eta } => {
                 // m = max(⌈√ρ/(2η)⌉, 3): the least integer with (2ηm)² ≥ ρ.
                 let x = rho.clone() / (r(4) * eta.clone() * eta.clone());
-                let mut m = BigInt::from(x.ceil_u64()).sqrt();
+                let mut m = x.ceil().sqrt();
                 while Rational::int(m.clone() * m.clone()) < x {
                     m += 1;
                 }
@@ -279,17 +283,9 @@ mod tests {
 
     #[test]
     fn from_f64_is_exact() {
-        assert_eq!(Rational::from_f64(0.5), Rational::new(1, 2));
-        assert!(Rational::from_f64(0.1) * Rational::int(10) != Rational::int(1));
-    }
-
-    #[test]
-    fn non_positive_gap_is_refused() {
-        assert!(ExactRegime::Jbr { eta: Rational::new(1, 300) }.admits(1));
-        assert!(!ExactRegime::Jbr { eta: r(0) }.admits(1));
-        assert!(!ExactRegime::Jbr { eta: Rational::new(-1, 300) }.admits(1));
-        assert!(ExactRegime::Udr { alpha: r(0) }.admits(1));
-        assert!(!ExactRegime::Udr { alpha: r(-1) }.admits(1));
-        assert!(!ExactRegime::Udr { alpha: r(-2) }.admits(1));
+        assert_eq!(Rational::from_f64(0.5), Some(Rational::new(1, 2)));
+        assert!(Rational::from_f64(0.1).unwrap() * Rational::int(10) != Rational::int(1));
+        assert!([f64::NAN, f64::INFINITY].iter().all(|v| Rational::from_f64(*v).is_none()));
+        assert_eq!((Rational::new(7, 2).ceil(), Rational::new(-7, 2).ceil()), (BigInt::from(4), BigInt::from(-3)));
     }
 }

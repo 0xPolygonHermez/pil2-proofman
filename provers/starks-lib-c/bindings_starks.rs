@@ -59,6 +59,8 @@ extern "C" {
 
     pub fn get_n_publics(pStarkInfo: *mut ::std::os::raw::c_void) -> u64;
 
+    pub fn get_proof_values_size(pStarkInfo: *mut ::std::os::raw::c_void) -> u64;
+
     pub fn get_proof_pinned_size(pStarkInfo: *mut ::std::os::raw::c_void) -> u64;
 
     pub fn register_host_memory(ptr: *mut ::std::os::raw::c_void, size: u64) -> u32;
@@ -74,7 +76,6 @@ extern "C" {
     
     pub fn get_map_total_n_custom_commits_fixed(pStarkInfo: *mut ::std::os::raw::c_void) -> u64;
     
-    pub fn get_tree_size(pStarkInfo: *mut ::std::os::raw::c_void) -> u64;
     
     pub fn stark_info_free(pStarkInfo: *mut ::std::os::raw::c_void);
 
@@ -96,7 +97,6 @@ extern "C" {
     
     pub fn get_const_tree_size(pStarkInfo: *mut ::std::os::raw::c_void) -> u64;
 
-    pub fn get_const_size(pStarkInfo: *mut ::std::os::raw::c_void) -> u64;
 
     pub fn calculate_words_per_row(
         pStarkinfo: *mut ::std::os::raw::c_void,
@@ -167,9 +167,7 @@ extern "C" {
     
     pub fn get_max_n_tmp3(pExpressionsBin: *mut ::std::os::raw::c_void) -> u64;
     
-    pub fn get_max_args(pExpressionsBin: *mut ::std::os::raw::c_void) -> u64;
     
-    pub fn get_max_ops(pExpressionsBin: *mut ::std::os::raw::c_void) -> u64;
 
     pub fn get_operations_quotient(pExpressionsBin: *mut ::std::os::raw::c_void, pStarkInfo: *mut ::std::os::raw::c_void) -> u64;
 
@@ -281,7 +279,6 @@ extern "C" {
 
     // Custom Commits
     // ========================================================================================
-    pub fn custom_commit_size(pSetup: *mut ::std::os::raw::c_void, commitId: u64) -> u64;
     
     pub fn load_custom_commit(
         pSetup: *mut ::std::os::raw::c_void,
@@ -596,9 +593,7 @@ extern "C" {
 
     // OpenMP
     // ========================================================================================
-    pub fn get_omp_max_threads() -> u64;
     
-    pub fn set_omp_num_threads(num_threads: u64);
 
     // GPU/Device Management
     // ========================================================================================
@@ -746,7 +741,6 @@ extern "C" {
     pub fn get_unified_buffer_gpu_size(d_buffers: *mut ::std::os::raw::c_void) -> u64;
     pub fn acquire_first_gpu_buffer(d_buffers: *mut ::std::os::raw::c_void);
     pub fn release_first_gpu_buffer(d_buffers: *mut ::std::os::raw::c_void);
-    pub fn is_first_gpu_buffer_borrowed(d_buffers: *mut ::std::os::raw::c_void) -> u32;
     pub fn get_first_gpu_id(d_buffers: *mut ::std::os::raw::c_void) -> u32;
     pub fn get_first_gpu_buffer(d_buffers: *mut ::std::os::raw::c_void) -> *mut ::std::os::raw::c_void;
 
@@ -826,7 +820,6 @@ extern "C" {
     );
     pub fn gpu_witness_clear(d_buffers: *mut ::std::os::raw::c_void);
     pub fn gpu_witness_count(d_buffers: *mut ::std::os::raw::c_void) -> u64;
-    pub fn gpu_witness_is_registered(d_buffers: *mut ::std::os::raw::c_void, airgroup_id: u64, air_id: u64) -> ::std::os::raw::c_int;
 
     pub fn mul_register_range_tables(table_ids: *const u64, biases: *const i64, n: u64);
     pub fn mul_register_table_map(table_id: u64, kv: *const u64, n: u64, slots: u64, n_key: u64);

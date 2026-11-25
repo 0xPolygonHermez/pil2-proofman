@@ -13,7 +13,8 @@ pub struct PolMap {
     pub dim: u32,
     pub stage_id: u32,
     pub stage_pos: u32,
-    pub im_pol: bool,
+    /// An im column's promoted expression.
+    pub exp_id: Option<u32>,
     pub commit_id: Option<u32>,
     pub lengths: Lengths,
 }
@@ -111,7 +112,7 @@ fn col(c: &Column, commit_id: Option<u32>) -> PolMap {
         dim: c.dim,
         stage_id: 0,
         stage_pos: 0,
-        im_pol: false,
+        exp_id: None,
         commit_id,
         lengths: c.lengths.clone(),
     }
@@ -127,13 +128,13 @@ fn cm_pols(
     let n = cs.n_stages;
     let mut m = by_id(&cs.witness, "witness", |c| col(c, None))?;
     let (stages, dims) = (stage_table(cs)?, dim_table(cs)?);
-    let pol = |name: String, stage, dim, im_pol| PolMap {
+    let pol = |name: String, stage, dim, exp_id| PolMap {
         name,
         stage,
         dim,
         stage_id: 0,
         stage_pos: 0,
-        im_pol,
+        exp_id,
         commit_id: None,
         lengths: None,
     };
@@ -141,10 +142,10 @@ fn cm_pols(
         let at = |t: &[u32]| t.get(e as usize).copied().ok_or_else(|| Unresolved(format!("expression {e}")));
         // a fixed-only im is still a witness column: stage 1 at the earliest
         let stage = if params.im_pols_stages { at(&stages)?.max(1) } else { n };
-        m.push(pol(format!("{}.ImPol", params.air_name), stage, at(&dims)?, true));
+        m.push(pol(format!("{}.ImPol", params.air_name), stage, at(&dims)?, Some(e)));
         debug_assert_eq!(m.len(), crate::core::im::im_column_id(cs, k) as usize + 1);
     }
-    m.extend((0..params.q_deg).map(|i| pol(format!("Q{i}"), n + 1, q_dim, false)));
+    m.extend((0..params.q_deg).map(|i| pol(format!("Q{i}"), n + 1, q_dim, None)));
     number_stages(&mut m);
     Ok(m)
 }

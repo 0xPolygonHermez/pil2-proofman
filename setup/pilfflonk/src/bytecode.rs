@@ -158,7 +158,7 @@
 //!
 //! Some values of the STARK's are never written here:
 //! - `bs + 1`, the tmp3 buffer (dimension 3);
-//! - `nStages + 3`, a slot the STARK keeps reserved;
+//! - `nStages + 3`, unused but kept so `bs` stays the STARK's `bufferCommitSize` index;
 //! - the custom commits;
 //! - `x`, `nStages + 2` with arg1 0 (PIL1).
 //!

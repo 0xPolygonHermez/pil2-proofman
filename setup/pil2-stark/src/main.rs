@@ -95,7 +95,7 @@ struct SetupArgs {
     #[arg(short = 'o', long)]
     output: Option<String>,
 
-    #[arg(long, default_value = proofman_common::hash_family::DEFAULT_HASH_ID)]
+    #[arg(long, default_value = proofman_common::hash_family::HashFamily::DEFAULT.as_str())]
     hash: proofman_common::hash_family::HashFamily,
 
     /// Proofs each recursive2 circuit aggregates: 2, 3 or 4. Defaults per hash family --
@@ -111,9 +111,8 @@ struct SetupArgs {
     #[arg(long, env = "RECURSIVE_N_BITS")]
     recursive_n_bits: Option<usize>,
 
-    /// Build the `vadcop_final_compressed` stage. Defaults per hash family: on for poseidon, off
-    /// for blake3, where it measured a 2% smaller proof for a whole extra recursion layer. A key
-    /// built without it can gain it later with `setup-compressed-final`.
+    /// Build the `vadcop_final_compressed` stage (default true). A key built without it can gain it
+    /// later with `setup-compressed-final`.
     #[arg(long)]
     compressed_final: Option<bool>,
 
@@ -166,7 +165,7 @@ struct StatsArgs {
     aggregation: bool,
 
     /// Hash family the setup will use; determines tree/transcript geometry.
-    #[arg(long, default_value = proofman_common::hash_family::DEFAULT_HASH_ID)]
+    #[arg(long, default_value = proofman_common::hash_family::HashFamily::DEFAULT.as_str())]
     hash: proofman_common::hash_family::HashFamily,
 
     /// Output file for detailed stats (default: tmp/stats.txt)
@@ -360,7 +359,7 @@ struct SetupRecursiveTestArgs {
     #[arg(short = 't', long, default_value = "aggregation")]
     r#type: String,
 
-    #[arg(long, default_value = proofman_common::hash_family::DEFAULT_HASH_ID)]
+    #[arg(long, default_value = proofman_common::hash_family::HashFamily::DEFAULT.as_str())]
     hash: proofman_common::hash_family::HashFamily,
 
     #[arg(long)]
@@ -498,12 +497,9 @@ fn main() -> anyhow::Result<()> {
                 recursive_jobs
             );
 
-            let agg_arity = args
-                .agg_arity
-                .unwrap_or_else(|| proofman_common::hash_family::default_aggregation_arity(args.hash.as_str()));
-            let compressed_final = args
-                .compressed_final
-                .unwrap_or_else(|| proofman_common::hash_family::compressed_final_by_default(args.hash.as_str()));
+            let agg_arity =
+                args.agg_arity.unwrap_or_else(|| proofman_common::hash_family::default_aggregation_arity(args.hash));
+            let compressed_final = args.compressed_final.unwrap_or(true);
             if !proofman_common::global_info::is_valid_aggregation_arity(agg_arity) {
                 anyhow::bail!(
                     "unsupported --agg-arity {}; valid values: {:?}",

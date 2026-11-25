@@ -1,10 +1,18 @@
 pragma circom 2.1.0;
 
+include "gl_family.circom";
+include "evalpol.circom";
+include "treeselector.circom";
+include "merklehash.circom";
+include "pow.circom";
+include "sponge.circom";
+include "transcript_sponge.circom";
 include "geometry.circom";
+include "stark_verifier_bn128.circom";
 
 /*
-    The BN128 verifier's Merkle openings of a BN128 Poseidon tree (circuits.bn128/merklehash.circom,
-    one-element roots): see bn128_open_blake3.circom.
+    The BN128 verifier of a BN128 Poseidon tree (circuits.bn128/merklehash.circom, one-element roots),
+    the one include of its generated verifier: see bn128_open_blake3.circom.
 */
 
 function bn_rootW() { return 1; }

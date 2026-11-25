@@ -9,6 +9,7 @@
 use pil2_stark_setup::output::verifier::write_verifier_rust_file;
 use pil2_stark_setup::types::stark_info::{StarkInfo, VerifierInfo};
 use pil_info::core::dag::format::DagNode;
+use proofman_common::hash_family::HashFamily;
 
 #[test]
 #[ignore = "env-driven: set STARKINFO, VERIFIERINFO and OUT"]
@@ -26,8 +27,8 @@ fn render_rust_verifier_from_files() {
         });
         *c.expect("the DAG has a non-zero constant") = "1234567".into();
     }
-    let hash = std::env::var("HASH").unwrap_or_else(|_| "blake3".to_string());
+    let hash = std::env::var("HASH").map_or(HashFamily::DEFAULT, |h| h.parse().expect("HASH"));
     let out = env("OUT");
-    write_verifier_rust_file(&out, &stark_info, &verifier_info, &hash).expect("render");
+    write_verifier_rust_file(&out, &stark_info, &verifier_info, hash).expect("render");
     println!("wrote {out}");
 }

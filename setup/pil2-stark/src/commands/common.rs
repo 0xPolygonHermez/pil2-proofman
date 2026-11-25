@@ -7,7 +7,6 @@ use anyhow::{bail, Context, Result};
 use proofman_common::hash_family::HashFamily;
 use serde_json::Value;
 
-use crate::commands::recursive_setup::resolve_path_env;
 use crate::output::witness_gen::WitnessTracker;
 
 /// A root of 4 limbs, each a u64 or a decimal string, as decimal strings.
@@ -27,6 +26,70 @@ pub(crate) fn parse_root_strings(json: &Value) -> Result<[String; 4]> {
 /// Parse a verkey.json value (exactly 4 u64 limbs) into [u64;4].
 pub(crate) fn parse_const_root(json: &Value) -> Result<[u64; 4]> {
     Ok(parse_root_strings(json)?.map(|s| s.parse().expect("checked u64")))
+}
+
+/// Resolve the circom executable path from env, well-known locations, or PATH.
+pub fn resolve_circom_exec(circom_helpers_dir: &str) -> String {
+    // Preferred binary name depends on the OS (mirrors JS logic)
+    let bin_name = if cfg!(target_os = "macos") { "circom_mac" } else { "circom" };
+
+    // Look inside circom_helpers_dir first
+    let in_helpers = Path::new(circom_helpers_dir).join(bin_name);
+    if in_helpers.is_file() {
+        if let Ok(abs) = in_helpers.canonicalize() {
+            return abs.to_string_lossy().to_string();
+        }
+        return in_helpers.to_string_lossy().to_string();
+    }
+
+    // Fall back to PATH
+    bin_name.to_string()
+}
+
+/// Resolve a path from an environment variable; if not set, search for `fallback` by
+/// checking (in order):
+///   1. `<proofman-repo-root>/fallback`, where the root is captured at compile time
+///      from `CARGO_MANIFEST_DIR` (this crate sits at `<root>/setup/pil2-stark`).
+///      Works regardless of where the binary is invoked from, including when
+///      proofman is consumed as a git dep from another workspace.
+///   2. `fallback` relative to the current working directory
+///   3. `fallback` relative to each ancestor directory of the running executable
+///   4. `fallback` as a literal string (last resort / relative-path pass-through)
+pub fn resolve_path_env(env_var: &str, fallback: &str) -> String {
+    if let Ok(v) = std::env::var(env_var) {
+        if !v.is_empty() {
+            return v;
+        }
+    }
+    // Compile-time path to the proofman repo root.
+    const PROOFMAN_ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
+    let baked = std::path::Path::new(PROOFMAN_ROOT).join(fallback);
+    if baked.exists() {
+        if let Ok(abs) = baked.canonicalize() {
+            return abs.to_string_lossy().into_owned();
+        }
+    }
+    // CWD-relative
+    let cwd_rel = std::path::Path::new(fallback);
+    if cwd_rel.exists() {
+        if let Ok(abs) = cwd_rel.canonicalize() {
+            return abs.to_string_lossy().into_owned();
+        }
+    }
+    // Walk up from the executable
+    if let Ok(exe) = std::env::current_exe() {
+        let mut dir = exe.parent();
+        while let Some(d) = dir {
+            let candidate = d.join(fallback);
+            if candidate.exists() {
+                if let Ok(abs) = candidate.canonicalize() {
+                    return abs.to_string_lossy().into_owned();
+                }
+            }
+            dir = d.parent();
+        }
+    }
+    fallback.to_string()
 }
 
 /// The witness-library builder, with the Goldilocks sources `GOLDILOCKS_SRC_DIR` names.
@@ -97,4 +160,19 @@ pub(crate) fn push_im_pols_stats(lines: &mut Vec<String>, base_field: &[String],
         lines.extend(extended_field.iter().map(|pol| format!("    {pol}")));
     }
     lines.push(String::new());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_root_strings;
+
+    #[test]
+    fn a_root_is_exactly_four_u64_limbs() {
+        let ok = |s: &str| parse_root_strings(&serde_json::from_str(s).unwrap()).ok();
+        assert_eq!(ok("[1,2,3,4]"), Some(["1", "2", "3", "4"].map(String::from)));
+        assert_eq!(ok(r#"["1","2","3","18446744073709551615"]"#).unwrap()[3], "18446744073709551615");
+        for bad in ["[1,2,3,4,5]", "[1,2]", r#"[1,"bad",3,4]"#, "[1,-2,3,4]", "[1,2.5,3,4]", r#"{"a":1}"#] {
+            assert_eq!(ok(bad), None, "{bad}");
+        }
+    }
 }

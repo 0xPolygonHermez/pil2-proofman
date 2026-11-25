@@ -3,11 +3,11 @@
 //! pilfflonk's fields.
 
 use pil2_pilout::pilout as pb;
-use pil_info::output::global_info::{build_global_proof_values_map, build_global_publics_map};
+use pil_info::core::ir::NamedValue;
+use pil_info::core::pilout_core::{PiloutCore, PiloutError};
+use pil_info::output::global_info::global_values_maps;
 use proofman_pilfflonk::tag::{Backend, Field, Modulus, Transcript};
-use proofman_pilfflonk::{
-    AggType, GlobalInfoAir, NameStageEntry, PilfflonkError, PilfflonkGlobalInfo, SetupParams, FORMAT_VERSION,
-};
+use proofman_pilfflonk::{AggType, GlobalInfoAir, NameStageEntry, PilfflonkGlobalInfo, SetupParams, FORMAT_VERSION};
 
 use crate::error::SetupError;
 
@@ -31,8 +31,13 @@ fn air_name(air_id: usize, air: &pb::Air) -> String {
 }
 
 /// The entries of a map `pil-info` builds as JSON, as the globalInfo types them.
-fn name_stage_entries(values: Vec<serde_json::Value>) -> Result<Vec<NameStageEntry>, SetupError> {
-    serde_json::from_value(serde_json::Value::Array(values)).map_err(|e| SetupError::Pilfflonk(PilfflonkError::from(e)))
+fn name_stage_entries(values: Vec<NamedValue>) -> Vec<NameStageEntry> {
+    let entry = |v: NamedValue| NameStageEntry {
+        name: v.name,
+        stage: u64::from(v.stage),
+        lengths: v.lengths.unwrap_or_default().into_iter().map(u64::from).collect(),
+    };
+    values.into_iter().map(entry).collect()
 }
 
 /// The globalInfo of `pilout`, set up with `setup_params`.
@@ -42,6 +47,9 @@ fn name_stage_entries(values: Vec<serde_json::Value>) -> Result<Vec<NameStageEnt
 /// `numChallenges` (`[0]` for a pilout that has none, as the STARK), and the proof values and
 /// publics maps, which `pil-info` builds for both setups.
 pub fn global_info(pilout: &pb::PilOut, setup_params: SetupParams) -> Result<PilfflonkGlobalInfo, SetupError> {
+    let invalid = |e: PiloutError| SetupError::InvalidPilout(e.to_string());
+    let (proof_values, publics) =
+        global_values_maps(&PiloutCore::from_pb(pilout).map_err(invalid)?).map_err(invalid)?;
     let mut airs = Vec::with_capacity(pilout.air_groups.len());
     let mut air_groups = Vec::with_capacity(pilout.air_groups.len());
     let mut agg_types = Vec::with_capacity(pilout.air_groups.len());
@@ -92,7 +100,7 @@ pub fn global_info(pilout: &pb::PilOut, setup_params: SetupParams) -> Result<Pil
         n_publics: u64::from(pilout.num_public_values),
         num_challenges,
         num_proof_values: pilout.num_proof_values.iter().map(|&n| u64::from(n)).collect(),
-        proof_values_map: name_stage_entries(build_global_proof_values_map(&pilout.symbols))?,
-        publics_map: name_stage_entries(build_global_publics_map(&pilout.symbols))?,
+        proof_values_map: name_stage_entries(proof_values),
+        publics_map: name_stage_entries(publics),
     })
 }

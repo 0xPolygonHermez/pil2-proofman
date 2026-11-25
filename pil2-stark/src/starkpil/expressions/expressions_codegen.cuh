@@ -88,7 +88,7 @@ inline bool expsCheckScratchLayout(SetupCtx& sc) {
     };
     if (tmp1 < 0 || end < 0 || q < 0) return fail("tmp1/mem_exps_end/q missing from the map");
     if (end < tmp1 || (uint64_t)end > si.mapTotalN) return fail("scratch not within tmp1 .. mapTotalN");
-    const uint64_t qZoneEnd = zi >= 0 ? (uint64_t)zi + si.boundaries.size() * NExt : (uint64_t)q + 3 * NExt;
+    const uint64_t qZoneEnd = zi >= 0 ? (uint64_t)zi + NExt : (uint64_t)q + 3 * NExt;
     if (qZoneEnd > (uint64_t)tmp1) return fail("q/zi zone reaches into the scratch");
     if ((uint64_t)q + 3 * N > (uint64_t)tmp1) return fail("hint temporaries at q reach into the scratch");
     for (uint64_t stage = 1; stage <= si.nStages; ++stage) {

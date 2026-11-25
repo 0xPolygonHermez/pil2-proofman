@@ -8,7 +8,9 @@ use common::*;
 use num_bigint::BigUint;
 use pil2_pilout::pilout::{self as pb, constraint, expression, operand};
 use pil_info::core::dag::build::build_dag;
-use pil_info::core::from_pilout::{from_pilout, PiloutError};
+use pil_info::core::from_pilout::{from_pilout, from_pilout_core, PiloutError};
+use pil_info::core::global::global_from_pilout;
+use pil_info::core::pilout_core::PiloutCore;
 use pil_info::core::im::{im_order, ImChoice};
 use pil_info::core::ir::{
     degree, degree_table, dim, dim_table, eval_expr, eval_table, visit, ColRef, ColType, ConstraintSystem, Env, Expr,
@@ -125,15 +127,6 @@ fn refs_point_to_smaller_indices_after_lowering() {
         let (_, cs) = random_pilout(seed);
         assert_topological(&cs);
     }
-    for (_, p) in real_pilouts() {
-        for (g, ag) in p.air_groups.iter().enumerate() {
-            for a in 0..ag.airs.len() {
-                if let Ok(cs) = from_pilout(&p, g, a, &gl(), Opening::Deep) {
-                    assert_topological(&cs);
-                }
-            }
-        }
-    }
 }
 
 #[test]
@@ -196,32 +189,41 @@ fn inlined_sizes(cs: &ConstraintSystem) -> Vec<u64> {
     t
 }
 
+/// Every air of every example pilout (and the global constraints): lowers strictly and as the core input does,
+/// numbers topologically, its table passes match inlining, and its DAG validates.
 #[test]
-fn table_passes_match_inlining_on_real_pilouts() {
+fn every_real_air() {
     let mut rng = Rng(3);
-    let mut checked = 0;
+    let (mut checked, mut dags) = (0, 0);
     for (path, p) in real_pilouts() {
+        global_from_pilout(&p, &gl()).unwrap_or_else(|e| panic!("{path:?} global: {e}"));
+        let core = PiloutCore::from_pb(&p).unwrap_or_else(|e| panic!("{path:?}: {e}"));
+        assert_eq!(PiloutCore::from_json(&core.to_json().unwrap()).unwrap(), core, "{path:?}");
         for (g, ag) in p.air_groups.iter().enumerate() {
             for a in 0..ag.airs.len() {
-                let Ok(cs) = from_pilout(&p, g, a, &gl(), Opening::Deep) else { continue };
+                let at = format!("{path:?} {g}/{a}");
+                let cs = from_pilout(&p, g, a, &gl(), Opening::Deep).unwrap_or_else(|e| panic!("{at}: {e}"));
+                assert_eq!(from_pilout_core(&core, g, a, &gl(), Opening::Deep).as_ref(), Ok(&cs), "{at}");
+                assert_topological(&cs);
                 let env = small_env(&mut rng);
                 let (dg, dm, ev) =
                     (degree_table(&cs).unwrap(), dim_table(&cs).unwrap(), eval_table(&cs, &env).unwrap());
-                for (i, n) in inlined_sizes(&cs).into_iter().enumerate() {
-                    if n > 1000 {
-                        continue;
-                    }
+                for (i, n) in inlined_sizes(&cs).into_iter().enumerate().filter(|(_, n)| *n <= 1000) {
                     let flat = inlined(&cs, &Expr::Ref(i as u32));
-                    let at = format!("{path:?} {g}/{a} expr {i}");
-                    assert_eq!(Ok(dg[i]), degree(&cs, &flat), "{at}");
-                    assert_eq!(dm[i], dim(&cs, &flat).unwrap(), "{at}");
-                    assert_eq!(Ok(ev[i].clone()), eval_expr(&cs, &flat, &env), "{at}");
+                    assert_eq!(Ok(dg[i]), degree(&cs, &flat), "{at} expr {i} ({n} nodes)");
+                    assert_eq!(dm[i], dim(&cs, &flat).unwrap(), "{at} expr {i}");
+                    assert_eq!(Ok(ev[i].clone()), eval_expr(&cs, &flat, &env), "{at} expr {i}");
                     checked += 1;
                 }
+                let Some(run) = run_any(&p, g, a) else { continue };
+                let d = build_dag(&run.cs, &run.im).unwrap_or_else(|e| panic!("{at}: {e:?}"));
+                d.validate(&gl()).unwrap_or_else(|e| panic!("{at}: {e:?}"));
+                assert_eq!(d.roots.len(), run.cs.constraints.len() + run.im.exprs.len());
+                dags += 1;
             }
         }
     }
-    assert!(checked > 1000, "{checked}");
+    assert!(checked > 1000 && dags > 0, "{checked} expressions, {dags} DAGs");
 }
 
 // ---- canonical im order ----

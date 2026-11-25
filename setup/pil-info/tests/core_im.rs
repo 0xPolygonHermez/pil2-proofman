@@ -172,11 +172,22 @@ fn memo_hazard_regression() {
 fn rejects_leftover_refs() {
     let mut cs = system(chain(), &[3]);
     cs.exprs[1] = Expr::Ref(99);
-    assert!(matches!(check_im(&cs, &choice(&[]), 9, true).unwrap_err(), ImError::BadRef(_)));
+    assert!(matches!(check_im(&cs, &choice(&[]), 9, true).unwrap_err(), ImError::Unresolved(_)));
     let mut cs = system(chain(), &[3]);
     cs.exprs[0] = Expr::Mul(Box::new(Expr::Ref(2)), Box::new(Expr::Ref(1)));
-    assert!(matches!(check_im(&cs, &choice(&[]), 9, true).unwrap_err(), ImError::BadRef(_)));
+    assert!(matches!(check_im(&cs, &choice(&[]), 9, true).unwrap_err(), ImError::Unresolved(_)));
     let mut cs = system(chain(), &[3]);
     cs.constraints[0].e = Expr::Ref(99);
-    assert!(matches!(check_im(&cs, &choice(&[]), 9, true).unwrap_err(), ImError::BadRef(_)));
+    assert!(matches!(check_im(&cs, &choice(&[]), 9, true).unwrap_err(), ImError::Unresolved(_)));
+}
+
+/// The search walks a 100k-deep chain of references without recursing over it (it used to overflow the stack).
+#[test]
+fn search_is_iterative_on_a_deep_chain() {
+    let n = 100_000;
+    let mut e = vec![mul(witness(0, 0), witness(1, 0))];
+    e.extend((1..n).map(|k| add(exp(k - 1), witness(0, 0))));
+    let cs = cs_of(&pilout(&["a", "b"], &[], e, vec![every_row(n - 1)]));
+    let set = std::thread::spawn(move || search_im(&cs, &policies()[0], 3)).join().expect("no stack overflow");
+    assert!(set.is_ok());
 }

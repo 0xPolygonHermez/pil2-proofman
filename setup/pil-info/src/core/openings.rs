@@ -38,7 +38,7 @@ pub fn openings(cs: &ConstraintSystem, im: &ImChoice, lay: &Layout) -> Result<Op
     })?;
     for k in 0..im.exprs.len() {
         let id = im_column_id(cs, k);
-        if !lay.cm_pols_map.get(id as usize).is_some_and(|p| p.im_pol) {
+        if !lay.cm_pols_map.get(id as usize).is_some_and(|p| p.exp_id.is_some()) {
             return Err(OpeningsError::Unresolved { what: format!("im column {id} is not in the layout") });
         }
         evs.insert(cm(id));
@@ -89,7 +89,7 @@ fn hint_exprs(cs: &ConstraintSystem) -> Vec<Expr> {
         }
     }
     let mut out = Vec::new();
-    cs.hints.iter().for_each(|h| walk(h.entries(), &mut out));
+    cs.hints.iter().for_each(|h| walk(&h.fields, &mut out));
     out
 }
 

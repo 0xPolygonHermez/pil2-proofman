@@ -137,7 +137,7 @@ impl<'a> Builder<'a> {
 
     fn leaf(&self, e: &Expr) -> Result<DagNode, DagError> {
         Ok(match e {
-            Expr::Const(c) => DagNode::Const { value: (c % self.cs.field.modulus()).to_string() },
+            Expr::Const(c) => DagNode::Const { value: c.to_string() },
             Expr::Col { col, commit_id, id, offset } => {
                 DagNode::Col { col: *col, commit_id: *commit_id, id: *id, offset: *offset }
             }

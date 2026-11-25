@@ -4,11 +4,11 @@ pragma custom_templates;
 include "recursion.circom";
 
 /*
-    vadcop_final (recursion.circom's conventions); the generated main adds VerifyGlobalConstraints and
-    the global data vd_nPVMap() / vd_PV() (proofValuesMap's size and stages).
+    vadcop_final (recursion.circom's conventions); the generated main adds GlobalConstraints,
+    vd_nGlobalChallenges() and the global data vd_nPVMap() / vd_PV() (proofValuesMap's size and stages).
 */
 // The vadcop_final of nAg airgroups: one recursive2 proof each (key a), the global challenge and the
-// global constraints (the generated VerifyGlobalConstraints).
+// global constraints.
 template VadcopFinal(nAg) {
     var nPub = vd_nPublics();
     var nPV = vd_nProofValues();
@@ -99,11 +99,15 @@ template VadcopFinal(nAg) {
     verifyChallenges.stage1Hash <== stage1Hash;
     verifyChallenges.globalChallenge <== globalChallenge;
 
-    component verifyGlobalConstraints = VerifyGlobalConstraints();
-    verifyGlobalConstraints.publics <== publics;
-    verifyGlobalConstraints.proofValues <== proofValues;
-    verifyGlobalConstraints.globalChallenge <== globalChallenge;
-    verifyGlobalConstraints.airgroupvalues <== agv;
+    // The global constraints (generated GlobalConstraints) over the padded values and stage-2 challenges.
+    var nCh = vd_nGlobalChallenges();
+    signal challenges[nCh][3];
+    if (nCh > 0) { challenges <== GlobalChallenges(nCh)(globalChallenge); }
+    component globalConstraints = GlobalConstraints(nAg, maxAgg, nPub, nPV, nCh);
+    globalConstraints.airgroupvalues <== agv;
+    globalConstraints.publics <== publics;
+    globalConstraints.proofValues <== proofValues;
+    globalConstraints.challenges <== challenges;
 
     if (multiAir == 1) {
         signal totalAggregatedProofs <== AggregateProofsNull(nAg)(nAggregatedProofs, isNull);

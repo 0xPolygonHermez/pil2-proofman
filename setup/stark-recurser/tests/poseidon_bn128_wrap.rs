@@ -42,6 +42,7 @@ use num_bigint::BigUint;
 use pil2_stark_recurser::plonk2pil::field::modulus;
 use pil2_stark_recurser::plonk2pil::r1cs::types::{read_r1cs_header, PlonkOptions};
 use pil2_stark_recurser::plonk2pil::gen::layouts::{BAND_ROWS, RANGE_MUL_COLUMN};
+use pil2_stark_recurser::plonk2pil::check::load::check_result;
 use pil2_stark_recurser::plonk2pil::consts::ROUNDS;
 use pil2_stark_recurser::plonk2pil::{plonk2pil, PlonkResult, SetupKind};
 use proofman_common::exec_format::{ExecFile, RANGE_CHECK_BAND_KIND, RANGE_CHECK_CHUNK_BITS, RANGE_CHECK_CHUNK_COLS};
@@ -128,6 +129,10 @@ impl Wrap {
         let options = PlonkOptions { hash: HashFamily::Poseidon1, ..Default::default() };
         let res: PlonkResult<Bn128> = plonk2pil(&r1cs, SetupKind::Wrap, &options).unwrap();
         let proving_key = set_up_key(&repo_root(), &scratch.0, &res);
+        // the trusted checker cross-checks the generator on a real compiled wrap
+        let pilout =
+            pil2_pilout::pilout_proxy::PilOutProxy::new(scratch.file("wrap.pilout").to_str().unwrap()).unwrap();
+        check_result(&r1cs, &res, &pilout.pilout).unwrap_or_else(|e| panic!("{name}: {e:#}"));
         Self { witness: read_wtns(&wtns), n_publics, res, proving_key, scratch }
     }
 

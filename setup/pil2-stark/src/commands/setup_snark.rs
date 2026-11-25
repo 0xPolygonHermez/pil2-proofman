@@ -7,7 +7,7 @@ use anyhow::{bail, Context, Result};
 use serde_json::Value;
 
 use crate::commands::common::{witness_tracker_from_env, RecursiveKey};
-use crate::commands::recursive_setup::resolve_path_env;
+use crate::commands::common::resolve_path_env;
 use crate::proving_key::pipeline::Tools;
 use crate::proving_key::snark_setup::{gen_snark_setup, FinalSnark, SnarkSetupConfig};
 use proofman_common::hash_family::HashFamily;
@@ -52,7 +52,7 @@ pub fn run_setup_snark(opts: &SetupSnarkOptions) -> Result<()> {
     // (setup-recursivef's, which setup-snark sets up if the key has none) verified by a circuit
     // with blake3 custom gates, which only pilfflonk's wrap lays out; PLONK and FFLONK take an r1cs
     // with no custom gates.
-    let bn128_recursivef = proofman_common::hash_family::has_bn128_recursivef(hash.as_str());
+    let bn128_recursivef = proofman_common::hash_family::has_bn128_recursivef(hash);
     if !bn128_recursivef && final_snark != FinalSnark::Pilfflonk {
         bail!(
             "the {hash} proving key at {:?} wraps in a SNARK with --final-snark pilfflonk only (its \

@@ -11,63 +11,52 @@ use std::path::Path;
 
 use anyhow::Result;
 use pil2_pilout::pilout as pb;
+use pil_info::core::global::global_from_pilout;
+use pil_info::core::pilout_core::PiloutCore;
+use pil_info::output::global_constraints::global_constraints_json;
+use pil_info::output::global_info::global_values_maps;
 use serde_json::json;
+use proofman_common::hash_family::HashFamily;
 
 use crate::types::stark_struct::StarkStructsConfig;
-use pil_info::output::global_constraints::build_global_constraints_json;
-use pil_info::output::global_info::{build_global_proof_values_map, build_global_publics_map};
 
-/// Build the `globalInfo` JSON value in memory (does not write to disk).
+/// The `globalInfo` JSON value, from the pilout's core input (does not write to disk).
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn build_global_info_json(
+pub(crate) fn global_info_json(
     pilout: &pb::PilOut,
     pilout_name: &str,
     settings_map: &StarkStructsConfig,
-    hash: &str,
+    hash: HashFamily,
     agg_arity: usize,
     has_compressed_final: bool,
     setup_version: Option<&str>,
     // (airgroup, air) -> recursive1 batch size; by index, since air names repeat across airgroups.
     r1_batch_sizes: &std::collections::HashMap<(usize, usize), usize>,
-) -> serde_json::Value {
-    let mut airs = Vec::new();
-    let mut air_groups = Vec::new();
-    let mut agg_types = Vec::new();
-
-    for (ag_idx, airgroup) in pilout.air_groups.iter().enumerate() {
-        let ag_name = airgroup.name.clone().unwrap_or_else(|| "unnamed".to_string());
-        air_groups.push(ag_name.clone());
-
-        let agv: Vec<serde_json::Value> =
-            airgroup.air_group_values.iter().map(|v| json!({"aggType": v.agg_type, "stage": v.stage})).collect();
-        agg_types.push(agv);
-
+) -> Result<serde_json::Value> {
+    let core = PiloutCore::from_pb(pilout)?;
+    let (proof_values_map, publics_map) = global_values_maps(&core)?;
+    let unnamed = |n: &Option<String>| n.clone().unwrap_or_else(|| "unnamed".to_string());
+    let (mut airs, mut air_groups, mut agg_types) = (Vec::new(), Vec::new(), Vec::new());
+    for (ag_idx, airgroup) in core.air_groups.iter().enumerate() {
+        let ag_name = unnamed(&airgroup.name);
+        let agv = airgroup.air_group_values.iter().map(|v| json!({"aggType": v.agg_type as i32, "stage": v.stage}));
+        agg_types.push(agv.collect::<Vec<_>>());
         let mut air_list = Vec::new();
         for (air_idx, air) in airgroup.airs.iter().enumerate() {
-            let a_name = air.name.clone().unwrap_or_else(|| "unnamed".to_string());
-            let has_compressor = settings_map.has_compressor(&ag_name, &a_name);
-            let mut entry = json!({
-                "name": a_name,
-                "num_rows": air.num_rows.unwrap_or(0),
-            });
-            if has_compressor {
-                entry.as_object_mut().unwrap().insert("hasCompressor".to_string(), json!(true));
+            let a_name = unnamed(&air.name);
+            let mut entry = json!({ "name": a_name, "num_rows": air.num_rows });
+            if settings_map.has_compressor(&ag_name, &a_name) {
+                entry["hasCompressor"] = json!(true);
             }
             if let Some(&k) = r1_batch_sizes.get(&(ag_idx, air_idx)).filter(|&&k| k > 1) {
-                entry.as_object_mut().unwrap().insert("r1BatchSize".to_string(), json!(k));
+                entry["r1BatchSize"] = json!(k);
             }
             air_list.push(entry);
         }
-        airs.push(serde_json::Value::Array(air_list));
+        airs.push(air_list);
+        air_groups.push(ag_name);
     }
-
-    let num_challenges: Vec<u32> =
-        if pilout.num_challenges.is_empty() { vec![0] } else { pilout.num_challenges.clone() };
-
-    let proof_values_map = build_global_proof_values_map(&pilout.symbols);
-    let publics_map = build_global_publics_map(&pilout.symbols);
-
-    let transcript_arity: u64 = proofman_common::hash_family::transcript_arity(hash);
+    let num_challenges = if core.num_challenges.is_empty() { vec![0] } else { core.num_challenges.clone() };
 
     let mut global_info = json!({
         "name": pilout_name,
@@ -76,24 +65,24 @@ pub(crate) fn build_global_info_json(
         "aggTypes": agg_types,
         "curve": "None",
         "latticeSize": 368,
-        "transcriptArity": transcript_arity,
+        "transcriptArity": proofman_common::hash_family::transcript_arity(hash),
         "aggregationArity": agg_arity,
         // Whether this key carries the vadcop_final_compressed stage. Written so a consumer can
         // tell a key built without it from a key that is missing files: the loader must not try to
         // read a starkinfo for a stage that was never generated.
         "hasCompressedFinal": has_compressed_final,
-        "nPublics": pilout.num_public_values,
+        "nPublics": core.num_public_values,
         "numChallenges": num_challenges,
-        "numProofValues": pilout.num_proof_values,
+        "numProofValues": core.num_proof_values,
         "proofValuesMap": proof_values_map,
         "publicsMap": publics_map,
         "hash": hash,
     });
     // Consumer-assigned label (e.g. ZisK's); proofman only records it, the consumer checks it.
     if let Some(v) = setup_version {
-        global_info.as_object_mut().unwrap().insert("setupVersion".to_string(), json!(v));
+        global_info["setupVersion"] = json!(v);
     }
-    global_info
+    Ok(global_info)
 }
 
 /// Write only `pilout.globalInfo.json` into `<build_dir>/provingKey/`.
@@ -103,7 +92,7 @@ pub(crate) fn write_global_info_json(
     pilout_name: &str,
     build_dir: &str,
     settings_map: &StarkStructsConfig,
-    hash: &str,
+    hash: HashFamily,
     agg_arity: usize,
     has_compressed_final: bool,
     setup_version: Option<&str>,
@@ -112,7 +101,7 @@ pub(crate) fn write_global_info_json(
 ) -> Result<()> {
     let proving_key_dir = Path::new(build_dir).join("provingKey");
     fs::create_dir_all(&proving_key_dir)?;
-    let global_info = build_global_info_json(
+    let global_info = global_info_json(
         pilout,
         pilout_name,
         settings_map,
@@ -121,7 +110,7 @@ pub(crate) fn write_global_info_json(
         has_compressed_final,
         setup_version,
         r1_batch_sizes,
-    );
+    )?;
     let global_info_str = crate::output::json::to_json_string(&global_info)?;
     fs::write(proving_key_dir.join("pilout.globalInfo.json"), &global_info_str)?;
     Ok(())
@@ -129,62 +118,25 @@ pub(crate) fn write_global_info_json(
 
 /// Write `pilout.globalConstraints.json` and `pilout.globalConstraints.bin`
 /// into `<build_dir>/provingKey/`. Does not write `globalInfo.json`.
-pub(crate) fn write_global_constraints(
-    pilout: &pb::PilOut,
-    pilout_name: &str,
-    build_dir: &str,
-    settings_map: &StarkStructsConfig,
-) -> Result<()> {
+pub(crate) fn write_global_constraints(pilout: &pb::PilOut, build_dir: &str) -> Result<()> {
+    use crate::io::parser_args::{GlobalInfo as ParserGlobalInfo, ProofValueEntry};
+    use crate::output::global_constraints::write_global_constraints_bin_file;
+    use crate::types::stark_info::GlobalConstraintsInfo;
+
     let proving_key_dir = Path::new(build_dir).join("provingKey");
     fs::create_dir_all(&proving_key_dir)?;
-
-    // Never written out: only proofValuesMap/aggTypes are read below and the JSON is dropped,
-    // so neither the hash nor the arity reaches a file or a reader.
-    let global_info = build_global_info_json(
-        pilout,
-        pilout_name,
-        settings_map,
-        proofman_common::hash_family::DEFAULT_HASH_ID,
-        proofman_common::global_info::fallback_aggregation_arity(),
-        // Same reason as the hash and the arity above: this JSON is dropped, so the value is
-        // never read back and any of the two would do.
-        true,
-        None,
-        &Default::default(),
-    );
-
-    let global_constraints = build_global_constraints_json(pilout, &pil_info::FieldCfg::goldilocks())?;
+    let gs = global_from_pilout(pilout, &pil_info::FieldCfg::goldilocks())?;
+    let global_constraints = global_constraints_json(&gs)?;
     let gc_str = crate::output::json::to_json_string(&global_constraints)?;
     fs::write(proving_key_dir.join("pilout.globalConstraints.json"), &gc_str)?;
 
-    {
-        use crate::output::global_constraints::write_global_constraints_bin_file;
-        use crate::io::parser_args::{GlobalInfo as ParserGlobalInfo, ProofValueEntry};
-        use crate::types::stark_info::GlobalConstraintsInfo;
-
-        let proof_values_map_json =
-            global_info.get("proofValuesMap").and_then(|v| v.as_array()).cloned().unwrap_or_default();
-        let pvm: Vec<ProofValueEntry> = proof_values_map_json
-            .iter()
-            .map(|entry| ProofValueEntry { stage: entry.get("stage").and_then(|s| s.as_u64()).unwrap_or(1) })
-            .collect();
-
-        let agg_types_json = global_info.get("aggTypes").and_then(|v| v.as_array()).cloned().unwrap_or_default();
-        let agg_types: Vec<Vec<u64>> = agg_types_json
-            .iter()
-            .map(|ag| {
-                ag.as_array()
-                    .map(|arr| arr.iter().map(|v| v.get("aggType").and_then(|a| a.as_u64()).unwrap_or(0)).collect())
-                    .unwrap_or_default()
-            })
-            .collect();
-
-        let gi = ParserGlobalInfo { proof_values_map: pvm, agg_types };
-        let gci = GlobalConstraintsInfo::from_json(&global_constraints)?;
-        let bin_path = proving_key_dir.join("pilout.globalConstraints.bin");
-        write_global_constraints_bin_file(&gi, &gci, bin_path.to_str().unwrap_or(""))?;
-    }
-
+    let gi = ParserGlobalInfo {
+        proof_values_map: gs.proof_value_stages.iter().map(|&s| ProofValueEntry { stage: u64::from(s) }).collect(),
+        agg_types: gs.airgroup_values.iter().map(|g| g.iter().map(|v| v.agg_type as u64).collect()).collect(),
+    };
+    let gci = GlobalConstraintsInfo::from_json(&global_constraints)?;
+    let bin_path = proving_key_dir.join("pilout.globalConstraints.bin");
+    write_global_constraints_bin_file(&gi, &gci, bin_path.to_str().unwrap_or(""))?;
     Ok(())
 }
 
@@ -194,11 +146,11 @@ pub(crate) fn write_global_info(
     pilout_name: &str,
     build_dir: &str,
     settings_map: &StarkStructsConfig,
-    hash: &str,
+    hash: HashFamily,
     agg_arity: usize,
     has_compressed_final: bool,
 ) -> Result<()> {
-    write_global_constraints(pilout, pilout_name, build_dir, settings_map)?;
+    write_global_constraints(pilout, build_dir)?;
     write_global_info_json(
         pilout,
         pilout_name,
@@ -268,8 +220,17 @@ mod r1_batch_size_tests {
         let mut sizes = std::collections::HashMap::new();
         sizes.insert((0usize, 1usize), 5usize);
         sizes.insert((0usize, 0usize), 1usize);
-        let v =
-            build_global_info_json(&pilout(), "t", &StarkStructsConfig::default(), "blake3", 2, false, None, &sizes);
+        let v = global_info_json(
+            &pilout(),
+            "t",
+            &StarkStructsConfig::default(),
+            HashFamily::Blake3,
+            2,
+            false,
+            None,
+            &sizes,
+        )
+        .unwrap();
         let a = airs(&v);
         assert_eq!(a[0]["name"], "big");
         assert!(a[0].get("r1BatchSize").is_none(), "k=1 must not be written");
@@ -297,16 +258,17 @@ mod agg_arity_tests {
         let pilout = pb::PilOut::default();
         let settings = StarkStructsConfig::default();
         for arity in proofman_common::global_info::VALID_AGGREGATION_ARITIES {
-            let v = super::build_global_info_json(
+            let v = super::global_info_json(
                 &pilout,
                 "t",
                 &settings,
-                "Poseidon2",
+                HashFamily::Poseidon2,
                 arity,
                 true,
                 None,
                 &Default::default(),
-            );
+            )
+            .unwrap();
             assert_eq!(v["aggregationArity"], serde_json::json!(arity));
         }
     }
@@ -315,18 +277,21 @@ mod agg_arity_tests {
     fn the_builder_emits_the_setup_version_only_when_given() {
         let pilout = pb::PilOut::default();
         let settings = StarkStructsConfig::default();
-        let v = super::build_global_info_json(&pilout, "t", &settings, "Poseidon2", 3, true, None, &Default::default());
+        let v =
+            super::global_info_json(&pilout, "t", &settings, HashFamily::Poseidon2, 3, true, None, &Default::default())
+                .unwrap();
         assert!(v.get("setupVersion").is_none());
-        let v = super::build_global_info_json(
+        let v = super::global_info_json(
             &pilout,
             "t",
             &settings,
-            "Poseidon2",
+            HashFamily::Poseidon2,
             3,
             true,
             Some("1.4.0"),
             &Default::default(),
-        );
+        )
+        .unwrap();
         assert_eq!(v["setupVersion"], serde_json::json!("1.4.0"));
     }
 }
@@ -358,7 +323,7 @@ mod tests {
 
         let build_dir = "/tmp/r39_test_global_info";
         let _ = std::fs::remove_dir_all(build_dir);
-        write_global_info(&pilout, &pilout_name, build_dir, &settings_map, "Poseidon2", 3, true).unwrap();
+        write_global_info(&pilout, &pilout_name, build_dir, &settings_map, HashFamily::Poseidon2, 3, true).unwrap();
 
         let gi_str = std::fs::read_to_string(format!("{}/provingKey/pilout.globalInfo.json", build_dir)).unwrap();
         let gi: serde_json::Value = serde_json::from_str(&gi_str).unwrap();

@@ -85,11 +85,11 @@ fn plonk_opts(
     }
 }
 
-/// plonk2pil's fixed columns and PIL, then (after `settle`) a fresh STARK tail and its const tree.
-fn plonk_tail(settle: Option<Step>) -> Vec<Step> {
+/// plonk2pil's fixed columns, PIL and their check, then (after `settle`) the STARK tail and const tree.
+fn plonk_tail(settle: Option<Step>, reuse: bool, starkinfo_only: bool) -> Vec<Step> {
     let mut s = vec![Step::WriteFixed { source: ConstSource::Plonk }, Step::CompilePil, Step::CheckPlonk];
     s.extend(settle);
-    s.extend([Step::StarkTail { reuse: false, starkinfo_only: false }, Step::ConstTree { required: true }]);
+    s.extend([Step::StarkTail { reuse, starkinfo_only }, Step::ConstTree { required: true }]);
     s
 }
 
@@ -124,22 +124,21 @@ pub fn steps_for_test(cfg: &TestCfg) -> Vec<Step> {
         Step::WitnessLib,
         Step::Plonk2Pil { kind: plonk_kind(cfg.template), opts },
     ];
-    s.extend(plonk_tail(None));
+    s.extend(plonk_tail(None, false, false));
     s.extend([
         Step::WitnessWait,
         Step::Custom {
             name: "global_info",
             run: Box::new(|c| {
-                let hash = c.hash();
                 // No recursive2 stage and no --agg-arity here: the family's documented defaults.
                 crate::output::global_info::write_global_info(
                     &*c.pilout()?,
                     "build",
                     super::steps::path_str(&c.build_dir)?,
                     &Default::default(),
-                    hash,
-                    hf::default_aggregation_arity(hash),
-                    hf::compressed_final_by_default(hash),
+                    c.family,
+                    hf::default_aggregation_arity(c.family),
+                    true,
                 )
             }),
         },
@@ -154,7 +153,7 @@ fn gl_verifier(family: HashFamily, verkey_input: bool, enable_input: bool, input
         enable_input,
         input_challenges,
         fri_queries_batch_size: None,
-        hash: family.as_str().to_string(),
+        hash: family,
     })
 }
 
@@ -165,14 +164,13 @@ pub fn compressed_final_settings(
     low_degree_test: Option<LowDegreeTestKind>,
     n_bits: usize,
 ) -> Result<(StarkStruct, bool)> {
-    let hash = family.as_str();
-    let ldt = low_degree_test.unwrap_or(if hf::compressed_final_stir(hash) {
+    let ldt = low_degree_test.unwrap_or(if hf::compressed_final_stir(family) {
         LowDegreeTestKind::Stir
     } else {
         LowDegreeTestKind::Fri
     });
-    let multiproof = hf::compressed_final_multiproof(hash);
-    let blowup = hf::compressed_final_blowup_factor(hash);
+    let multiproof = hf::compressed_final_multiproof(family);
+    let blowup = hf::compressed_final_blowup_factor(family);
     // A pinned schedule applies only at the air size and blowup it was measured at.
     let here = (n_bits, blowup);
     let pinned = |measured: (usize, usize)| {
@@ -184,42 +182,45 @@ pub fn compressed_final_settings(
         measured == here
     };
     let stir_schedule = (ldt == LowDegreeTestKind::Stir)
-        .then(|| hf::compressed_final_stir_schedule(hash))
+        .then(|| hf::compressed_final_stir_schedule(family))
         .flatten()
         .filter(|(measured, ..)| pinned(*measured));
     let fri_folds = (ldt == LowDegreeTestKind::Fri)
-        .then(|| hf::compressed_final_fri_folds(hash))
+        .then(|| hf::compressed_final_fri_folds(family))
         .flatten()
         .filter(|(measured, _)| pinned(*measured));
     let settings = StarkSettings {
         initial_blowup_factor: Some(blowup),
         initial_folding_factor: Some(if family.is_blake3() { 4 } else { 3 }),
-        grinding_bits: Some(hf::compressed_final_grinding_bits(hash)),
+        grinding_bits: Some(hf::compressed_final_grinding_bits(family)),
         merkle_tree_arity: (!family.is_blake3()).then_some(2),
-        last_level_verification: if multiproof { Some(0) } else { hf::compressed_final_last_level_verification(hash) },
+        last_level_verification: if multiproof {
+            Some(0)
+        } else {
+            hf::compressed_final_last_level_verification(family)
+        },
         // final_degree is a log degree here; the helper gives the terminal FRI domain.
-        final_degree: Some(hf::compressed_final_fri_terminal_degree(hash) - blowup),
+        final_degree: Some(hf::compressed_final_fri_terminal_degree(family) - blowup),
         low_degree_test: Some(ldt),
         folding_factors: stir_schedule.as_ref().map(|(_, folds, _)| folds.clone()).or(fri_folds.map(|(_, f)| f)),
         grinding_bits_queries: stir_schedule.as_ref().map(|(_, _, grinding)| grinding.clone()),
         ..Default::default()
     };
-    let ss = generate_stark_struct(&settings, n_bits, hash);
+    let ss = generate_stark_struct(&settings, n_bits, family);
     let (mta, ta) = (ss.merkle_tree_arity, ss.transcript_arity);
-    if multiproof && !hf::has_multiproof_codec(hash, mta as u64, ta as u64) {
-        bail!("no {hash} multiproof codec at tree arity {mta}, transcript arity {ta}");
+    if multiproof && !hf::has_multiproof_codec(family, mta as u64, ta as u64) {
+        bail!("no {family} multiproof codec at tree arity {mta}, transcript arity {ta}");
     }
     Ok((ss, multiproof))
 }
 
 pub fn steps_for_compressed_final(cfg: &CompressedFinalCfg) -> Vec<Step> {
     let (family, ldt) = (cfg.family, cfg.low_degree_test);
-    let hash = family.as_str();
     // blake3 follows the blowup, as vadcop_final does; poseidon keeps the packer default.
     let max_deg =
-        family.is_blake3().then(|| hf::max_constraint_degree_for_blowup(hf::compressed_final_blowup_factor(hash)));
+        family.is_blake3().then(|| hf::max_constraint_degree_for_blowup(hf::compressed_final_blowup_factor(family)));
     let opts =
-        plonk_opts("VadcopFinalCompressed".into(), family, max_deg, hf::compressed_final_blake3_lanes(hash), None);
+        plonk_opts("VadcopFinalCompressed".into(), family, max_deg, hf::compressed_final_blake3_lanes(family), None);
     let settings = Step::Custom {
         name: "compressed_settings",
         run: Box::new(move |c| {
@@ -235,18 +236,18 @@ pub fn steps_for_compressed_final(cfg: &CompressedFinalCfg) -> Vec<Step> {
         Step::WitnessLib,
         Step::Plonk2Pil { kind: SetupKind::Aggregation, opts },
     ];
-    s.extend(plonk_tail(Some(settings)));
+    s.extend(plonk_tail(Some(settings), false, false));
     s.extend([Step::WriteVerifierRs, Step::WitnessWait]);
     s
 }
 
 pub fn steps_for_vadcop_final(cfg: &VadcopFinalCfg) -> Vec<Step> {
-    let hash = cfg.family.as_str();
+    let family = cfg.family;
     // Follows the blowup, not the packer's 5: stage2 packs maxDeg-1 bus terms per im pol.
-    let max_deg = Some(hf::max_constraint_degree_for_blowup(hf::final_blowup_factor(hash)));
+    let max_deg = Some(hf::max_constraint_degree_for_blowup(hf::final_blowup_factor(family)));
     // A floor: a smaller pilout pads up to the pinned size the committed verifier encodes.
-    let pinned = hf::final_n_bits(hash);
-    let opts = plonk_opts("FinalVadcop".into(), cfg.family, max_deg, None, pinned);
+    let pinned = hf::final_n_bits(family);
+    let opts = plonk_opts("FinalVadcop".into(), family, max_deg, None, pinned);
     let pin = Step::Custom {
         name: "final_pin",
         run: Box::new(move |c| match pinned {
@@ -254,20 +255,19 @@ pub fn steps_for_vadcop_final(cfg: &VadcopFinalCfg) -> Vec<Step> {
                 "vadcop_final",
                 c.plonk()?.n_bits_natural,
                 p,
-                "this pilout aggregates more airgroups than the pinned size holds. Raise \
-                 `hash_family::final_n_bits` and regenerate the committed verifier, which encodes the size.",
+                "this pilout aggregates more airgroups than the pinned size holds: raise `hash_family::final_n_bits`.",
             ),
             None => Ok(()),
         }),
     };
     // plonk2pil merges the linear constraints itself: --O2 yields the same air, slower.
-    let verifier = gl_verifier(cfg.family, true, true, false);
+    let verifier = gl_verifier(family, true, true, false);
     let mut s = vec![
         prologue(Some(verifier), Some(CircuitTemplate::VadcopFinal), CircomOpt::O1),
         Step::WitnessLib,
         Step::Plonk2Pil { kind: SetupKind::Aggregation, opts },
     ];
-    s.extend(plonk_tail(Some(pin)));
+    s.extend(plonk_tail(Some(pin), false, false));
     s.extend([Step::WriteVerifierRs, Step::WitnessWait]);
     s
 }
@@ -283,7 +283,7 @@ pub fn steps_for_recursivef(cfg: &RecursivefCfg) -> Vec<Step> {
         Step::WitnessLib,
         Step::Plonk2Pil { kind: SetupKind::Aggregation, opts },
     ];
-    s.extend(plonk_tail(None));
+    s.extend(plonk_tail(None, false, false));
     s
 }
 
@@ -331,16 +331,10 @@ pub fn steps_for_recursive(cfg: &RecursiveCfg) -> Vec<Step> {
         s.push(Step::Custom { name: "batch_retry", run: Box::new(move |c| recursive::retry_batch(&cfg, c, &rerun)) });
     }
     s.push(custom("compressor_check", recursive::check_compressor));
-    s.extend([
-        // After the size checks, so from the winning circom.
-        Step::WitnessLib,
-        Step::WriteFixed { source: ConstSource::Plonk },
-        Step::CompilePil,
-        Step::CheckPlonk,
-        // recursive1 keeps only the const tree's temp starkinfo: its airs share the first one's.
-        Step::StarkTail { reuse: cfg.reuse, starkinfo_only: t == T::Recursive1 },
-        Step::ConstTree { required: true },
-    ]);
+    // After the size checks, so from the winning circom.
+    s.push(Step::WitnessLib);
+    // recursive1 keeps only the const tree's temp starkinfo: its airs share the first one's.
+    s.extend(plonk_tail(None, cfg.reuse, t == T::Recursive1));
     if t == T::Recursive2 {
         s.extend([custom("vks_json", recursive::write_vks_json), Step::WriteVerifierRs]);
     }
@@ -352,126 +346,36 @@ mod tests {
     use super::*;
     use crate::proving_key::pipeline::steps::{CircomOpt, ConstSource, VerifierGen};
 
-    fn names(steps: &[Step]) -> Vec<&'static str> {
-        steps
-            .iter()
-            .map(|s| match s {
-                Step::CircomPrologue { .. } => "circom_prologue",
-                Step::WitnessLib => "witness_lib",
-                Step::Plonk2Pil { .. } => "plonk2pil",
-                Step::WriteFixed { .. } => "write_fixed",
-                Step::CompilePil => "compile_pil",
-                Step::CheckPlonk => "check_plonk",
-                Step::StarkTail { .. } => "stark_tail",
-                Step::ConstTree { .. } => "const_tree",
-                Step::WriteVerifierRs => "write_verifier_rs",
-                Step::WitnessWait => "witness_wait",
-                Step::Custom { name, .. } => name,
-            })
-            .collect()
-    }
-
-    fn test_cfg(family: HashFamily) -> TestCfg {
-        TestCfg { family, template: RecursiveTemplate::Compressor, blowup: 2, blake3_lanes: None, min_n_bits: None }
-    }
-
-    fn rf_cfg(family: HashFamily) -> RecursivefCfg {
-        RecursivefCfg { family, blowup: Some(2), blake3_lanes: None }
-    }
-
-    fn pos(steps: &[Step], n: &str) -> Option<usize> {
-        names(steps).iter().position(|x| *x == n)
-    }
-
-    fn opt_of(steps: &[Step]) -> CircomOpt {
-        steps
-            .iter()
-            .find_map(|s| if let Step::CircomPrologue { opt, .. } = s { Some(*opt) } else { None })
-            .expect("no circom prologue")
-    }
-
-    fn verifier_of(steps: &[Step]) -> Option<VerifierGen> {
-        steps.iter().find_map(|s| if let Step::CircomPrologue { verifier, .. } = s { verifier.clone() } else { None })
-    }
-
-    #[test]
-    fn steps_for_basic_has_no_circom_prologue() {
-        let s = steps_for_basic(&BasicCfg { user_fixed: true });
-        let n = names(&s);
-        assert!(!n.contains(&"circom_prologue") && !n.contains(&"plonk2pil"), "{n:?}");
-        assert!(!n.contains(&"write_verifier_rs"), "basic omits WriteVerifierRs: {n:?}");
-        assert!(pos(&s, "stark_tail").unwrap() < pos(&s, "const_tree").unwrap(), "{n:?}");
-    }
-
-    #[test]
-    fn steps_for_basic_takes_its_const_from_the_user_fixed_columns() {
-        let s = steps_for_basic(&BasicCfg { user_fixed: true });
-        assert!(s.iter().any(|s| matches!(s, Step::WriteFixed { source: ConstSource::UserFixed })));
-        let s = steps_for_basic(&BasicCfg { user_fixed: false });
-        assert!(s.iter().any(|s| matches!(s, Step::WriteFixed { source: ConstSource::Pilout })));
-    }
-
-    #[test]
-    fn steps_for_test_runs_the_prologue_before_the_shared_tail() {
-        let s = steps_for_test(&test_cfg(HashFamily::Blake3));
-        let n = names(&s);
-        let order = ["circom_prologue", "plonk2pil", "write_fixed", "compile_pil", "stark_tail", "const_tree"];
-        let idx: Vec<_> = order.iter().map(|o| pos(&s, o).unwrap_or_else(|| panic!("missing {o}: {n:?}"))).collect();
-        assert!(idx.windows(2).all(|w| w[0] < w[1]), "{n:?}");
-    }
-
-    #[test]
-    fn steps_for_test_compiles_a_raw_circom_at_o2_without_a_generator() {
-        let s = steps_for_test(&test_cfg(HashFamily::Poseidon2));
-        assert_eq!(opt_of(&s), CircomOpt::O2);
-        assert!(verifier_of(&s).is_none(), "the test kind compiles the user's circom as is");
-        assert!(s.iter().any(|s| matches!(s, Step::WriteFixed { source: ConstSource::Plonk })));
-    }
-
-    #[test]
-    fn every_kind_with_a_stark_tail_ends_in_a_const_tree() {
-        for (k, s) in [
-            ("test", steps_for_test(&test_cfg(HashFamily::Blake3))),
-            (
-                "compressed",
-                steps_for_compressed_final(&CompressedFinalCfg { family: HashFamily::Blake3, low_degree_test: None }),
-            ),
-            ("vadcop_final", steps_for_vadcop_final(&VadcopFinalCfg { family: HashFamily::Blake3 })),
-        ] {
-            assert!(pos(&s, "const_tree").unwrap() > pos(&s, "stark_tail").unwrap(), "{k}: {:?}", names(&s));
+    /// A step's name and the flags it carries (opt, verifier inputs `verkey/enable/challenges`).
+    fn describe(s: &Step) -> String {
+        let bit = |b: bool| if b { '1' } else { '0' };
+        match s {
+            Step::CircomPrologue { verifier, opt, .. } => {
+                let v = match verifier {
+                    Some(VerifierGen::Gl(o)) => {
+                        format!("gl{}{}{}", bit(o.verkey_input), bit(o.enable_input), bit(o.input_challenges))
+                    }
+                    Some(VerifierGen::Bn128Blake3(_)) => "bn128".into(),
+                    None => "raw".into(),
+                };
+                format!("circom:{}:{v}", if *opt == CircomOpt::O1 { "O1" } else { "O2" })
+            }
+            Step::WitnessLib => "witness_lib".into(),
+            Step::Plonk2Pil { .. } => "plonk2pil".into(),
+            Step::WriteFixed { source } => match source {
+                ConstSource::Plonk => "fixed:plonk",
+                ConstSource::Pilout => "fixed:pilout",
+                ConstSource::UserFixed => "fixed:user",
+            }
+            .into(),
+            Step::CompilePil => "compile_pil".into(),
+            Step::CheckPlonk => "check_plonk".into(),
+            Step::StarkTail { reuse, starkinfo_only } => format!("tail:{}{}", bit(*reuse), bit(*starkinfo_only)),
+            Step::ConstTree { required } => format!("const_tree:{}", bit(*required)),
+            Step::WriteVerifierRs => "verifier_rs".into(),
+            Step::WitnessWait => "witness_wait".into(),
+            Step::Custom { name, .. } => name.to_string(),
         }
-    }
-
-    #[test]
-    fn compressed_final_uses_the_goldilocks_verifier_at_o2() {
-        let s =
-            steps_for_compressed_final(&CompressedFinalCfg { family: HashFamily::Poseidon2, low_degree_test: None });
-        assert!(matches!(verifier_of(&s), Some(VerifierGen::Gl(_))));
-        assert_eq!(opt_of(&s), CircomOpt::O2);
-        assert!(pos(&s, "circom_prologue").unwrap() < pos(&s, "plonk2pil").unwrap());
-    }
-
-    #[test]
-    fn steps_for_vadcop_final_ends_with_witness_wait() {
-        let s = steps_for_vadcop_final(&VadcopFinalCfg { family: HashFamily::Blake3 });
-        assert_eq!(names(&s).last(), Some(&"witness_wait"), "{:?}", names(&s));
-        assert_eq!(opt_of(&s), CircomOpt::O1);
-    }
-
-    /// bn128_blake3 verifies the blake3 recursivef inside the final SNARK, not here.
-    #[test]
-    fn steps_for_recursivef_use_the_goldilocks_verifier_at_o2() {
-        for f in HashFamily::ALL {
-            let s = steps_for_recursivef(&rf_cfg(f));
-            assert!(matches!(verifier_of(&s), Some(VerifierGen::Gl(_))), "{f:?}");
-            assert_eq!(opt_of(&s), CircomOpt::O2, "{f:?}");
-        }
-    }
-
-    #[test]
-    fn recursivef_ends_at_its_const_tree_the_snark_backend_runs_after() {
-        let s = steps_for_recursivef(&rf_cfg(HashFamily::Blake3));
-        assert_eq!(names(&s).last(), Some(&"const_tree"), "{:?}", names(&s));
     }
 
     fn rec(template: RecursiveTemplate, reuse: bool) -> Vec<Step> {
@@ -488,43 +392,74 @@ mod tests {
         })
     }
 
-    /// Only recursive1 batches, and its fit is logged before the circom compile.
+    /// Every kind's full step list: order, flags, and CheckPlonk on every plonk path.
     #[test]
-    fn only_recursive1_fits_a_batch_before_compiling() {
-        let s = rec(RecursiveTemplate::Recursive1, false);
-        assert!(pos(&s, "batch_fit").unwrap() < pos(&s, "circom_prologue").unwrap(), "{:?}", names(&s));
-        assert!(pos(&rec(RecursiveTemplate::Recursive2, false), "batch_fit").is_none());
-        assert!(pos(&rec(RecursiveTemplate::Compressor, false), "batch_fit").is_none());
-    }
-
-    #[test]
-    fn compressor_check_follows_plonk2pil_and_precedes_the_tail() {
-        for t in [RecursiveTemplate::Compressor, RecursiveTemplate::Recursive1, RecursiveTemplate::Recursive2] {
-            let s = rec(t, false);
-            let n = names(&s);
-            let p = pos(&s, "plonk2pil").unwrap();
-            let c = pos(&s, "compressor_check").unwrap_or_else(|| panic!("{t:?}: {n:?}"));
-            assert!(p < c && c < pos(&s, "stark_tail").unwrap(), "{t:?}: {n:?}");
+    fn each_kind_runs_exactly_its_steps() {
+        const PLONK: &str = "witness_lib plonk2pil fixed:plonk compile_pil check_plonk";
+        let test = TestCfg {
+            family: HashFamily::Blake3,
+            template: RecursiveTemplate::Compressor,
+            blowup: 2,
+            blake3_lanes: None,
+            min_n_bits: None,
+        };
+        let compressed = CompressedFinalCfg { family: HashFamily::Poseidon2, low_degree_test: None };
+        let rec_tail = "witness_lib fixed:plonk compile_pil check_plonk";
+        let mut cases = vec![
+            ("basic user", steps_for_basic(&BasicCfg { user_fixed: true }), "fixed:user tail:00 const_tree:0".into()),
+            ("basic", steps_for_basic(&BasicCfg { user_fixed: false }), "fixed:pilout tail:00 const_tree:0".into()),
+            (
+                "test",
+                steps_for_test(&test),
+                format!("circom:O2:raw {PLONK} tail:00 const_tree:1 witness_wait global_info"),
+            ),
+            (
+                "compressed",
+                steps_for_compressed_final(&compressed),
+                format!("circom:O2:gl000 {PLONK} compressed_settings tail:00 const_tree:1 verifier_rs witness_wait"),
+            ),
+            (
+                "vadcop_final",
+                steps_for_vadcop_final(&VadcopFinalCfg { family: HashFamily::Blake3 }),
+                format!("circom:O1:gl110 {PLONK} final_pin tail:00 const_tree:1 verifier_rs witness_wait"),
+            ),
+            (
+                "compressor",
+                rec(RecursiveTemplate::Compressor, false),
+                format!("circom:O1:gl001 plonk2pil compressor_check {rec_tail} tail:00 const_tree:1"),
+            ),
+            (
+                "recursive1",
+                rec(RecursiveTemplate::Recursive1, false),
+                format!(
+                    "batch_fit circom:O1:gl001 plonk2pil batch_retry compressor_check {rec_tail} tail:01 const_tree:1"
+                ),
+            ),
+            (
+                "recursive2",
+                rec(RecursiveTemplate::Recursive2, false),
+                format!(
+                    "arity_fit circom:O1:gl110 plonk2pil compressor_check {rec_tail} tail:00 const_tree:1 \
+                     vks_json verifier_rs"
+                ),
+            ),
+            (
+                "recursive2 reused",
+                rec(RecursiveTemplate::Recursive2, true),
+                format!(
+                    "arity_fit circom:O1:gl110 plonk2pil compressor_check {rec_tail} tail:10 const_tree:1 \
+                     vks_json verifier_rs"
+                ),
+            ),
+        ];
+        // recursivef stops at its const tree: the SNARK back-end runs after the list.
+        for f in HashFamily::ALL {
+            let s = steps_for_recursivef(&RecursivefCfg { family: f, blowup: Some(2), blake3_lanes: None });
+            cases.push(("recursivef", s, format!("circom:O2:gl100 {PLONK} tail:00 const_tree:1")));
         }
-    }
-
-    #[test]
-    fn reuse_and_fresh_lists_differ_only_in_the_stark_tail_flag() {
-        let fresh = rec(RecursiveTemplate::Recursive2, false);
-        let reused = rec(RecursiveTemplate::Recursive2, true);
-        assert_eq!(names(&fresh), names(&reused));
-        let flag =
-            |s: &[Step]| s.iter().find_map(|s| if let Step::StarkTail { reuse, .. } = s { Some(*reuse) } else { None });
-        assert_eq!(flag(&fresh), Some(false));
-        assert_eq!(flag(&reused), Some(true));
-    }
-
-    #[test]
-    fn recursive_kinds_compile_at_o1_with_the_goldilocks_verifier() {
-        for t in [RecursiveTemplate::Compressor, RecursiveTemplate::Recursive1, RecursiveTemplate::Recursive2] {
-            let s = rec(t, false);
-            assert_eq!(opt_of(&s), CircomOpt::O1, "{t:?}");
+        for (kind, steps, want) in cases {
+            let got: Vec<String> = steps.iter().map(describe).collect();
+            assert_eq!(got.join(" "), want.split_whitespace().collect::<Vec<_>>().join(" "), "{kind}");
         }
-        assert!(matches!(verifier_of(&rec(RecursiveTemplate::Recursive1, false)), Some(VerifierGen::Gl(_))));
     }
 }

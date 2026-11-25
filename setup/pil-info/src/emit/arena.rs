@@ -1,7 +1,8 @@
 //! Typed IR expressions and hints -> the expression arena and hint infos the code generator reads.
 
 use crate::core::global::GlobalSystem;
-use crate::core::ir::{col_dim, value_dim, ColType, ConstraintSystem, Expr, Hint, HintField, HintValue};
+use crate::core::ir::{col_dim, value_dim, ColType, ConstraintSystem, Expr, Hint, HintField, HintValue, NamedValue};
+use crate::core::layout::Layout;
 use crate::error::{PilInfoError, Result};
 use crate::expr::expression::{ExprChild, Expression};
 use crate::types::pilout_info::{HintFieldEntry, HintFieldValue, HintInfo};
@@ -45,12 +46,12 @@ pub fn from_ir(exprs: &[Expr], leaf: &Leaf) -> Result<Vec<Expression>> {
     exprs.iter().enumerate().map(entry).collect()
 }
 
-/// The hints' fields (`Hint::entries`), a hint without fields skipped; an `exp` operand marks its entry `keep`.
+/// The hints' fields; an `exp` operand marks its entry `keep`.
 pub fn hints(hints: &[Hint], exprs: &[Expr], leaf: &Leaf, arena: &mut [Expression]) -> Result<Vec<HintInfo>> {
     let mut out = Vec::new();
-    for h in hints.iter().filter(|h| !h.fields.is_empty()) {
+    for h in hints {
         let mut fields = Vec::new();
-        for f in h.entries() {
+        for f in &h.fields {
             let (value, lengths) = hint_value(f, exprs, leaf, arena)?;
             let values = match (value, &lengths) {
                 (HintFieldValue::Array(a), Some(_)) => *a,
@@ -116,11 +117,8 @@ fn per_stage(stages: impl Iterator<Item = u32>, n: usize) -> Vec<usize> {
     v
 }
 
-/// The id of a challenge: its index within its stage after the earlier stages' counts.
-fn challenge(per_stage: &[usize], stage: u32, stage_id: u32) -> Expression {
-    let before: usize = per_stage.iter().take((stage as usize).saturating_sub(1)).sum();
-    let (stage, stage_id) = (stage as usize, stage_id as usize);
-    Expression { stage, stage_id: Some(stage_id), id: Some(stage_id + before), ..node("challenge") }
+fn challenge(stage: u32, stage_id: u32, id: usize) -> Expression {
+    Expression { stage: stage as usize, stage_id: Some(stage_id as usize), id: Some(id), ..node("challenge") }
 }
 
 fn number(e: &Expr) -> Option<Expression> {
@@ -135,19 +133,19 @@ fn value(op: &str, id: u32, stage: u32, ext: usize) -> Expression {
     Expression { id: Some(id as usize), stage: stage as usize, dim: value_dim(stage, ext), ..node(op) }
 }
 
-/// The leaves of an air's expressions and hints.
-pub fn air_leaf(cs: &ConstraintSystem) -> impl Fn(&Expr) -> Result<Expression> + '_ {
+/// The leaves of an air's expressions and hints; a challenge's id is its `challengesMap` index.
+pub fn air_leaf<'a>(cs: &'a ConstraintSystem, lay: &'a Layout) -> impl Fn(&Expr) -> Result<Expression> + 'a {
     let ext = cs.field.ext_dim();
-    let n = cs.n_stages as usize;
-    let widths = per_stage(cs.witness.iter().map(|c| c.stage), n);
-    let challenges = per_stage(cs.challenges.iter().map(|c| c.0), n);
+    let widths = per_stage(cs.witness.iter().map(|c| c.stage), cs.n_stages as usize);
     let mut witness_stage = vec![None; cs.witness.len()];
     for c in &cs.witness {
         if let Some(s) = witness_stage.get_mut(c.id as usize) {
             *s = Some(c.stage);
         }
     }
-    let stage_of = |v: &[crate::core::ir::NamedValue], id: u32| v.get(id as usize).map_or(0, |v| v.stage);
+    let stage_of = |v: &[NamedValue], id: u32, what: &str| {
+        v.get(id as usize).map(|v| v.stage).ok_or_else(|| invalid(format!("{what} {id}")))
+    };
     move |e: &Expr| {
         if let Some(x) = number(e) {
             return Ok(x);
@@ -174,38 +172,43 @@ pub fn air_leaf(cs: &ConstraintSystem) -> impl Fn(&Expr) -> Result<Expression> +
             {
                 Expression { stage_id: Some(id as usize), commit_id: Some(c as usize), ..col("custom", id, 0, offset) }
             }
-            Expr::Challenge { stage, stage_id } => challenge(&challenges, stage, stage_id),
-            Expr::ProofValue(id) => {
-                let v = cs.proof_values.get(id as usize).ok_or_else(|| invalid(format!("proof value {id}")))?;
-                value("proofvalue", id, v.stage, ext)
+            Expr::Challenge { stage, stage_id } => {
+                let pilout = &lay.challenges_map[..lay.vc_index()];
+                let id = pilout.iter().position(|c| (c.stage, c.stage_id) == (stage, stage_id));
+                challenge(stage, stage_id, id.ok_or_else(|| invalid(format!("challenge {stage_id} of stage {stage}")))?)
             }
-            Expr::AirValue(id) => value("airvalue", id, stage_of(&cs.air_values, id), ext),
+            Expr::ProofValue(id) => value("proofvalue", id, stage_of(&cs.proof_values, id, "proof value")?, ext),
+            Expr::AirValue(id) => value("airvalue", id, stage_of(&cs.air_values, id, "air value")?, ext),
             Expr::AirgroupValue { airgroup: None, id } => {
-                value("airgroupvalue", id, stage_of(&cs.airgroup_values, id), ext)
+                value("airgroupvalue", id, stage_of(&cs.airgroup_values, id, "airgroup value")?, ext)
             }
             _ => return Err(invalid(format!("{e:?} is not an operand of an air"))),
         })
     }
 }
 
-/// The leaves of the global expressions and hints; a hint's airgroup and air values have no airgroup.
+/// The leaves of the global expressions and hints; a hint's airgroup values have no airgroup.
 pub fn global_leaf(gs: &GlobalSystem) -> impl Fn(&Expr) -> Result<Expression> + '_ {
     let ext = gs.field.ext_dim();
-    let challenges: Vec<usize> = gs.num_challenges.iter().map(|&n| n as usize).collect();
     move |e: &Expr| {
         if let Some(x) = number(e) {
             return Ok(x);
         }
         Ok(match *e {
             Expr::AirgroupValue { airgroup: Some(g), id } => {
-                let stage = gs.airgroup_value_stages.get(g as usize).and_then(|v| v.get(id as usize)).copied();
-                Expression { airgroup_id: Some(g as usize), ..value("airgroupvalue", id, stage.unwrap_or(0), ext) }
+                let v = gs.airgroup_values.get(g as usize).and_then(|v| v.get(id as usize));
+                let v = v.ok_or_else(|| invalid(format!("airgroup value {id} of airgroup {g}")))?;
+                Expression { airgroup_id: Some(g as usize), ..value("airgroupvalue", id, v.stage, ext) }
             }
             Expr::AirgroupValue { airgroup: None, id } => {
                 Expression { id: Some(id as usize), dim: ext, ..node("airgroupvalue") }
             }
-            Expr::AirValue(id) => Expression { id: Some(id as usize), ..node("airvalue") },
-            Expr::Challenge { stage, stage_id } => challenge(&challenges, stage, stage_id),
+            Expr::Challenge { stage, stage_id } => {
+                // the earlier stages' challenges, then the index within the stage
+                let before: usize =
+                    gs.num_challenges.iter().take((stage as usize).saturating_sub(1)).map(|n| *n as usize).sum();
+                challenge(stage, stage_id, before + stage_id as usize)
+            }
             Expr::ProofValue(id) => {
                 let stage =
                     gs.proof_value_stages.get(id as usize).ok_or_else(|| invalid(format!("proof value {id}")))?;

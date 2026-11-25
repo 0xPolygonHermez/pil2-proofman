@@ -409,16 +409,20 @@ void Starks<ElementType>::calculateDeepPolynomial(StepsParams &params, Expressio
                                       params.pConstPolsExtendedTreeAddress, params.pCustomCommitsFixed);
 
     constexpr uint64_t BLOCK = 256;
-#pragma omp parallel for
+#pragma omp parallel
+    {
+    std::vector<F3::Element> denBuf(BLOCK * nOpenings); // heap: 0.6 MB at 97 openings vs a 2 MB Rust thread stack
+    F3::Element *den = denBuf.data();
+#pragma omp for
     for (uint64_t b = 0; b < NExtended; b += BLOCK) {
         const uint64_t n = std::min(BLOCK, NExtended - b);
-        F3::Element den[BLOCK * nOpenings];
         for (uint64_t i = 0; i < n; i++) deepDenominators(c, x[b + i], &den[i * nOpenings]);
         F3::batchInverse(den, den, n * nOpenings);
         for (uint64_t i = 0; i < n; i++) {
             const uint64_t r = b + i;
             deepEvalPoint(t, c, &den[i * nOpenings], src.at(r), *(F3::Element *)&f[r * FIELD_EXTENSION]);
         }
+    }
     }
 
     for(uint64_t step = 0; step < nTreesFRI; ++step) { 

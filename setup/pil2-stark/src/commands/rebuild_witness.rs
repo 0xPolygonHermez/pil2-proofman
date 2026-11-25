@@ -12,7 +12,7 @@
 
 use anyhow::{Context, Result};
 
-use crate::commands::recursive_setup::resolve_path_env;
+use crate::commands::common::resolve_path_env;
 use crate::output::witness_gen::WitnessTracker;
 use crate::proving_key::witness_rebuild::{rebuild_all_witness_libs, rebuild_snark_witness_libs};
 

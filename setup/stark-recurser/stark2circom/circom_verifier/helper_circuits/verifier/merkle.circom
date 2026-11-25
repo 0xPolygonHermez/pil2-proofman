@@ -43,14 +43,14 @@ template VerifyTreeOpening(eSize, nVals, arity, lastLevels, ml, leafBits) {
         component mtE = VerifyMerkleHashUntilLevelEmpty(eSize, nVals, arity, LL, 1 << leafBits);
         mtE.values <== values;
         mtE.key <== keys;
-        mtE.last_mt_levels <== last;
+        mtE.last_levels <== last;
         mtE.enable <== enable;
     } else if (LL > 0) {
         component mtU = VerifyMerkleHashUntilLevel(eSize, nVals, arity, ml, LL, 1 << leafBits);
         mtU.values <== values;
         mtU.siblings <== siblings;
         mtU.key <== keys;
-        mtU.last_mt_levels <== last;
+        mtU.last_levels <== last;
         mtU.enable <== enable;
     } else {
         component mtR = VerifyMerkleHash(eSize, nVals, arity, ml + LL);

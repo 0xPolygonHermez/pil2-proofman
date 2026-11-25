@@ -6,6 +6,7 @@
 #include <string>
 #include <vector>
 #include <memory>
+#include <tuple>
 #include "zkassert.hpp"
 #include "goldilocks_base_field.hpp"
 #include "zklog.hpp"
@@ -44,14 +45,6 @@ public:
     std::string name;
     vector<uint32_t> stageWidths;
     vector<uint32_t> publicValues;
-};
-
-class Boundary
-{
-public:
-    std::string name;
-    uint64_t offsetMin;
-    uint64_t offsetMax;
 };
 
 /// The low-degree test run on the batched DEEP polynomial f_0.
@@ -180,6 +173,12 @@ public:
                                                  : constPolsMap[ev.id];
     }
 
+    // A column's identity in the evMap: (type, commitId if custom else 0, id).
+    static std::tuple<uint64_t, uint64_t, uint64_t> colKey(EvMap::eType type, uint64_t commitId, uint64_t id)
+    {
+        return {uint64_t(type), type == EvMap::eType::custom ? commitId : 0, id};
+    }
+
     // mapOffsets/mapSectionsN key of a column: cm<stage>, <custom name>0 or const.
     std::string sectionName(EvMap::eType type, uint64_t stage, uint64_t commitId) const
     {
@@ -220,7 +219,6 @@ public:
     vector<EvMap> evMap;
     
     vector<int64_t> openingPoints;
-    vector<Boundary> boundaries;
 
     uint64_t qDeg;
     uint64_t qDim;

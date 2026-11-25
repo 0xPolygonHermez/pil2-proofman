@@ -1,11 +1,20 @@
 pragma circom 2.1.0;
 pragma custom_templates;
 
+include "custom/gl_family.circom";
+include "evalpol.circom";
+include "bitifyT.circom";
+include "treeselector.circom";
+include "custom/merklehash.circom";
+include "pow.circom";
+include "custom/sponge.circom";
+include "transcript_sponge.circom";
 include "geometry.circom";
+include "stark_verifier_bn128.circom";
 
 /*
-    The BN128 verifier's Merkle openings of a custom-gate Poseidon tree (circuits.bn128/custom/
-    merklehash.circom), which sends no levels in clear: see bn128_open_blake3.circom.
+    The BN128 verifier of a custom-gate Poseidon tree (circuits.bn128/custom/merklehash.circom), which
+    sends no levels in clear, the one include of its generated verifier: see bn128_open_blake3.circom.
 */
 
 function bn_rootW() { return 1; }

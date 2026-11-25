@@ -209,7 +209,7 @@ pub fn r1cs2plonk<F: Field>(r1cs: &R1csFile<F>) -> (Vec<PlonkConstraint<F>>, Vec
 
 // ─── Custom gates ─────────────────────────────────────────────────────────────
 
-use proofman_common::hash_family::{lookup_gate, GateRole};
+use proofman_common::hash_family::{lookup_gate, GateRole, HashFamily};
 
 #[derive(Debug, Clone, Default)]
 pub struct CustomGatesInfo<F> {
@@ -246,7 +246,7 @@ impl<F> CustomGatesInfo<F> {
 
 pub fn get_custom_gates_info<F: Field>(r1cs: &R1csFile<F>) -> CustomGatesInfo<F> {
     let mut info = CustomGatesInfo::default();
-    let mut families_seen: Vec<&'static str> = Vec::new();
+    let mut families_seen: Vec<HashFamily> = Vec::new();
 
     for (i, gate) in r1cs.custom_gates.iter().enumerate() {
         let i = i as u32;

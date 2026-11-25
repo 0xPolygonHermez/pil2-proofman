@@ -105,9 +105,13 @@ fn canonical_numbering(exprs: &[Expr]) -> Result<Vec<u32>, PiloutError> {
     Ok(new)
 }
 
-/// `e` with each `Ref(old)` read as `Ref(new[old])`.
-fn renumber(e: &Expr, new: &[u32]) -> Expr {
-    map_expr(e, &mut |n| if let Expr::Ref(t) = n { Some(Expr::Ref(new[*t as usize])) } else { None })
+/// `e` with each `Ref(old)` read as `Ref(new[old])` and each constant reduced mod `p`.
+fn renumber(e: &Expr, new: &[u32], p: &BigUint) -> Expr {
+    map_expr(e, &mut |n| match n {
+        Expr::Ref(t) => Some(Expr::Ref(new[*t as usize])),
+        Expr::Const(c) => Some(Expr::Const(c % p)),
+        _ => None,
+    })
 }
 
 /// Number of cells of a symbol: 1, or the product of its array lengths.
@@ -139,18 +143,6 @@ fn cell(s: &pc::Symbol, k: usize) -> (String, Lengths) {
     (s.name.clone(), cell_lengths(s, k))
 }
 
-/// Place `name` at `idx`, padding with `fill`.
-pub(crate) fn place<T: Clone>(v: &mut Vec<T>, idx: usize, fill: T, val: T) -> Result<(), PiloutError> {
-    if idx >= MAX_SLOTS {
-        return Err(bad(idx, "symbol id out of range"));
-    }
-    if v.len() <= idx {
-        v.resize(idx + 1, fill);
-    }
-    v[idx] = val;
-    Ok(())
-}
-
 /// First column id of `stage` in a commit with `widths` (the only column-id rule).
 pub fn stage_base(widths: &[u32], stage: u32) -> Result<u32, PiloutError> {
     let mut below = widths.iter().take(stage.saturating_sub(1) as usize);
@@ -166,7 +158,8 @@ struct Tables<'a> {
     n_airgroup_values: usize,
     num_challenges: &'a [u32],
     n_publics: u32,
-    num_proof_values: &'a [u32],
+    proof_value_stages: &'a [u32],
+    n_exprs: usize,
 }
 
 fn within(ok: bool, parent: usize, why: &'static str) -> Result<(), PiloutError> {
@@ -232,7 +225,7 @@ fn lower_operand(o: &pc::Operand, parent: usize, t: &Tables) -> Result<Expr, Pil
             Expr::Challenge { stage: c.stage, stage_id: c.idx }
         }
         O::ProofValue(p) => {
-            check_proof_value(t.num_proof_values, p.idx, parent)?;
+            check_proof_value(t.proof_value_stages, p.stage, p.idx, parent)?;
             Expr::ProofValue(p.idx)
         }
     })
@@ -242,9 +235,11 @@ pub(crate) fn check_public(n_publics: u32, idx: u32, parent: usize) -> Result<()
     within(idx < n_publics, parent, "public value out of range")
 }
 
-/// The proof-value index is global: bounded by the sum over stages.
-pub(crate) fn check_proof_value(per_stage: &[u32], idx: u32, parent: usize) -> Result<(), PiloutError> {
-    within(u64::from(idx) < per_stage.iter().map(|n| u64::from(*n)).sum(), parent, "proof value out of range")
+/// The proof-value index is global; the operand's stage must be its symbol's.
+pub(crate) fn check_proof_value(stages: &[u32], stage: u32, idx: u32, parent: usize) -> Result<(), PiloutError> {
+    let at = stages.get(idx as usize);
+    within(at.is_some(), parent, "proof value out of range")?;
+    within(at == Some(&stage), parent, "proof value of a stage other than its symbol's")
 }
 
 pub(crate) fn check_challenge(num_challenges: &[u32], stage: u32, idx: u32, parent: usize) -> Result<(), PiloutError> {
@@ -295,6 +290,9 @@ fn lower_constraint(k: usize, c: &pc::Constraint, n_exprs: usize, opening: Openi
 fn lower_hint_field(f: &pc::HintField, hint: &str, t: &Tables) -> Result<HintField, PiloutError> {
     let value = match &f.value {
         pc::HintValue::String(s) => HintValue::Str(s.clone()),
+        pc::HintValue::Operand(pc::Operand::Expression(idx)) if *idx as usize >= t.n_exprs => {
+            return Err(PiloutError::BadHint { hint: hint.to_string(), why: "an expression the air does not have" })
+        }
         pc::HintValue::Operand(o) => HintValue::Expr(lower_operand(o, 0, t).map_err(|e| match e {
             PiloutError::BadOperand { why, .. } => PiloutError::BadHint { hint: hint.to_string(), why },
             e => e,
@@ -306,10 +304,10 @@ fn lower_hint_field(f: &pc::HintField, hint: &str, t: &Tables) -> Result<HintFie
     Ok(HintField { name: f.name.clone(), value })
 }
 
-fn renumber_hint(f: HintField, new: &[u32]) -> HintField {
+fn renumber_hint(f: HintField, new: &[u32], p: &BigUint) -> HintField {
     let value = match f.value {
-        HintValue::Expr(e) => HintValue::Expr(renumber(&e, new)),
-        HintValue::Array(a) => HintValue::Array(a.into_iter().map(|f| renumber_hint(f, new)).collect()),
+        HintValue::Expr(e) => HintValue::Expr(renumber(&e, new, p)),
+        HintValue::Array(a) => HintValue::Array(a.into_iter().map(|f| renumber_hint(f, new, p)).collect()),
         s @ HintValue::Str(_) => s,
     };
     HintField { value, ..f }
@@ -355,18 +353,55 @@ pub(crate) fn declared_stage(s: &pc::Symbol) -> Result<u32, PiloutError> {
     s.stage.ok_or_else(|| PiloutError::MissingStage { symbol: s.name.clone() })
 }
 
-/// `mk(symbol, cell)` of `symbols` (arrays expanded) placed at their ids; a hole is an error.
-pub(crate) fn named<'a, T: Clone>(
+/// `mk(symbol, cell)` of `symbols` (arrays expanded) placed at their ids; a hole or a slot named twice is an error.
+pub(crate) fn named<'a, T>(
     symbols: impl Iterator<Item = &'a pc::Symbol>,
     mk: impl Fn(&pc::Symbol, usize) -> Result<T, PiloutError>,
 ) -> Result<Vec<T>, PiloutError> {
     let mut v: Vec<Option<T>> = Vec::new();
     for s in symbols {
         for k in 0..symbol_len(s) {
-            place(&mut v, (s.id as usize).saturating_add(k), None, Some(mk(s, k)?))?;
+            let idx = (s.id as usize).saturating_add(k);
+            within(idx < MAX_SLOTS, idx, "symbol id out of range")?;
+            if v.len() <= idx {
+                v.resize_with(idx + 1, || None);
+            }
+            within(v[idx].is_none(), idx, "a value named by two symbols")?;
+            v[idx] = Some(mk(s, k)?);
         }
     }
     v.into_iter().enumerate().map(|(i, x)| x.ok_or_else(|| bad(i, "a value with no symbol"))).collect()
+}
+
+/// `named` symbol cells against the `declared` count.
+fn check_total(what: &'static str, declared: u64, named: usize) -> Result<(), PiloutError> {
+    if declared == named as u64 {
+        return Ok(());
+    }
+    let n = |x: u64| u32::try_from(x).unwrap_or(u32::MAX);
+    Err(PiloutError::SymbolCount { what, declared: vec![n(declared)], named: vec![n(named as u64)] })
+}
+
+/// The proof values by id, every declared one named exactly once.
+pub fn proof_values(core: &PiloutCore) -> Result<Vec<NamedValue>, PiloutError> {
+    let v = named(global(core, SymbolKind::ProofValue), |s, k| {
+        let (name, lengths) = cell(s, k);
+        Ok(NamedValue { name, stage: proof_value_stage(s), lengths, ..Default::default() })
+    })?;
+    check_total("proof values", core.num_proof_values.iter().map(|n| u64::from(*n)).sum(), v.len())?;
+    Ok(v)
+}
+
+/// The publics by id (stage 1), every declared one named exactly once.
+pub fn publics(core: &PiloutCore) -> Result<Vec<NamedValue>, PiloutError> {
+    let v = named(global(core, SymbolKind::PublicValue), |s, k| {
+        let (name, lengths) = cell(s, k);
+        Ok(NamedValue { name, stage: 1, lengths, ..Default::default() })
+    })?;
+    if v.len() != core.num_public_values as usize {
+        return Err(PiloutError::PublicCount { declared: core.num_public_values, named: v.len() });
+    }
+    Ok(v)
 }
 
 pub(crate) fn global(core: &PiloutCore, kind: SymbolKind) -> impl Iterator<Item = &pc::Symbol> {
@@ -395,11 +430,23 @@ fn check_count(what: &'static str, declared: &[u32], cells: &[(u32, u32)]) -> Re
     Err(PiloutError::SymbolCount { what, declared: declared.to_vec(), named })
 }
 
-/// Pairs the declared stages with the symbol cells; a symbol past the table is an error, a trailing unnamed value gets "".
-fn staged(cells: Vec<(String, Lengths)>, stages: &[u32]) -> Result<Vec<NamedValue>, PiloutError> {
-    within(cells.len() <= stages.len(), 0, "a value symbol beyond the declared values")?;
-    let at = |i: usize| cells.get(i).cloned().unwrap_or_default();
-    Ok(stages.iter().enumerate().map(|(i, st)| NamedValue { name: at(i).0, stage: *st, lengths: at(i).1 }).collect())
+/// The fields a hint's consumers read: a leading array's elements, else every field.
+pub(crate) fn hint_entries(fields: &[pc::HintField]) -> &[pc::HintField] {
+    match fields.first() {
+        Some(pc::HintField { value: pc::HintValue::Array(a), .. }) => a,
+        _ => fields,
+    }
+}
+
+/// Pairs the declared `(stage, aggType)` with the symbol cells, one each.
+fn staged(
+    what: &'static str,
+    cells: Vec<(String, Lengths)>,
+    declared: impl ExactSizeIterator<Item = (u32, AggType)>,
+) -> Result<Vec<NamedValue>, PiloutError> {
+    check_total(what, declared.len() as u64, cells.len())?;
+    let value = |((name, lengths), (stage, agg_type))| NamedValue { name, stage, lengths, agg_type };
+    Ok(cells.into_iter().zip(declared).map(value).collect())
 }
 
 /// The pilout-wide tables, the airgroup values and the air (`airgroup`, `air`) of `pilout`.
@@ -459,7 +506,7 @@ fn check_limits(core: &PiloutCore, a: &pc::Air) -> Result<(), PiloutError> {
     Ok(())
 }
 
-fn tables_of<'a>(core: &'a PiloutCore, agvs: &[AirGroupValue], a: &'a pc::Air) -> Tables<'a> {
+fn tables_of<'a>(core: &'a PiloutCore, agvs: &[AirGroupValue], a: &'a pc::Air, pv_stages: &'a [u32]) -> Tables<'a> {
     Tables {
         stage_widths: &a.stage_widths,
         custom_commits: &a.custom_commits,
@@ -468,7 +515,8 @@ fn tables_of<'a>(core: &'a PiloutCore, agvs: &[AirGroupValue], a: &'a pc::Air) -
         n_airgroup_values: agvs.len(),
         num_challenges: &core.num_challenges,
         n_publics: core.num_public_values,
-        num_proof_values: &core.num_proof_values,
+        proof_value_stages: pv_stages,
+        n_exprs: a.expressions.len(),
     }
 }
 
@@ -488,7 +536,8 @@ fn pilout_expr_ids(
 ) -> Result<Vec<crate::core::ir::ExprId>, PiloutError> {
     let (core, agvs, a) = air_inputs(pilout, airgroup, air)?;
     check_limits(&core, &a)?;
-    Ok(numbered_exprs(&a, &tables_of(&core, &agvs, &a))?.1)
+    let pv_stages: Vec<u32> = proof_values(&core)?.iter().map(|v| v.stage).collect();
+    Ok(numbered_exprs(&a, &tables_of(&core, &agvs, &a, &pv_stages))?.1)
 }
 
 /// The pilout index of canonical expression `id` of air (`airgroup`, `air`): `pilout_expr_ids` inverted.
@@ -517,20 +566,25 @@ fn lower(
     if a.constraints.is_empty() {
         return Err(PiloutError::NoConstraints { airgroup, air });
     }
-    let tables = tables_of(core, agvs, a);
+    let proof_values = proof_values(core)?;
+    let pv_stages: Vec<u32> = proof_values.iter().map(|v| v.stage).collect();
+    let tables = tables_of(core, agvs, a, &pv_stages);
+    let p = field.modulus();
     let rows = a.num_rows;
     if !rows.is_power_of_two() {
         return Err(PiloutError::NumRowsNotPowerOfTwo { airgroup, air, rows });
     }
     let (exprs, new) = numbered_exprs(a, &tables)?;
     let mut numbered = vec![Expr::Const(BigUint::default()); exprs.len()];
-    exprs.iter().zip(&new).for_each(|(e, &k)| numbered[k as usize] = renumber(e, &new));
+    exprs.iter().zip(&new).for_each(|(e, &k)| numbered[k as usize] = renumber(e, &new, p));
     let exprs = numbered;
     let constraints = a
         .constraints
         .iter()
         .enumerate()
-        .map(|(k, c)| lower_constraint(k, c, exprs.len(), opening).map(|c| Constraint { e: renumber(&c.e, &new), ..c }))
+        .map(|(k, c)| {
+            lower_constraint(k, c, exprs.len(), opening).map(|c| Constraint { e: renumber(&c.e, &new, p), ..c })
+        })
         .collect::<Result<Vec<_>, _>>()?;
 
     let air_syms = |kind| of_air(core, kind, g32, Some(a32));
@@ -563,23 +617,16 @@ fn lower(
     check_count("fixed columns", &[a.n_fixed_cols], &fixed_ids)?;
     let challenge_ids: Vec<(u32, u32)> = challenges.iter().map(|c| (c.0, c.1)).collect();
     check_count("challenges per stage", &core.num_challenges, &challenge_ids)?;
-    let proof_values = named(global(core, SymbolKind::ProofValue), |s, k| {
-        let (name, lengths) = cell(s, k);
-        Ok(NamedValue { name, stage: proof_value_stage(s), lengths })
-    })?;
     let hints = core
         .hints
         .iter()
-        .filter(|h| h.air_id == Some(a32) && h.air_group_id == Some(g32))
+        .filter(|h| h.air_id == Some(a32) && h.air_group_id == Some(g32) && !h.fields.is_empty())
         .map(|h| {
-            // only what `Hint::entries` reads: a leading array alone, else every field
-            let read = match h.fields.first() {
-                Some(f @ pc::HintField { value: pc::HintValue::Array(_), .. }) => std::slice::from_ref(f),
-                _ => &h.fields[..],
-            };
-            let lower = |f| lower_hint_field(f, &h.name, &tables).map(|f| renumber_hint(f, &new));
-            let fields = read.iter().map(lower).collect::<Result<_, _>>()?;
-            Ok(Hint { name: h.name.clone(), fields })
+            let lower = |f| lower_hint_field(f, &h.name, &tables).map(|f| renumber_hint(f, &new, p));
+            Ok(Hint {
+                name: h.name.clone(),
+                fields: hint_entries(&h.fields).iter().map(lower).collect::<Result<_, _>>()?,
+            })
         })
         .collect::<Result<Vec<_>, PiloutError>>()?;
     let n_publics = core.num_public_values;
@@ -595,17 +642,12 @@ fn lower(
             }),
         })
         .collect::<Result<_, _>>()?;
-    let publics = named(global(core, SymbolKind::PublicValue), |s, k| {
-        let (name, lengths) = cell(s, k);
-        Ok(NamedValue { name, stage: 1, lengths })
-    })?;
-    if publics.len() != n_publics as usize {
-        return Err(PiloutError::PublicCount { declared: n_publics, named: publics.len() });
-    }
+    let publics = publics(core)?;
     let cells = |kind, air| named(of_air(core, kind, g32, air), |s, k| Ok(cell(s, k)));
-    let air_values = staged(cells(SymbolKind::AirValue, Some(a32))?, &a.air_values)?;
-    let agv_stages: Vec<u32> = agvs.iter().map(|v| v.stage).collect();
-    let airgroup_values = staged(cells(SymbolKind::AirGroupValue, None)?, &agv_stages)?;
+    let air_value_stages = a.air_values.iter().map(|s| (*s, AggType::Sum));
+    let air_values = staged("air values", cells(SymbolKind::AirValue, Some(a32))?, air_value_stages)?;
+    let agv = agvs.iter().map(|v| (v.stage, v.agg_type));
+    let airgroup_values = staged("airgroup values", cells(SymbolKind::AirGroupValue, None)?, agv)?;
 
     // n_stages = max(highest declared witness/value stage, numChallenges.len(), 1); extra stages have no challenges
     let declared = witness
@@ -618,6 +660,7 @@ fn lower(
     }
 
     Ok(ConstraintSystem {
+        name: a.name.clone().unwrap_or_default(),
         field: field.clone(),
         opening,
         n_stages,
@@ -634,12 +677,5 @@ fn lower(
         airgroup_values,
         hints,
         custom_commits,
-        airgroup_agg_types: agvs
-            .iter()
-            .map(|v| match v.agg_type {
-                AggType::Sum => 0,
-                AggType::Prod => 1,
-            })
-            .collect(),
     })
 }

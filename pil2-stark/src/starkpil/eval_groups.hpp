@@ -5,7 +5,6 @@
 // without seeing the kernels.
 #include <algorithm>
 #include <map>
-#include <stdexcept>
 #include <tuple>
 #include <vector>
 #include "stark_info.hpp"
@@ -35,7 +34,7 @@ inline DeviceColumn deviceColumn(StarkInfo &si, EvMap::eType type, uint64_t comm
     const uint16_t src = type == EvMap::eType::cm ? 0 : type == EvMap::eType::custom ? 1 : 2;
     const std::string section = si.sectionName(type, stage, commitId);
     const Layout layout = src == 0 ? resolveLayout(si.starkStruct.nBits, si.mapSectionsN[section]) : fixedLayout();
-    if (layout != Layout::ColMajor) throw std::runtime_error("deviceColumn: sections must be ColMajor");
+    if (layout != Layout::ColMajor) { zklog.error("deviceColumn: sections must be ColMajor"); exitProcess(); }
     const uint64_t NExt = 1ULL << si.starkStruct.nBitsExt;
     return {src, si.mapOffsets[std::make_pair(section, true)] + stagePos * NExt};
 }

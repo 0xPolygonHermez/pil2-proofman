@@ -11,7 +11,7 @@ use pil_info::core::im::{check_im, ImChoice};
 use pil_info::core::ir::{Boundary, ColRef, ColType, ConstraintSystem, Expr, Hint, HintField, HintValue};
 use pil_info::core::layout::{layout, Layout, LayoutParams};
 use pil_info::core::openings::{fri_batch_size, openings, EvEntry, Openings, OpeningsError};
-use pil_info::core::project::{stark_info, StarkInfoCore, StarkParams, VerifierView};
+use pil_info::core::project::{stark_info, StarkParams, VerifierView};
 use pil_info::Opening;
 
 fn lp(q_deg: u32) -> LayoutParams {
@@ -56,7 +56,7 @@ fn witness_columns_keep_pilout_order() {
     let cols: Vec<_> =
         l.cm_pols_map.iter().map(|p| (p.name.as_str(), p.stage, p.dim, p.stage_id, p.stage_pos)).collect();
     assert_eq!(cols, [("z", 1, 1, 0, 0), ("a", 1, 1, 1, 1), ("m", 1, 1, 2, 2)]);
-    assert!(l.cm_pols_map.iter().all(|p| !p.im_pol && p.commit_id.is_none()));
+    assert!(l.cm_pols_map.iter().all(|p| p.exp_id.is_none() && p.commit_id.is_none()));
     let fixed: Vec<_> = l.const_pols_map.iter().map(|p| p.name.as_str()).collect();
     assert_eq!(fixed, ["F1", "F0"]);
 }
@@ -69,10 +69,10 @@ fn im_columns_follow_witness_in_im_order() {
     let names: Vec<_> = l.cm_pols_map.iter().map(|p| p.name.as_str()).collect();
     assert_eq!(names, ["a", "b", "c", "d", "Synthetic.ImPol", "Synthetic.ImPol"]);
     for (k, p) in l.cm_pols_map[4..].iter().enumerate() {
-        assert!(p.im_pol, "im column {k}");
+        assert_eq!(p.exp_id, Some([1, 2][k]), "im column {k}");
         assert_eq!((p.stage, p.dim, p.stage_id, p.stage_pos), (1, 1, 4 + k as u32, 4 + k as u32));
     }
-    assert!(l.cm_pols_map[..4].iter().all(|p| !p.im_pol));
+    assert!(l.cm_pols_map[..4].iter().all(|p| p.exp_id.is_none()));
 }
 
 /// 0: a*b (stage 1), 1: e0*x (stage 2); root 1; e0 promoted.
@@ -86,7 +86,7 @@ fn im_pols_stages_false() {
     let cs = two_stage_system();
     let l = layout(&cs, &choice(&[0]), &LayoutParams { im_pols_stages: false, ..lp(0) }).unwrap();
     let im = &l.cm_pols_map[4];
-    assert!(im.im_pol);
+    assert_eq!(im.exp_id, Some(0));
     // the last stage, after x and y (3 + 3 base columns), of dimension 1 (a*b is a base value)
     assert_eq!((im.stage, im.dim, im.stage_id, im.stage_pos), (2, 1, 2, 6));
 }
@@ -96,7 +96,7 @@ fn im_pols_stages_true() {
     let cs = two_stage_system();
     let l = layout(&cs, &choice(&[0]), &LayoutParams { im_pols_stages: true, ..lp(0) }).unwrap();
     let im = &l.cm_pols_map[4];
-    assert!(im.im_pol);
+    assert_eq!(im.exp_id, Some(0));
     // the stage of a*b, after a and b
     assert_eq!((im.stage, im.dim, im.stage_id, im.stage_pos), (1, 1, 2, 2));
     // a promoted expression that reads a stage-2 column lands in stage 2 either way
@@ -322,48 +322,37 @@ fn params() -> StarkParams {
 }
 
 /// Everything `stark_info` reads, for the two-stage system with e0 promoted.
-fn projected(p: &StarkParams) -> (ConstraintSystem, ImChoice, Layout, Openings, StarkInfoCore, u32) {
+fn projected(p: &StarkParams) -> (ConstraintSystem, ImChoice, Layout, Openings, VerifierView, u32) {
     let cs = two_stage_system();
     let im = choice(&[0]);
     let chk = check_im(&cs, &im, 3, true).unwrap();
     let l = layout(&cs, &im, &lp(chk.q_deg)).unwrap();
     let o = openings(&cs, &im, &l).unwrap();
-    let core = stark_info(&cs, &im, &chk, &l, &o, p).unwrap();
-    (cs, im, l, o, core, chk.q_deg)
+    let v = stark_info(&cs, &im, &chk, &l, &o, p);
+    (cs, im, l, o, v, chk.q_deg)
 }
 
 #[test]
 fn projection_has_no_decisions() {
-    let (cs, im, l, o, core, q_deg) = projected(&params());
-    assert_eq!(core.verifier.cm_pols_map, l.cm_pols_map);
-    assert_eq!(core.verifier.const_pols_map, l.const_pols_map);
-    assert_eq!(core.verifier.custom_pols_map, l.custom_pols_map);
-    assert_eq!(core.verifier.map_sections_n, l.map_sections_n);
-    assert_eq!(core.verifier.challenges_map, l.challenges_map);
-    assert_eq!(core.verifier.publics_map, l.publics_map);
-    assert_eq!(core.verifier.proof_values_map, l.proof_values_map);
-    assert_eq!(core.verifier.air_values_map, l.air_values_map);
-    assert_eq!(core.verifier.airgroup_values_map, l.airgroup_values_map);
-    assert_eq!(
-        (core.verifier.ev_map.clone(), core.verifier.opening_points.clone()),
-        (o.ev_map.clone(), o.opening_points.clone())
-    );
-    assert_eq!((core.verifier.n_stages, core.verifier.q_deg, core.verifier.q_dim), (2, q_deg, 3));
-    assert_eq!(core.verifier.n_constraints as usize, cs.constraints.len() + im.exprs.len());
-    assert_eq!(
-        (core.verifier.n_constants as usize, core.verifier.n_publics as usize),
-        (cs.fixed.len(), cs.publics.len())
-    );
-    assert_eq!(core.prover.im_exp_ids, im.exprs);
-    assert_eq!(core.verifier.fri_batch_size, fri_batch_size(&o));
+    let (cs, im, l, o, v, q_deg) = projected(&params());
+    assert_eq!(v.cm_pols_map, l.cm_pols_map);
+    assert_eq!(v.const_pols_map, l.const_pols_map);
+    assert_eq!(v.custom_pols_map, l.custom_pols_map);
+    assert_eq!(v.map_sections_n, l.map_sections_n);
+    assert_eq!(v.challenges_map, l.challenges_map);
+    assert_eq!(v.publics_map, l.publics_map);
+    assert_eq!(v.proof_values_map, l.proof_values_map);
+    assert_eq!(v.air_values_map, l.air_values_map);
+    assert_eq!(v.airgroup_values_map, l.airgroup_values_map);
+    assert_eq!((v.ev_map.clone(), v.opening_points.clone()), (o.ev_map.clone(), o.opening_points.clone()));
+    assert_eq!((v.n_stages, v.q_deg, v.q_dim), (2, q_deg, 3));
+    assert_eq!(v.n_constraints as usize, cs.constraints.len() + im.exprs.len());
+    assert_eq!((v.n_constants as usize, v.n_publics as usize), (cs.fixed.len(), cs.publics.len()));
+    assert_eq!(v.fri_batch_size, fri_batch_size(&o));
     // the parameters are copied and nothing else moves with them
-    let (_, _, _, _, core2, _) = projected(&StarkParams { c_exp_id: 3, n_bits: 11, n_bits_ext: 13, ..params() });
-    let want = StarkInfoCore {
-        verifier: VerifierView { n_bits: 11, n_bits_ext: 13, c_exp_id: 3, ..core.verifier.clone() },
-        prover: core.prover.clone(),
-    };
-    assert_eq!(core2, want);
-    assert_eq!((core.verifier.n_bits, core.verifier.n_bits_ext, core.verifier.c_exp_id), (4, 5, 7));
+    let (_, _, _, _, v2, _) = projected(&StarkParams { c_exp_id: 3, n_bits: 11, n_bits_ext: 13, ..params() });
+    assert_eq!(v2, VerifierView { n_bits: 11, n_bits_ext: 13, c_exp_id: 3, ..v.clone() });
+    assert_eq!((v.n_bits, v.n_bits_ext, v.c_exp_id), (4, 5, 7));
 }
 
 #[test]
@@ -374,7 +363,7 @@ fn boundaries_are_every_row_only_for_deep() {
         let q_deg = if deep { chk.q_deg } else { 0 };
         let l = layout(cs, &im, &LayoutParams { deep_challenges: deep, ..lp(q_deg) }).unwrap();
         let o = openings(cs, &im, &l).unwrap();
-        stark_info(cs, &im, &chk, &l, &o, &params()).unwrap().verifier.boundaries
+        stark_info(cs, &im, &chk, &l, &o, &params()).boundaries
     };
     // Deep: always everyRow
     assert_eq!(project(&system(chain(), &[1]), true), [Boundary::EveryRow]);

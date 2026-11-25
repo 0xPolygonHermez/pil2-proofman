@@ -52,7 +52,6 @@ StarkInfo makeInfo()
     si.airValuesMap = {valueMap(1), valueMap(2)};
     si.proofValuesMap = {valueMap(1)};
     si.airgroupValuesMap = {valueMap(1)};
-    si.boundaries = {Boundary{"everyRow", 0, 0}};
     return si;
 }
 
@@ -151,20 +150,28 @@ TEST(ConstraintDag, MatchesDirectFormula)
     ASSERT_TRUE(readAndCheck(makeJson(), si, dag, err)) << err;
     Values v;
     EXPECT_TRUE(same(evalTo(dag, v), direct(v)));
+    v.evals[4] = v.evals[4] + Goldilocks::one();
+    EXPECT_TRUE(same(evalTo(dag, v), direct(v)));
 }
 
-TEST(ConstraintDag, DetectsChangedEval)
+// NODES reads a public and a proof value, so null for either is refused; a DAG reading neither accepts null.
+TEST(ConstraintDag, VerifierRefusesNullInputsItReads)
 {
-    const StarkInfo si = makeInfo();
+    StarkInfo si = makeInfo();
     ConstraintDag dag;
     std::string err;
     ASSERT_TRUE(readAndCheck(makeJson(), si, dag, err)) << err;
-    Values v;
-    V3 before = evalTo(dag, v);
-    v.evals[4] = v.evals[4] + Goldilocks::one();
-    V3 after = evalTo(dag, v);
-    EXPECT_FALSE(same(before, after));
-    EXPECT_TRUE(same(after, direct(v)));
+    const GE one[1] = {Goldilocks::one()};
+    EXPECT_FALSE(verifierInputsMissing(si, dag, one, one, true));
+    EXPECT_TRUE(verifierInputsMissing(si, dag, nullptr, one, true));
+    EXPECT_TRUE(verifierInputsMissing(si, dag, one, nullptr, true));
+
+    si.nPublics = 0;
+    ConstraintDag noValues;
+    ASSERT_TRUE(readAndCheck(makeJson("[[5,0,0,0]]", "[[0,0,\"x\"]]"), si, noValues, err)) << err;
+    EXPECT_FALSE(verifierInputsMissing(si, noValues, nullptr, nullptr, true));
+    si.nPublics = 1; // a non-vadcop proof binds its publics into the transcript even when the DAG does not read them
+    EXPECT_TRUE(verifierInputsMissing(si, noValues, nullptr, nullptr, false));
 }
 
 // Every rejection, reader (check = false) or checker: the DAG, the starkinfo edit and a needle of the error.

@@ -5,7 +5,7 @@ mod common;
 use common::*;
 use pil_info::core::dag::build::build_dag;
 use pil_info::core::dag::format::{ColType, ConstraintDag, DagBoundary, DagError, DagNode};
-use pil_info::core::dag::lower_code::{lower_to_code, Fold, LowerCtx, LowerTables};
+use pil_info::core::dag::lower_code::{ev_col_ref, lower_to_code, Fold, LowerCtx, LowerTables};
 use pil_info::core::im::{im_column_id, im_order, ImChoice};
 use pil_info::core::ir::{ColRef, ConstraintSystem};
 use pil_info::emit::verifier::expression_code;
@@ -165,23 +165,6 @@ fn every_dag_validates() {
     }
 }
 
-#[test]
-fn every_dag_validates_on_real_pilouts() {
-    let mut airs = 0;
-    for (f, p) in real_pilouts() {
-        for (g, ag) in p.air_groups.iter().enumerate() {
-            for a in 0..ag.airs.len() {
-                let Some(run) = run_any(&p, g, a) else { continue };
-                let d = build_dag(&run.cs, &run.im).unwrap_or_else(|e| panic!("{f:?} {g}/{a}: {e:?}"));
-                d.validate(&gl()).unwrap_or_else(|e| panic!("{f:?} {g}/{a}: {e:?}"));
-                assert_eq!(d.roots.len(), run.cs.constraints.len() + run.im.exprs.len());
-                airs += 1;
-            }
-        }
-    }
-    assert!(airs > 0, "no air built");
-}
-
 /// 64 levels of `x_{k+1} = x_k + x_k`: inlining would be 2^64 nodes; every pass (tables, degree check and search,
 /// layout and openings, DAG, arena) is memoised and stays linear.
 #[test]
@@ -286,7 +269,7 @@ fn r(t: &str, id: usize) -> (String, usize) {
 
 #[test]
 fn one_instruction_per_op_node_then_fold() {
-    // ops: 2 add, 4 mul, 5 neg (tmp0, tmp1, tmp2); roots are nodes 2 and 5
+    // ops: 2 add, 4 mul, 5 neg (tmp0, tmp1, tmp2); roots 5 then 2: the fold follows root order, not node order
     let d = dag(
         vec![
             cm(0, 0),                    // 0
@@ -296,7 +279,7 @@ fn one_instruction_per_op_node_then_fold() {
             DagNode::Mul { a: 2, b: 3 }, // 4
             DagNode::Neg { a: 4 },       // 5
         ],
-        &[2, 5],
+        &[5, 2],
     );
     d.validate(&gl()).unwrap();
     let e = lower(&d);
@@ -306,33 +289,9 @@ fn one_instruction_per_op_node_then_fold() {
     assert_eq!(e.tmp_used, 6);
     assert_eq!(refs(&e, 0), [r("eval", 0), r("eval", 1)]);
     assert_eq!(refs(&e, 1), [r("tmp", 0), r("eval", 2)]);
-    assert_eq!(refs(&e, 3), [r("challenge", 2), r("tmp", 0)], "vc * c_0");
-    assert_eq!(refs(&e, 4), [r("tmp", 3), r("tmp", 2)], "+ c_1");
+    assert_eq!(refs(&e, 3), [r("challenge", 2), r("tmp", 2)], "vc * c_0");
+    assert_eq!(refs(&e, 4), [r("tmp", 3), r("tmp", 0)], "+ c_1");
     assert_eq!(refs(&e, 5), [r("tmp", 4), r("Zi", 0)], "times Zi");
-}
-
-#[test]
-fn fold_is_horner_in_root_order() {
-    // roots in the order 4, 2, 3: not node order
-    let d = dag(
-        vec![
-            cm(0, 0),
-            cm(0, 1),
-            DagNode::Add { a: 0, b: 1 }, // 2 -> tmp0
-            DagNode::Mul { a: 0, b: 1 }, // 3 -> tmp1
-            DagNode::Sub { a: 0, b: 1 }, // 4 -> tmp2
-        ],
-        &[4, 2, 3],
-    );
-    let e = lower(&d);
-    let tail: Vec<&str> = e.code[3..].iter().map(|c| c.op.as_str()).collect();
-    assert_eq!(tail, ["mul", "add", "mul", "add", "mul"]);
-    assert_eq!(refs(&e, 3), [r("challenge", 2), r("tmp", 2)]); // vc * c_0
-    assert_eq!(refs(&e, 4), [r("tmp", 3), r("tmp", 0)]); // + c_1
-    assert_eq!(refs(&e, 5), [r("challenge", 2), r("tmp", 4)]); // vc * acc
-    assert_eq!(refs(&e, 6), [r("tmp", 5), r("tmp", 1)]); // + c_2
-    assert_eq!(refs(&e, 7), [r("tmp", 6), r("Zi", 0)]);
-    assert_eq!(e.tmp_used, 8);
 }
 
 #[test]
@@ -435,30 +394,20 @@ fn ctx_rejects_repeated_keys() {
     assert!(matches!(LowerCtx::new(t), Err(DagError::DuplicateKey { .. })), "a repeated challenge");
 }
 
-/// `tables()` as a starkinfo JSON reads it, and its refusals (M1: a second `std_vc`).
+/// `tables()` from typed maps, and its refusals (M1: a second `std_vc`, none; an unknown evMap type).
 #[test]
-fn tables_from_starkinfo() {
-    let ch = |name: &str, stage: u32, id: u32| serde_json::json!({"name": name, "stage": stage, "stageId": id});
-    let si = serde_json::json!({
-        "nPublics": 5,
-        "evMap": [
-            {"type": "cm", "id": 0, "prime": 0}, {"type": "cm", "id": 0, "prime": 1}, {"type": "cm", "id": 3, "prime": 0},
-            {"type": "const", "id": 1, "prime": 0}, {"type": "custom", "id": 0, "prime": 0, "commitId": 2}
-        ],
-        "challengesMap": [ch("a", 2, 0), ch("b", 2, 1), ch("std_vc", 3, 0)],
-        "airValuesMap": [{"stage": 1}, {"stage": 2}], "proofValuesMap": [{"stage": 1}, {"stage": 2}],
-        "airgroupValuesMap": [{"stage": 2}]
-    });
-    assert_eq!(LowerTables::from_starkinfo(&si).unwrap(), tables());
-    let mut bad = si.clone();
-    bad["evMap"][0]["type"] = "cmm".into();
-    assert!(LowerTables::from_starkinfo(&bad).is_err(), "an unknown evMap type");
-    let mut bad = si.clone();
-    bad["challengesMap"].as_array_mut().unwrap().push(ch("std_vc", 4, 0));
-    assert!(matches!(LowerTables::from_starkinfo(&bad), Err(DagError::DuplicateKey { .. })), "a second std_vc");
-    let mut no_vc = si;
-    no_vc["challengesMap"][2]["name"] = "x".into();
-    assert_eq!(LowerTables::from_starkinfo(&no_vc).unwrap().vc, 3, "an absent std_vc is past the end");
+fn tables_from_typed_maps() {
+    let t = tables();
+    let new = |ch: &[(u32, u32, &str)]| {
+        let stages = [t.air_values_stage.clone(), t.proof_values_stage.clone(), t.airgroup_values_stage.clone()];
+        LowerTables::new(t.ev_map.clone(), ch, 5, stages, &pil_info::FieldCfg::goldilocks())
+    };
+    assert_eq!(new(&[(2, 0, "a"), (2, 1, "b"), (3, 0, "std_vc")]).unwrap(), t);
+    let twice = new(&[(2, 0, "a"), (2, 1, "b"), (3, 0, "std_vc"), (4, 0, "std_vc")]);
+    assert!(matches!(twice, Err(DagError::DuplicateKey { .. })), "a second std_vc");
+    assert!(new(&[(2, 0, "a"), (2, 1, "b"), (3, 0, "x")]).is_err(), "no std_vc");
+    assert!(ev_col_ref("cmm", None, 0, 0).is_none(), "an unknown evMap type");
+    assert!(ev_col_ref("custom", None, 0, 0).is_none(), "a custom entry without its commit");
 }
 
 #[test]

@@ -1,12 +1,21 @@
 pragma circom 2.1.0;
 pragma custom_templates;
 
+include "custom/gl_family.circom";
+include "evalpol.circom";
+include "bitifyT.circom";
+include "treeselector.circom";
+include "../../circuits.gl/hash/blake3/merklehash.circom";
+include "../../circuits.gl/hash/blake3/pow.circom";
+include "transcript_blake3.circom";
 include "merkle.circom";
+include "stark_verifier_bn128.circom";
 
 /*
-    The BN128 verifier's Merkle openings of a Goldilocks blake3 tree (roots of four words): the family
-    half of stark_verifier_bn128.circom, which the generated verifier picks by its include. The
-    Poseidon halves (bn128_open_poseidon.circom, bn128_open_custom.circom) export the same templates.
+    The BN128 verifier of a Goldilocks blake3 tree (roots of four words), the one include of its
+    generated verifier: its field, hash and transcript files and the family half of
+    stark_verifier_bn128.circom. The Poseidon entries (bn128_open_poseidon.circom,
+    bn128_open_custom.circom) export the same templates.
 */
 
 function bn_rootW() { return 4; }

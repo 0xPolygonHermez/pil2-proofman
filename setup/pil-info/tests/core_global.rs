@@ -28,15 +28,9 @@ fn rejects_global_constraint_without_expression() {
     );
 }
 
+/// The refusals are errors.rs's (dangling, cyclic); here a reference that resolves.
 #[test]
 fn global_refs_resolve() {
-    let p = global_pilout(vec![gmul(gexp(4), gpublic(0))], vec![gconstraint(Some(0))]);
-    assert_eq!(
-        global_from_pilout(&p, &FieldCfg::goldilocks()).unwrap_err(),
-        PiloutError::DanglingRef { expr: 0, to: 4 }
-    );
-    let p = global_pilout(vec![gmul(gexp(1), gpublic(0)), gsub(gexp(0), gconst(1))], vec![gconstraint(Some(0))]);
-    assert!(matches!(global_from_pilout(&p, &FieldCfg::goldilocks()).unwrap_err(), PiloutError::CyclicRef { .. }));
     let p = global_pilout(vec![gmul(gexp(1), gpublic(0)), gsub(gpublic(1), gconst(1))], vec![gconstraint(Some(0))]);
     let gs = global_from_pilout(&p, &FieldCfg::goldilocks()).unwrap();
     assert_eq!(gs.exprs.len(), 2);

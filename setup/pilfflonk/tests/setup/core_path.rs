@@ -73,16 +73,12 @@ fn assert_deterministic(label: &str, pilout: &pb::PilOut, max_degree: u64) {
     }
 }
 
+/// The synthetic pilout, and one with offsets and im pols (`a·b'·b'` at degree 2 needs an im pol).
 #[test]
-fn the_synthetic_pilout_gives_deterministic_key_artefacts() {
+fn key_artefacts_are_deterministic() {
     for max in [2, 3, 4, 9] {
         assert_deterministic(&format!("pilout max {max}"), &pilout(), max);
     }
-}
-
-/// Offsets and im pols: `a·b'·b'` at degree 2 needs an im pol.
-#[test]
-fn a_pilout_with_im_pols_gives_deterministic_key_artefacts() {
     let mut p = pilout();
     the_air(&mut p).expressions = vec![
         mul(witness(0, 0), witness(1, 1)), // 0

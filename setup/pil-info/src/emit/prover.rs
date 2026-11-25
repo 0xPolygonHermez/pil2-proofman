@@ -42,7 +42,7 @@ pub struct EmitParams {
 /// Arena order, a function of the typed input: expressions in index order (then the formatter's children),
 /// hint operands in hint order, the fold of the roots (im roots in im order), then Q.
 pub fn to_arena(cs: &ConstraintSystem, im: &ImChoice, lay: &Layout) -> Result<ProverExprs> {
-    let (arena, hints, constraints) = formatted(cs)?;
+    let (arena, hints, constraints) = formatted(cs, lay)?;
     fold_quotient(cs, im, lay, arena, hints, constraints)
 }
 
@@ -68,7 +68,7 @@ pub fn emit_prover(
     p: &EmitParams,
 ) -> Result<ProverCode> {
     let ProverExprs { mut arena, roles, hints, mut constraints } = exprs;
-    let maps = Maps::of(cs, im, lay, p);
+    let maps = Maps::of(cs, lay, p);
     let ctx = maps.print_ctx();
     // the old map's order: im-root lines, then the im expressions; printing caches lines in the arena
     for c in constraints.iter_mut().filter(|c| c.im_pol) {
@@ -100,9 +100,9 @@ pub fn emit_prover(
 type Formatted = (Vec<Expression>, Vec<HintInfo>, Vec<ConstraintInfo>);
 
 /// The arena and hints from the IR, then the info passes.
-fn formatted(cs: &ConstraintSystem) -> Result<Formatted> {
+fn formatted(cs: &ConstraintSystem, lay: &Layout) -> Result<Formatted> {
     let field = &cs.field;
-    let leaf = arena::air_leaf(cs);
+    let leaf = arena::air_leaf(cs, lay);
     let mut arena = arena::from_ir(&cs.exprs, &leaf)?;
     let hints = arena::hints(&cs.hints, &cs.exprs, &leaf, &mut arena)?;
 
@@ -342,7 +342,7 @@ pub struct Maps {
 }
 
 impl Maps {
-    fn of(cs: &ConstraintSystem, im: &ImChoice, lay: &Layout, p: &EmitParams) -> Self {
+    fn of(cs: &ConstraintSystem, lay: &Layout, p: &EmitParams) -> Self {
         let ext = cs.field.ext_dim();
         let lengths = |l: &Option<Vec<u32>>| l.as_ref().map(|v| v.iter().map(|x| *x as usize).collect());
         let pol = |kind: &str, i: usize, c: &PolMap| SymbolInfo {
@@ -350,17 +350,17 @@ impl Maps {
             sym_type: kind.into(),
             stage: Some(c.stage as usize),
             dim: c.dim as usize,
-            id: None,
+            // an im column's id is its expression's
+            id: c.exp_id.map(|e| e as usize),
             pol_id: Some(i),
             stage_id: Some(c.stage_id as usize),
             air_id: Some(p.air_id),
             airgroup_id: Some(p.airgroup_id),
             commit_id: c.commit_id.map(|x| x as usize),
             lengths: lengths(&c.lengths),
-            idx: None,
             stage_pos: Some(c.stage_pos as usize),
-            im_pol: c.im_pol,
-            exp_id: None,
+            im_pol: c.exp_id.is_some(),
+            exp_id: c.exp_id.map(|e| e as usize),
         };
         let value = |kind: &str, i: usize, v: &NamedValue| SymbolInfo {
             name: v.name.clone(),
@@ -374,24 +374,17 @@ impl Maps {
             airgroup_id: None,
             commit_id: None,
             lengths: lengths(&v.lengths),
-            idx: None,
             stage_pos: None,
             im_pol: false,
             exp_id: None,
         };
-        let n_witness = cs.witness.len();
-        let cm = lay.cm_pols_map.iter().enumerate().map(|(i, c)| {
-            let mut s = pol("witness", i, c);
-            if let Some(e) = i.checked_sub(n_witness).and_then(|k| im.exprs.get(k)).filter(|_| c.im_pol) {
-                (s.id, s.exp_id) = (Some(*e as usize), Some(*e as usize));
-            }
-            s
-        });
+        let cm = lay.cm_pols_map.iter().enumerate().map(|(i, c)| pol("witness", i, c));
         let values = |kind: &str, m: &[NamedValue]| m.iter().enumerate().map(|(i, v)| value(kind, i, v)).collect();
         // the DEEP challenges are not the generator's
         let q = cs.n_stages + 2;
         let challenges = lay.challenges_map.iter().enumerate().filter(|(_, c)| c.stage <= q).map(|(i, c)| {
-            let mut s = value("challenge", i, &NamedValue { name: c.name.clone(), stage: c.stage, lengths: None });
+            let mut s =
+                value("challenge", i, &NamedValue { name: c.name.clone(), stage: c.stage, ..Default::default() });
             (s.dim, s.stage_id) = (c.dim as usize, Some(c.stage_id as usize));
             s
         });

@@ -74,6 +74,8 @@ pub struct PiloutCore {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AirGroup {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
     pub air_group_values: Vec<AirGroupValue>,
     pub airs: Vec<Air>,
 }
@@ -85,9 +87,10 @@ pub struct AirGroupValue {
     pub stage: u32,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum AggType {
+    #[default]
     Sum,
     Prod,
 }
@@ -95,6 +98,8 @@ pub enum AggType {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Air {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
     pub num_rows: u32,
     pub stage_widths: Vec<u32>,
     pub n_fixed_cols: u32,
@@ -304,7 +309,7 @@ impl PiloutCore {
         let mut air_groups = Vec::with_capacity(p.air_groups.len());
         for (g, ag) in p.air_groups.iter().enumerate() {
             let airs = ag.airs.iter().enumerate().map(|(a, x)| air_of(x, g, a)).collect::<Result<_, _>>()?;
-            air_groups.push(AirGroup { air_group_values: air_group_values(ag)?, airs });
+            air_groups.push(AirGroup { name: ag.name.clone(), air_group_values: air_group_values(ag)?, airs });
         }
         Ok(PiloutCore { air_groups, ..Self::globals_of(p)? })
     }
@@ -355,6 +360,7 @@ pub(crate) fn air_of(a: &pb::Air, airgroup: usize, air: usize) -> Result<Air, Pi
     let expressions = a.expressions.iter().enumerate().map(|(i, e)| expression_of(e, i)).collect::<Result<_, _>>()?;
     let constraints = a.constraints.iter().enumerate().map(|(k, c)| constraint_of(c, k)).collect::<Result<_, _>>()?;
     Ok(Air {
+        name: a.name.clone(),
         num_rows: a.num_rows.ok_or(PiloutError::MissingNumRows { airgroup, air })?,
         stage_widths: a.stage_widths.clone(),
         n_fixed_cols: len(a.fixed_cols.len(), "fixed columns")?,

@@ -46,7 +46,7 @@ pub struct Tools {
 impl Tools {
     /// The Goldilocks recursion circuits' tools, each from its env var or the repo's default.
     pub fn from_env() -> Self {
-        use crate::commands::recursive_setup::{resolve_circom_exec, resolve_path_env};
+        use crate::commands::common::{resolve_circom_exec, resolve_path_env};
         const LIB: &str = "setup/stark-recurser/stark2circom/circom_verifier";
         let circom_helpers_dir = resolve_path_env("CIRCOM_HELPERS_DIR", "setup/circom");
         Self {
@@ -168,10 +168,6 @@ impl PipelineCtx {
             stats: None,
             const_root: None,
         }
-    }
-
-    pub fn hash(&self) -> &'static str {
-        self.family.as_str()
     }
 
     pub fn file(&self, ext: &str) -> PathBuf {

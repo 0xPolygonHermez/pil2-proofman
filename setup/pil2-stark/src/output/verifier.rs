@@ -3,7 +3,8 @@ use std::collections::HashMap;
 use std::fs;
 
 use pil_info::core::dag::lower_code::{lower_to_code, CodeOp, Fold, Instr, LowerCtx, Operand, VerifierCode};
-use proofman_common::{hash_family, LowDegreeLayout};
+use proofman_common::hash_family::{self, HashFamily};
+use proofman_common::LowDegreeLayout;
 use crate::types::goldilocks_u64;
 use crate::types::stark_info::{StarkInfo, VerifierInfo};
 use crate::types::stark_struct::LowDegreeTest;
@@ -12,7 +13,7 @@ pub fn write_verifier_rust_file(
     path: &str,
     stark_info: &StarkInfo,
     verifier_info: &VerifierInfo,
-    hash_id: &str,
+    hash: HashFamily,
 ) -> Result<()> {
     // The native verifier parses no custom-commit openings; fail here, not at verification.
     anyhow::ensure!(
@@ -28,14 +29,12 @@ pub fn write_verifier_rust_file(
 
     println!("> Writing rust verifier file");
 
-    let rust_verifier = prepare_verifier_rust(stark_info, verifier_info, hash_id)?;
+    let rust_verifier = prepare_verifier_rust(stark_info, verifier_info, hash)?;
     fs::write(path, rust_verifier)?;
 
     Ok(())
 }
 
-/// `challengesMap` position of vf1 (`stage_id` 0) or vf2 (1): the stage `nStages + 3` challenge with that
-/// `stageId`, the same rule as the C++ `buildDeepTables`.
 /// The `challengesMap` position of challenge `stage_id` of stage `nStages + after` (xi: 2, vf1/vf2: 3).
 fn deep_challenge_idx(stark_info: &StarkInfo, after: u64, stage_id: u64) -> Result<u64> {
     let stage = stark_info.n_stages + after;
@@ -47,15 +46,15 @@ fn deep_challenge_idx(stark_info: &StarkInfo, after: u64, stage_id: u64) -> Resu
         .ok_or_else(|| anyhow::anyhow!("challengesMap has no challenge {stage_id} of stage {stage}"))
 }
 
-fn prepare_verifier_rust(stark_info: &StarkInfo, verifier_info: &VerifierInfo, hash_id: &str) -> Result<String> {
+fn prepare_verifier_rust(stark_info: &StarkInfo, verifier_info: &VerifierInfo, hash: HashFamily) -> Result<String> {
     // Leaf + compression hashes follow the Merkle tree arity; the transcript hash
     // follows the (fixed, arity-4) transcript arity; grinding is a fixed-width hash.
     let merkle_arity = stark_info.stark_struct.merkle_tree_arity;
     let transcript_arity = stark_info.stark_struct.transcript_arity;
-    let merkle_hash_type = hash_family::rust_hash_type(hash_id, merkle_arity as u64);
+    let merkle_hash_type = hash_family::rust_hash_type(hash, merkle_arity as u64);
     // The transcript CONSTRUCTION, not a hash to wrap in a sponge: BLAKE3's is not a sponge.
-    let transcript_type = hash_family::rust_transcript_type(hash_id, transcript_arity as u64);
-    let grinding_type = hash_family::rust_grinding_type(hash_id);
+    let transcript_type = hash_family::rust_transcript_type(hash, transcript_arity as u64);
+    let grinding_type = hash_family::rust_grinding_type(hash);
     let q = q_verify_of(stark_info, verifier_info)?;
     let (verify_q_rust, verify_q_helpers) = (q.verify_rust, q.verify_rust_helpers);
 
@@ -65,7 +64,7 @@ fn prepare_verifier_rust(stark_info: &StarkInfo, verifier_info: &VerifierInfo, h
     let mut hash_imports: Vec<&str> = Vec::new();
     for ht in [merkle_hash_type, grinding_type]
         .into_iter()
-        .chain(hash_family::rust_transcript_imports(hash_id, transcript_arity as u64))
+        .chain(hash_family::rust_transcript_imports(hash, transcript_arity as u64))
     {
         if !hash_imports.contains(&ht) {
             hash_imports.push(ht);

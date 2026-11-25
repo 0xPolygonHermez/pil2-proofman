@@ -89,7 +89,7 @@ impl<F: PrimeField64> WitnessComponent<F> for FibonacciSquare {
     }
 
     fn gen_custom_commits_fixed(&self, pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx<F>>) -> ProofmanResult<()> {
-        proofman_starks_lib_c::set_hash_family_c(&pctx.global_info.hash);
+        proofman_starks_lib_c::set_hash_family_c(pctx.global_info.hash.as_str());
 
         let buffer = vec![F::ZERO; FibonacciSquareRomTrace::<F>::ROW_SIZE * FibonacciSquareRomTrace::<F>::NUM_ROWS];
         let mut trace_rom = FibonacciSquareRomTrace::new_from_vec_zeroes(buffer)?;
@@ -103,7 +103,7 @@ impl<F: PrimeField64> WitnessComponent<F> for FibonacciSquare {
 
         let setup = sctx.get_setup(trace_rom.airgroup_id(), trace_rom.air_id())?;
         let blowup_factor = 1 << (setup.stark_info.stark_struct.n_bits_ext - setup.stark_info.stark_struct.n_bits);
-        init_gpu_setup(&pctx.global_info.hash, pctx.gpu)?;
+        init_gpu_setup(pctx.global_info.hash, pctx.gpu)?;
         let merkle_tree_arity = setup.stark_info.stark_struct.merkle_tree_arity as u64;
         write_custom_commit_trace::<F>(&pctx, &mut trace_rom, blowup_factor, merkle_tree_arity, &file_name)?;
         Ok(())

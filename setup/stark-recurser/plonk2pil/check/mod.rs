@@ -71,7 +71,7 @@ pub enum CheckError {
         gate: u32,
         why: String,
     },
-    SelectorPattern {
+    FixedPattern {
         column: String,
         row: usize,
         why: String,
@@ -90,7 +90,7 @@ impl fmt::Display for CheckError {
                 write!(f, "custom gate use {gate} ({name}) is not placed: {why}")
             }
             CheckError::GateParam { gate, why } => write!(f, "custom gate use {gate}: {why}"),
-            CheckError::SelectorPattern { column, row, why } => write!(f, "column {column} at row {row}: {why}"),
+            CheckError::FixedPattern { column, row, why } => write!(f, "column {column} at row {row}: {why}"),
         }
     }
 }
@@ -161,7 +161,7 @@ pub fn check_plonk<F: PlonkField>(inp: &CheckInput<F>) -> Result<CheckReport, Ch
     let vars = r1cs_plonk::wire_vars(r1cs, &label);
     let enf = fixed::Enforced::new(&air, &mut cols)?;
     let a = r1cs_plonk::check(r1cs, exec, &label, &vars, &enf, &mut cols, &cls)?;
-    let publics = check_publics(r1cs, &air, &vars, &cls, &mut cols)?;
+    let publics = check_publics(r1cs, cs, &air, &vars, &cls, &mut cols)?;
     let gates = gates::check(r1cs, cs, &air, inp.template, &a_cols, &vars, &cls, &mut cols)?;
     Ok(CheckReport {
         n_rows: n,
@@ -174,15 +174,20 @@ pub fn check_plonk<F: PlonkField>(inp: &CheckInput<F>) -> Result<CheckReport, Ch
     })
 }
 
-/// Each r1cs public `i` (wire `i + 1`) is bound to `publics[i]` at a cell of its class.
+/// The pilout has exactly the r1cs's publics, each `i` (wire `i + 1`) bound to `publics[i]` at a
+/// cell of its class.
 fn check_publics<F: PlonkField>(
     r1cs: &R1csFile<F>,
+    cs: &ConstraintSystem,
     air: &pil::PilAir<F>,
     vars: &r1cs_plonk::Vars,
     cls: &fixed::Classes,
     cols: &mut Columns<F>,
 ) -> Result<usize, CheckError> {
     let n_pub = r1cs.header.n_outputs + r1cs.header.n_pub_inputs;
+    if cs.publics.len() != n_pub as usize {
+        return Err(CheckError::Artefact(format!("pilout: {} publics, the r1cs {n_pub}", cs.publics.len())));
+    }
     let mut fired: HashMap<&pil::FixedPoly<F>, Vec<usize>> = HashMap::new();
     for b in &air.publics {
         if !fired.contains_key(&b.sel) {

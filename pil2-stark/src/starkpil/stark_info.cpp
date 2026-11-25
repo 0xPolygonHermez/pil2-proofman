@@ -142,16 +142,8 @@ void StarkInfo::load(json j)
         openingPoints.push_back(j["openingPoints"][i]);
     }
 
-    for(uint64_t i = 0; i < j["boundaries"].size(); i++) {
-        Boundary b;
-        b.name = j["boundaries"][i]["name"];
-        if(b.name == string("everyFrame")) {
-            b.offsetMin = j["boundaries"][i]["offsetMin"];
-            b.offsetMax = j["boundaries"][i]["offsetMax"];
-        }
-        boundaries.push_back(b);
-    }
-    if (boundaries.size() != 1 || boundaries[0].name != "everyRow") {
+    const json &boundaries = j["boundaries"];
+    if (!(boundaries.is_array() && boundaries.size() == 1 && boundaries[0].is_object() && boundaries[0].value("name", "") == "everyRow")) {
         zklog.error("StarkInfo::load() a STARK key has the everyRow boundary only: regenerate the setup");
         exitProcess();
     }
@@ -740,7 +732,7 @@ void StarkInfo::setMapOffsets() {
 
     uint64_t maxSizeHelper = 0;
     if(gpu) {
-        maxSizeHelper += boundaries.size() * NExtended;
+        maxSizeHelper += NExtended;
         mapOffsets[std::make_pair("zi", true)] = mapTotalN;
     }
     
@@ -832,31 +824,24 @@ void StarkInfo::setMapOffsets() {
 }
 
 void StarkInfo::setMemoryExpressions(uint64_t nTmp1, uint64_t nTmp3) {
-    uint64_t mapBuffHelper;
-    if(verify) {
-        maxNBlocks = 1;
-        nrowsPack = starkStruct.nQueries;
-        mapBuffHelper = mapTotalN;
+    uint64_t mapBuffHelper =  mapOffsets[std::make_pair("mem_exps", false)];
+    if(!gpu) {
+        nrowsPack = NROWS_PACK;
+        maxNBlocks = omp_get_max_threads();
     } else {
-        mapBuffHelper =  mapOffsets[std::make_pair("mem_exps", false)];
-        if(!gpu) {
-            nrowsPack = NROWS_PACK;
-            maxNBlocks = omp_get_max_threads();
-        } else {
-            nrowsPack = 256;
-            maxNBlocks = 512;
+        nrowsPack = 256;
+        maxNBlocks = 512;
 
-            uint64_t tmpsUsed = nTmp1 + (nTmp3 + 2) * FIELD_EXTENSION;
-            // The interpreter's grid is sized as if cm3/mt3 still sat below q: same grid, never more memory.
-            uint64_t NExtended = 1ull << starkStruct.nBitsExt;
-            uint64_t cm3Above = inplaceStageCommit ? NExtended * mapSectionsN["cm3"] + alignRegion(getNumNodesMTCommit(NExtended)) : 0;
-            uint64_t maxTotal = (recursive ? mapTotalN + (1 << 26) : mapTotalN + (1 << 25)) - cm3Above;
-            while((mapBuffHelper + tmpsUsed * nrowsPack * maxNBlocks) > maxTotal) {
-                if (nrowsPack > 128) {
-                    nrowsPack /= 2;
-                } else {
-                    maxNBlocks /= 2;
-                }
+        uint64_t tmpsUsed = nTmp1 + (nTmp3 + 2) * FIELD_EXTENSION;
+        // The interpreter's grid is sized as if cm3/mt3 still sat below q: same grid, never more memory.
+        uint64_t NExtended = 1ull << starkStruct.nBitsExt;
+        uint64_t cm3Above = inplaceStageCommit ? NExtended * mapSectionsN["cm3"] + alignRegion(getNumNodesMTCommit(NExtended)) : 0;
+        uint64_t maxTotal = (recursive ? mapTotalN + (1 << 26) : mapTotalN + (1 << 25)) - cm3Above;
+        while((mapBuffHelper + tmpsUsed * nrowsPack * maxNBlocks) > maxTotal) {
+            if (nrowsPack > 128) {
+                nrowsPack /= 2;
+            } else {
+                maxNBlocks /= 2;
             }
         }
     }

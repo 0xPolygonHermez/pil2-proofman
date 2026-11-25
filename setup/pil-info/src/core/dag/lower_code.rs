@@ -3,8 +3,6 @@
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 
-use serde_json::Value;
-
 use crate::core::dag::format::{ConstraintDag, DagBoundary, DagError, DagNode};
 use crate::core::fold::fold_roots;
 use crate::cfg::FieldCfg;
@@ -89,49 +87,38 @@ pub fn ev_col_ref(ty: &str, commit_id: Option<u32>, id: u32, offset: i64) -> Opt
     Some(ColRef { col, commit_id, id, offset })
 }
 
-/// Index of the challenge named `std_vc`; a second one is refused.
-fn std_vc_index<'a>(names: impl IntoIterator<Item = &'a str>) -> Result<Option<usize>, DagError> {
+/// Index of the challenge named `std_vc`, which must be named exactly once.
+fn std_vc_index<'a>(names: impl IntoIterator<Item = &'a str>) -> Result<usize, DagError> {
     let mut at = names.into_iter().enumerate().filter(|(_, n)| *n == "std_vc").map(|(i, _)| i);
     match (at.next(), at.next()) {
         (_, Some(_)) => Err(DagError::DuplicateKey { what: "challenge std_vc".into() }),
-        (i, None) => Ok(i),
+        (Some(i), None) => Ok(i),
+        (None, None) => Err(DagError::Unresolved { node: 0, what: "no challenge std_vc".into() }),
     }
 }
 
+/// Stage of each air, proof and airgroup value, by map id.
+pub type ValueStages = [Vec<u32>; 3];
+
 impl LowerTables {
-    /// The tables of a (Goldilocks) starkinfo JSON: evMap by `prime`, `std_vc` by name (past the end when absent), value stages.
-    pub fn from_starkinfo(si: &Value) -> Result<Self, DagError> {
-        let bad = |what: String| DagError::Unresolved { node: 0, what: format!("starkinfo {what}") };
-        let num = |v: &Value, k: &str| v.get(k).and_then(Value::as_u64).and_then(|x| u32::try_from(x).ok());
-        let list = |k: &str| si.get(k).and_then(Value::as_array).map_or(&[][..], Vec::as_slice);
-        let ev_map = (list("evMap").iter())
-            .map(|e| {
-                let (ty, offset) =
-                    (e.get("type").and_then(Value::as_str).unwrap_or(""), e.get("prime").and_then(Value::as_i64));
-                let col = num(e, "id").zip(offset).and_then(|(id, o)| ev_col_ref(ty, num(e, "commitId"), id, o));
-                col.ok_or_else(|| bad(format!("evMap entry {e}")))
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        let ch = list("challengesMap");
-        let challenges = (ch.iter())
-            .map(|c| num(c, "stage").zip(num(c, "stageId")).ok_or_else(|| bad(format!("challengesMap entry {c}"))))
-            .collect::<Result<Vec<_>, _>>()?;
-        let vc = std_vc_index(ch.iter().map(|c| c.get("name").and_then(Value::as_str).unwrap_or("")))?;
-        let stages = |k: &str| {
-            list(k)
-                .iter()
-                .map(|p| num(p, "stage").ok_or_else(|| bad(format!("{k} entry {p}"))))
-                .collect::<Result<Vec<u32>, _>>()
-        };
+    /// The tables from typed maps: the evMap columns, the challenges `(stage, stageId, name)`, nPublics and the
+    /// value stages over `field`.
+    pub fn new(
+        ev_map: Vec<ColRef>,
+        challenges: &[(u32, u32, &str)],
+        n_publics: u32,
+        [air_values_stage, proof_values_stage, airgroup_values_stage]: ValueStages,
+        field: &FieldCfg,
+    ) -> Result<Self, DagError> {
         Ok(LowerTables {
-            vc: vc.unwrap_or(challenges.len()),
+            vc: std_vc_index(challenges.iter().map(|c| c.2))?,
             ev_map,
-            challenges,
-            n_publics: num(si, "nPublics").unwrap_or(0),
-            air_values_stage: stages("airValuesMap")?,
-            proof_values_stage: stages("proofValuesMap")?,
-            airgroup_values_stage: stages("airgroupValuesMap")?,
-            ext_dim: FieldCfg::goldilocks().ext_dim(),
+            challenges: challenges.iter().map(|c| (c.0, c.1)).collect(),
+            n_publics,
+            air_values_stage,
+            proof_values_stage,
+            airgroup_values_stage,
+            ext_dim: field.ext_dim(),
         })
     }
 }

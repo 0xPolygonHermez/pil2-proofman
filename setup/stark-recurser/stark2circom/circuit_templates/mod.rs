@@ -86,17 +86,16 @@ pub fn gen_circom_circuit(input: &GenCircomCircuitInput<'_>) -> Result<String> {
         [p] => Some(p),
         _ => bail!("gen_circom_circuit: multi-publics not yet supported"),
     };
-    let airgroup_id = input.options.airgroup_id.unwrap_or(0);
     let files = input.verifier_filenames;
     match input.template {
         CircuitTemplate::Recursivef => templates::gen_recursivef(stark_info, files),
         CircuitTemplate::Final => templates::gen_recursion_final(stark_info, files, publics),
         CircuitTemplate::FinalCompressed => templates::gen_final_compressed(stark_info, files, input.options),
         CircuitTemplate::Compressor => templates::gen_compressor(stark_info, files, input.vadcop_info),
-        CircuitTemplate::Recursive1 => {
-            templates::gen_recursive1(stark_info, files, input.vadcop_info, airgroup_id, input.options)
-        }
+        CircuitTemplate::Recursive1 => templates::gen_recursive1(stark_info, files, input.vadcop_info, input.options),
         CircuitTemplate::Recursive2 => {
+            let airgroup_id =
+                input.options.airgroup_id.context("gen_circom_circuit: a recursive2 needs its airgroup id")?;
             let bvk = input
                 .basic_vk
                 .get(airgroup_id)

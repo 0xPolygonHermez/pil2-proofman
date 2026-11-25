@@ -37,8 +37,10 @@ struct Air<F> {
     map: Vec<Vec<u32>>,
     constraints: Vec<Expr>,
     template: Template,
-    gate: Option<(CustomGate<F>, CustomGateUse)>,
+    gate: Option<(CustomGate<F>, Vec<CustomGateUse>)>,
     n_signals: usize,
+    /// The pilout's publics (the r1cs has 1).
+    publics: usize,
     /// The addition hint's coefficients.
     add: [u64; 2],
     /// A cell `(col, row)` cut out of its copy cycle in `S`.
@@ -61,6 +63,7 @@ impl<F: PlonkField> Air<F> {
             template,
             gate: None,
             n_signals: 0,
+            publics: 1,
             add: [1, 1],
             cut: None,
             lie: None,
@@ -153,7 +156,7 @@ impl<F: PlonkField> Air<F> {
         self.constraints.push(e);
         let template_name = name.split('/').next().unwrap().to_string();
         let signals = (0..g.n_signals as u64).map(|s| 4 + s).collect();
-        self.gate = Some((CustomGate { template_name, parameters: params }, CustomGateUse { id: 0, signals }));
+        self.gate = Some((CustomGate { template_name, parameters: params }, vec![CustomGateUse { id: 0, signals }]));
         self
     }
 
@@ -213,6 +216,7 @@ impl<F: PlonkField> Air<F> {
         };
         let every = |e: Expr| Constraint { e, boundary: Boundary::EveryRow, label: String::new() };
         let cs = ConstraintSystem {
+            name: String::new(),
             field,
             opening,
             n_stages: 2,
@@ -223,17 +227,16 @@ impl<F: PlonkField> Air<F> {
             fixed: fixed.iter().enumerate().map(|(i, c)| column(&c.0, i, 0)).collect(),
             custom: vec![],
             challenges: vec![],
-            publics: vec![Default::default()],
+            publics: vec![Default::default(); self.publics],
             proof_values: vec![],
             air_values: vec![],
             airgroup_values: vec![],
             hints,
             custom_commits: vec![],
-            airgroup_agg_types: vec![],
         };
         let n_vars = self.addition_wire();
         let lc = |t: &[(u32, u64)]| t.iter().map(|&(w, c)| (w, k::<F>(c))).collect();
-        let (gates, uses) = self.gate.clone().map_or((vec![], vec![]), |(g, u)| (vec![g], vec![u]));
+        let (gates, uses) = self.gate.clone().map_or((vec![], vec![]), |(g, u)| (vec![g], u));
         let r1cs = R1csFile {
             header: R1csHeader {
                 n8: 0,
@@ -296,6 +299,8 @@ fn the_plonk_air_is_accepted_and_its_tamperings_rejected() {
     assert!(matches!(tampered(&air, |a| a.set("C[0]", 1, g(2))), CheckError::NotImplied { .. }));
     assert!(matches!(tampered(&air, |a| a.set("PLONK", 1, g(0))), CheckError::NotImplied { .. }));
     assert!(matches!(tampered(&air, |a| a.set("PUBLICS_ROW", 2, g(0))), CheckError::PublicUnbound { public: 0, .. }));
+    // a pilout public the r1cs does not have would be unbound
+    assert!(matches!(tampered(&air, |a| a.publics = 2), CheckError::Artefact(_)));
     // exec: w2 also claimed at a cell of another class
     assert!(matches!(tampered(&air, |a| a.lie = Some((3, 0, 2))), CheckError::WireSplit { wire: 2 }));
 }
@@ -319,7 +324,7 @@ fn a_poseidon_band_is_located_and_its_anchor_checked() {
     });
     assert!(matches!(e, CheckError::GateNotFound { .. }), "{e}");
     let e = tampered(&air, |a| a.set("POSEIDON_FINAL", 4, Goldilocks::ZERO));
-    assert!(matches!(e, CheckError::SelectorPattern { .. }), "{e}");
+    assert!(matches!(e, CheckError::FixedPattern { .. }), "{e}");
 }
 
 #[test]
@@ -329,6 +334,37 @@ fn a_blake3_block_is_located_and_its_flags_checked() {
     assert_eq!(air.check().unwrap().gates.uses, 1);
     let e = tampered(&air, |a| a.set("FLAGS", 10, k(2)));
     assert!(matches!(e, CheckError::GateParam { .. }), "{e}");
+    // a use with fewer signals than its template would bind fewer cells
+    let e = tampered(&air, |a| _ = a.gate.as_mut().unwrap().1[0].signals.pop());
+    assert!(matches!(e, CheckError::GateParam { .. }), "{e}");
+}
+
+#[test]
+fn two_uses_sharing_an_unbound_signal_are_rejected() {
+    // EvPol4 binds 21 of its 27 signals; a second use on the same cells shares the other 6
+    let air = Air::<Goldilocks>::new(8, 21, "poseidon2/aggregator", &[]).gate("EvPol4", 0, vec![]).plonk(4);
+    assert_eq!(air.check().unwrap().gates.uses, 1);
+    let e = tampered(&air, |a| {
+        let uses = &mut a.gate.as_mut().unwrap().1;
+        uses.push(uses[0].clone());
+    });
+    assert!(matches!(&e, CheckError::GateParam { why, .. } if why.contains("shared")), "{e}");
+}
+
+#[test]
+fn range_check_is_exactly_one_on_located_num2bytes_rows() {
+    let mut air = Air::<Bn128>::new(16, 6, "poseidon_bn128/wrap", &[]).gate("Num2Bytes", 4, vec![k(80)]).plonk(8);
+    let mut w = Bn128::ONE;
+    for j in 0..5 {
+        air.set(&format!("K[{j}]"), 4, w);
+        w *= k(1 << 16);
+    }
+    assert_eq!(air.check().unwrap().gates.uses, 1);
+    // RANGE_CHECK is the lookup's selector: −1 on a spare row would cancel a real row's term
+    for (row, v) in [(12, -Bn128::ONE), (4, k(2))] {
+        let e = tampered(&air, |a| a.set("RANGE_CHECK", row, v));
+        assert!(matches!(&e, CheckError::FixedPattern { column, .. } if column == "RANGE_CHECK"), "{row}: {e}");
+    }
 }
 
 #[test]
@@ -339,9 +375,9 @@ fn the_poseidon_wrap_checks_k_and_the_range_table() {
     }
     assert_eq!(air.check().unwrap().gates.bands, 1);
     let e = tampered(&air, |a| a.set("K[2]", 15, k(1)));
-    assert!(matches!(&e, CheckError::SelectorPattern { column, .. } if column == "K[2]"), "{e}");
+    assert!(matches!(&e, CheckError::FixedPattern { column, .. } if column == "K[2]"), "{e}");
     let e = tampered(&air, |a| a.set("RANGE", 3, k(4)));
-    assert!(matches!(&e, CheckError::SelectorPattern { column, .. } if column == "RANGE"), "{e}");
+    assert!(matches!(&e, CheckError::FixedPattern { column, .. } if column == "RANGE"), "{e}");
 }
 
 #[test]
@@ -351,7 +387,7 @@ fn the_blake3_wrap_checks_its_message_bus_and_iv() {
     assert_eq!(air.check().unwrap().gates.bands, 1);
     for (col, row) in [("MSG_KEY_X", 64 + 9), ("MSG_MUL", 10), ("FF_IV[0]", 64 + 61)] {
         let e = tampered(&air, |a| a.set(col, row, k(99)));
-        assert!(matches!(&e, CheckError::SelectorPattern { column, .. } if column == col), "{col}: {e}");
+        assert!(matches!(&e, CheckError::FixedPattern { column, .. } if column == col), "{col}: {e}");
     }
 }
 

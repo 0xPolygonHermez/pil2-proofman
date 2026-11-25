@@ -2,10 +2,9 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::core::from_pilout::{self, PiloutError};
 use crate::core::ir::{
-    degree_of, degree_table, degree_table_with, map_expr, stage_table, visit, Boundary, ColType, ConstraintSystem,
-    Expr, ExprId, Unresolved,
+    degree_of, degree_table, degree_table_with, map_expr, stage_table, Boundary, ColType, ConstraintSystem, Expr,
+    ExprId, Unresolved,
 };
 
 /// The promoted expressions in canonical order: by stage, then by first appearance in the constraints.
@@ -30,7 +29,6 @@ pub enum ImError {
     Unsorted,
     Duplicate { expr: u32 },
     Unreached { expr: u32 },
-    BadRef(PiloutError),
     Unresolved(Unresolved),
 }
 
@@ -112,28 +110,7 @@ pub fn substitute(cs: &ConstraintSystem, im: &ImChoice, e: &Expr) -> Result<Expr
     sub(e, &t)
 }
 
-/// Every `Ref` in range and pointing below its expression (the numbering `from_pilout` gives).
-fn check_refs(cs: &ConstraintSystem) -> Result<(), ImError> {
-    let bad = |what| ImError::BadRef(from_pilout::bad(cs.exprs.len(), what));
-    for (i, e) in cs.exprs.iter().enumerate() {
-        let mut ok = true;
-        visit(e, &mut |n| ok &= !matches!(n, Expr::Ref(t) if *t as usize >= i));
-        if !ok {
-            return Err(bad("an expression reference not below its expression"));
-        }
-    }
-    for c in &cs.constraints {
-        let mut ok = true;
-        visit(&c.e, &mut |n| ok &= !matches!(n, Expr::Ref(t) if *t as usize >= cs.exprs.len()));
-        if !ok {
-            return Err(bad("constraint expression out of range"));
-        }
-    }
-    Ok(())
-}
-
 pub fn check_im(cs: &ConstraintSystem, im: &ImChoice, max_deg: u32, stark_min_q: bool) -> Result<Checked, ImError> {
-    check_refs(cs)?;
     let plain = degree_table(cs).map_err(ImError::Unresolved)?;
     for &id in &im.exprs {
         if plain.get(id as usize).is_none_or(|d| *d == 0) {

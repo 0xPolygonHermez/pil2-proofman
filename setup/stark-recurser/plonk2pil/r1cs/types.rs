@@ -98,7 +98,7 @@ impl Default for PlonkOptions {
         Self {
             airgroup_name: None,
             max_constraint_degree: None,
-            hash: proofman_common::hash_family::DEFAULT_HASH_ID.parse().expect("the default family is registered"),
+            hash: proofman_common::hash_family::HashFamily::DEFAULT,
             merge_copies: true,
             blake3_lanes: None,
             min_n_bits: None,

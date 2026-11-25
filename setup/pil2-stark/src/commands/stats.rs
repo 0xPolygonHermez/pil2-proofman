@@ -87,7 +87,7 @@ pub fn run_stats(opts: &StatsOptions) -> Result<()> {
 
             let air_settings = settings_map.resolve(&airgroup_name, &air_name);
 
-            let stark_struct = generate_basic_stark_struct(&air_settings, n_bits, opts.hash.as_str());
+            let stark_struct = generate_basic_stark_struct(&air_settings, n_bits, opts.hash);
 
             let prepare_opts = PrepareOptions { im_pols_stages: opts.im_pols_stages, inplace_stage_commit: true };
 
@@ -103,13 +103,12 @@ pub fn run_stats(opts: &StatsOptions) -> Result<()> {
 
             // Both the native and the in-circuit verifier run the same algorithm, so one count
             // serves both; only the price of a single hash differs.
-            let family = opts.hash.as_str();
             let geom = crate::verifier_hashes::geometry_from_starkinfo(&serde_json::to_value(&pil_result.starkinfo)?)?;
-            let counts = crate::verifier_hashes::verifier_hashes(&geom, family);
+            let counts = crate::verifier_hashes::verifier_hashes(&geom, opts.hash);
             let verifier_hashes = counts.total().to_string();
 
             // Only blake3 sizes its recursion by hashing blocks, so only there can hashes answer this.
-            let fit = (family == "blake3").then(|| {
+            let fit = opts.hash.is_blake3().then(|| {
                 let f = crate::verifier_hashes::blake3_recursion_fit(&counts, opts.blake3_lanes);
                 (f, if f.needs_compressor { "yes" } else { "no" })
             });
@@ -127,7 +126,7 @@ pub fn run_stats(opts: &StatsOptions) -> Result<()> {
 
             stats_lines.push(format!("Airgroup: {} Air: {} ({ldt})", airgroup_name, air_name));
             stats_lines.push(format!("Summary: {}", pil_result.summary));
-            stats_lines.push(format!("Verifier hashes ({family}):"));
+            stats_lines.push(format!("Verifier hashes ({}):", opts.hash));
             stats_lines.push(format!(
                 "    total: {:>9} | leaf: {:>8} merkle: {:>8} ldt: {:>8} transcript: {:>5} grinding: {} \
                  (arity {}, {} queries, llv {}, {} grinding bits, standalone transcript)",
@@ -181,7 +180,7 @@ fn run_stats_proving_key(opts: &StatsOptions) -> Result<()> {
     // presence, so a key whose compressed-final layer is missing still reports the rest.
     let pctx = ProofCtx::<Goldilocks>::create_ctx(pk_path, false, VerboseMode::Info, Arc::new(MpiCtx::new()), false)
         .map_err(|e| anyhow::anyhow!("Failed to load proving key: {e:?}"))?;
-    let family = pctx.global_info.hash.clone();
+    let family = pctx.global_info.hash;
 
     // (name, group, geometry)
     let mut circuits: Vec<(String, String, crate::verifier_hashes::VerifierGeometry, String)> = Vec::new();
@@ -263,7 +262,7 @@ fn run_stats_proving_key(opts: &StatsOptions) -> Result<()> {
     let mut stats_lines: Vec<String> = Vec::new();
     let mut summary_lines: Vec<String> = Vec::new();
     for (name, group, geom, security) in &circuits {
-        let counts = crate::verifier_hashes::verifier_hashes(geom, &family);
+        let counts = crate::verifier_hashes::verifier_hashes(geom, family);
         let ldt = if geom.stir_rounds.is_empty() { "FRI" } else { "STIR" };
         summary_lines.push(format!(
             "{} | {} | {} | nBitsExt: {} | verifierHashes: {} | {}",
@@ -275,7 +274,7 @@ fn run_stats_proving_key(opts: &StatsOptions) -> Result<()> {
             security
         ));
         stats_lines.push(format!("Circuit: {name} ({group}, {ldt}, hash {family})"));
-        stats_lines.push(format!("Verifier hashes ({family}):"));
+        stats_lines.push(format!("Verifier hashes ({}):", opts.hash));
         stats_lines.push(format!(
             "    total: {:>9} | leaf: {:>8} merkle: {:>8} ldt: {:>8} transcript: {:>5} grinding: {} \
              (arity {}, {} queries, llv {}, {} grinding bits, standalone transcript)",

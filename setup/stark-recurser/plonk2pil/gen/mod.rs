@@ -46,7 +46,7 @@ pub fn setup<F: PlonkField + QuotientMap<u64>>(
             let mut lanes = opts.blake3_lanes.unwrap_or(DEFAULT_LANES);
             // blake3's compressor is its aggregator at a geometry of its own.
             if (kind, hash) == (SetupKind::Compressor, HashFamily::Blake3) {
-                floor = floor.max(recursive_bits_threshold(hash.as_str()));
+                floor = floor.max(recursive_bits_threshold(hash));
                 if opts.blake3_lanes.is_none() {
                     let geom = plan_compressor_geometry(&compressor_demand(&prep), floor);
                     (lanes, floor) = (geom.lanes, geom.n_bits);

@@ -2,30 +2,22 @@
 //! (`ConstraintRoots<sfx>`). Everything else is the static `StarkVerifierGL(k)`
 //! (`helper_circuits/verifier/stark_verifier.circom`), which the circuit's main instantiates.
 
-use anyhow::{bail, Result};
+use anyhow::Result;
 use serde_json::Value;
 
 use super::constraint_roots::constraint_roots;
 use super::lib_params::{parse_stark_info, KeyData, KeyOpts};
 use super::Pil2CircomOptions;
+use proofman_common::hash_family::HashFamily;
 
-/// The family's hash, selector and transcript files; the library calls them by family-neutral names.
-fn includes(hash: &str) -> Result<String> {
-    let (dir, selector, transcript) = match hash {
-        "Poseidon1" => ("poseidon1", "treeselector8", "transcript_sponge"),
-        "Poseidon2" => ("poseidon2", "treeselector4", "transcript_sponge"),
-        // TreeSelector selects by FRI fold bits, not Merkle arity, so blake3 reuses the arity-4 one.
-        "blake3" => ("blake3", "treeselector4", "transcript_blake3"),
-        other => bail!("gen_stark_verifier_gl: unknown hash family '{other}'"),
+/// The family's entry (`verifier/family_<dir>.circom`): its hash, selector and transcript files and the library.
+fn includes(hash: HashFamily) -> String {
+    let dir = match hash {
+        HashFamily::Poseidon1 => "poseidon1",
+        HashFamily::Poseidon2 => "poseidon2",
+        HashFamily::Blake3 => "blake3",
     };
-    let mut out = format!(
-        "include \"hash/{dir}/pow.circom\";\ninclude \"tree/{selector}.circom\";\ninclude \"hash/{dir}/merklehash.circom\";\n"
-    );
-    if transcript == "transcript_sponge" {
-        out += &format!("include \"hash/{dir}/sponge.circom\";\n");
-    }
-    out += &format!("include \"verifier/{transcript}.circom\";\ninclude \"verifier/stark_verifier.circom\";\n");
-    Ok(out)
+    format!("include \"verifier/family_{dir}.circom\";\n")
 }
 
 /// The suffix of a key's functions and templates: its airgroup id, if the starkinfo has one.
@@ -42,10 +34,7 @@ pub(crate) fn gen_stark_verifier_gl(
 ) -> Result<String> {
     let sfx = key_suffix(si);
     let info = parse_stark_info(si)?;
-    if info.stark_struct.split_linear_hash {
-        bail!("gen_stark_verifier_gl: splitLinearHash has no verifier circuits");
-    }
-    let (dag, ctx) = super::dag_and_ctx(si, vi)?;
+    let (dag, ctx) = super::dag_and_ctx(&info, vi)?;
     let roots = constraint_roots(&sfx, &dag, &ctx)?;
     let key = KeyData::new(
         &info,
@@ -60,7 +49,7 @@ pub(crate) fn gen_stark_verifier_gl(
     )?;
     Ok(format!(
         "pragma circom 2.1.0;\npragma custom_templates;\n\n{}\n{}\n{}",
-        includes(&opts.hash)?,
+        includes(opts.hash),
         key.functions(&sfx),
         roots.template
     ))
@@ -75,6 +64,7 @@ pub(crate) mod tests {
     pub(crate) fn stark_info() -> Value {
         // Opening 1 is empty; columns: cm0 (base) at {0,2}, cm1 (ext) at {0}, const0 at {2}, custom at {0,2}.
         json!({
+            "keyVersion": proofman_common::KEY_VERSION,
             "name": "Sample",
             "starkStruct": {
                 "verificationHashType": "GL", "numQueries": 10, "nBits": 16, "nBitsExt": 17,
@@ -134,8 +124,8 @@ pub(crate) mod tests {
         gen_stark_verifier_gl(None, si, &verifier_info(), opts).unwrap()
     }
 
-    fn opts(hash: &str) -> Pil2CircomOptions {
-        Pil2CircomOptions { hash: hash.to_string(), ..Default::default() }
+    fn opts(hash: HashFamily) -> Pil2CircomOptions {
+        Pil2CircomOptions { hash, ..Default::default() }
     }
 
     fn has_all(out: &str, lines: &[&str]) {
@@ -147,25 +137,20 @@ pub(crate) mod tests {
     /// Per key only data and constraints: the verifier is the library's.
     #[test]
     fn per_key_output_is_data_and_constraints() {
-        let out = render(&stark_info(), &opts("Poseidon2"));
+        let out = render(&stark_info(), &opts(HashFamily::Poseidon2));
         let templates: Vec<&str> = out.lines().filter(|l| l.starts_with("template ")).collect();
         assert_eq!(templates, ["template parallel ConstraintRoots() {"], "{out}");
         assert_eq!(out.matches("function sv_").count(), super::super::lib_params::FIELDS.len(), "{out}");
         has_all(
             &out,
-            &[
-                "function sv_STEPS() { return [17, 14, 11]; }",
-                "include \"verifier/stark_verifier.circom\";",
-                "include \"verifier/transcript_sponge.circom\";",
-                "include \"hash/poseidon2/sponge.circom\";",
-            ],
+            &["function sv_STEPS() { return [17, 14, 11]; }", "include \"verifier/family_poseidon2.circom\";"],
         );
     }
 
     /// The flat proof's layout: publics and proof values are not in it, the inputs in proof2pointer order.
     #[test]
     fn proof_offsets_follow_proof2pointer() {
-        let out = render(&stark_info(), &opts("Poseidon2"));
+        let out = render(&stark_info(), &opts(HashFamily::Poseidon2));
         // airgroupvalues(1x3), roots 1..3 (3x4), evals (7x3), then the trees: const, custom, stages.
         has_all(
             &out,
@@ -196,7 +181,7 @@ pub(crate) mod tests {
         let mut si = stark_info();
         si["circuitType"] = json!(37);
         si["starkStruct"]["hashCommits"] = json!(true);
-        let o = Pil2CircomOptions { input_challenges: true, verkey_input: true, ..opts("blake3") };
+        let o = Pil2CircomOptions { input_challenges: true, verkey_input: true, ..opts(HashFamily::Blake3) };
         let out = render(&si, &o);
         has_all(
             &out,
@@ -204,15 +189,14 @@ pub(crate) mod tests {
                 "function sv_hashCommits() { return 1; }",
                 "function sv_circuitType() { return 37; }",
                 "function sv_verkeyInput() { return 1; }",
-                "include \"verifier/transcript_blake3.circom\";",
+                "include \"verifier/family_blake3.circom\";",
             ],
         );
-        assert!(!out.contains("sponge.circom"), "{out}");
     }
 
     #[test]
     fn basic_transcript_needs_stage2_and_circuit_type() {
-        let o = Pil2CircomOptions { input_challenges: true, ..opts("Poseidon2") };
+        let o = Pil2CircomOptions { input_challenges: true, ..opts(HashFamily::Poseidon2) };
         let mut si = stark_info();
         si["circuitType"] = json!(37);
         si["nStages"] = json!(1);
@@ -224,7 +208,7 @@ pub(crate) mod tests {
 
     #[test]
     fn deep_groups_reach_the_data() {
-        let out = render(&stark_info(), &opts("Poseidon2"));
+        let out = render(&stark_info(), &opts(HashFamily::Poseidon2));
         // Openings -1 and 1 have evaluations; columns by first appearance: cm1_0, cm2_0, rom, const, cm3_0,
         // whose leaves sit at S0 offsets 0, 1, 8, 7, 4. Column groups {cm1_0, rom} at both, {cm2_0}, {const, cm3_0}.
         has_all(
@@ -246,13 +230,13 @@ pub(crate) mod tests {
     fn no_evaluations_is_an_error() {
         let mut si = stark_info();
         si["evMap"] = json!([]);
-        let err = gen_stark_verifier_gl(None, &si, &verifier_info(), &opts("Poseidon2")).unwrap_err();
+        let err = gen_stark_verifier_gl(None, &si, &verifier_info(), &opts(HashFamily::Poseidon2)).unwrap_err();
         assert!(err.to_string().contains("no evaluations"), "{err}");
     }
 
     #[test]
     fn needs_a_constraint_dag() {
-        let err = gen_stark_verifier_gl(None, &stark_info(), &json!({}), &opts("Poseidon2")).unwrap_err();
+        let err = gen_stark_verifier_gl(None, &stark_info(), &json!({}), &opts(HashFamily::Poseidon2)).unwrap_err();
         assert!(err.to_string().contains("constraintDag"), "{err}");
     }
 
@@ -260,7 +244,7 @@ pub(crate) mod tests {
     fn refuses_challenges_the_transcript_does_not_draw() {
         let mut si = stark_info();
         si["challengesMap"].as_array_mut().unwrap().push(json!({"name": "x", "stage": 1, "stageId": 0}));
-        let err = gen_stark_verifier_gl(None, &si, &verifier_info(), &opts("Poseidon2")).unwrap_err();
+        let err = gen_stark_verifier_gl(None, &si, &verifier_info(), &opts(HashFamily::Poseidon2)).unwrap_err();
         assert!(err.to_string().contains("not the order the verifier transcript draws"), "{err}");
     }
 
@@ -268,13 +252,13 @@ pub(crate) mod tests {
     fn names_with_airgroup_id() {
         let mut si = stark_info();
         si["airgroupId"] = json!(42u64);
-        let out = render(&si, &opts("Poseidon1"));
+        let out = render(&si, &opts(HashFamily::Poseidon1));
         has_all(
             &out,
             &[
                 "template parallel ConstraintRoots42() {",
                 "function sv42_nBits() {",
-                "include \"tree/treeselector8.circom\";",
+                "include \"verifier/family_poseidon1.circom\";",
             ],
         );
     }
@@ -295,7 +279,7 @@ pub(crate) mod tests {
     /// STIR is the same library: the L_0 queries with T_0 as the one fold tree, then `StirVerifyRounds`.
     #[test]
     fn stir_key_is_data() {
-        let out = render(&stir_info(), &opts("Poseidon2"));
+        let out = render(&stir_info(), &opts(HashFamily::Poseidon2));
         has_all(
             &out,
             &[
@@ -317,7 +301,7 @@ pub(crate) mod tests {
     fn malformed_stir_schedule_is_an_error() {
         let mut si = stir_info();
         si["starkStruct"]["numQueries"] = json!([10]);
-        let err = gen_stark_verifier_gl(None, &si, &verifier_info(), &opts("Poseidon2")).unwrap_err();
+        let err = gen_stark_verifier_gl(None, &si, &verifier_info(), &opts(HashFamily::Poseidon2)).unwrap_err();
         assert!(err.to_string().contains("malformed STIR schedule"), "{err}");
     }
 
@@ -325,8 +309,33 @@ pub(crate) mod tests {
     fn refuses_split_linear_hash() {
         let mut si = stark_info();
         si["starkStruct"]["splitLinearHash"] = json!(true);
-        let err = gen_stark_verifier_gl(None, &si, &verifier_info(), &opts("Poseidon2")).unwrap_err();
+        let err = gen_stark_verifier_gl(None, &si, &verifier_info(), &opts(HashFamily::Poseidon2)).unwrap_err();
         assert!(err.to_string().contains("splitLinearHash"), "{err}");
+    }
+
+    /// The library's query templates have 8 slots of each kind: past them it refuses.
+    #[test]
+    fn past_the_slot_caps_it_refuses() {
+        let refused =
+            |si: &Value| gen_stark_verifier_gl(None, si, &verifier_info(), &opts(HashFamily::Poseidon2)).unwrap_err();
+        let mut si = stark_info();
+        si["starkStruct"]["logDomainSizes"] = json!((8..=17).rev().collect::<Vec<u64>>());
+        assert!(refused(&si).to_string().contains("9 fold trees"), "{}", refused(&si));
+        // 3 stage trees, the fixed one and 5 custom commits.
+        let mut si = stark_info();
+        for c in 0..4 {
+            let pubs: Vec<Value> = (0..4).map(|i| json!({"idx": i})).collect();
+            si["customCommits"]
+                .as_array_mut()
+                .unwrap()
+                .push(json!({"name": format!("c{c}"), "publicValues": pubs, "stageWidths": [1]}));
+            si["customCommitsMap"]
+                .as_array_mut()
+                .unwrap()
+                .push(json!([{"name": "x", "stage": 0, "stagePos": 0, "stageId": 0, "dim": 1}]));
+            si["mapSectionsN"][format!("c{c}0")] = json!(1);
+        }
+        assert!(refused(&si).to_string().contains("9 L_0 trees"), "{}", refused(&si));
     }
 
     /// A fold tree whose whole path is sent in clear has no siblings input (circom T3001 otherwise).
@@ -334,7 +343,7 @@ pub(crate) mod tests {
     fn empty_fold_tree_has_no_siblings() {
         let mut si = stark_info();
         si["starkStruct"]["logDomainSizes"] = json!([17, 14, 2]);
-        let out = render(&si, &opts("Poseidon2"));
+        let out = render(&si, &opts(HashFamily::Poseidon2));
         let fs = out.lines().find(|l| l.starts_with("function sv_OFF_FS() ")).unwrap();
         assert!(fs.ends_with(", -1]; }") && !fs.contains("[-1"), "{fs}");
     }

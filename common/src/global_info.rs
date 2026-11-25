@@ -4,12 +4,12 @@ use serde::{Serialize, Deserialize};
 use serde_json::Value;
 use std::fs;
 
-use crate::hash_family::{self, DEFAULT_HASH_ID};
+use crate::hash_family::{self, HashFamily};
 use crate::ProofType;
 use crate::{ProofmanResult, ProofmanError};
 
-fn default_hash_id() -> String {
-    DEFAULT_HASH_ID.to_string()
+fn default_hash() -> HashFamily {
+    HashFamily::DEFAULT
 }
 
 /// Arities the `recursive2` circuit can be generated for. Larger values are not known to work.
@@ -88,8 +88,8 @@ pub struct GlobalInfo {
     #[serde(rename = "aggregationArity", default = "fallback_aggregation_arity")]
     pub aggregation_arity: usize,
 
-    #[serde(default = "default_hash_id")]
-    pub hash: String,
+    #[serde(default = "default_hash")]
+    pub hash: HashFamily,
 
     /// Whether this proving key carries the `vadcop_final_compressed` stage.
     ///
@@ -168,7 +168,6 @@ impl GlobalInfo {
         let updated_global_info_json = serde_json::to_string(&global_info_value)?;
         // Deserialize into GlobalInfo
         let global_info: GlobalInfo = serde_json::from_str(&updated_global_info_json)?;
-        global_info.hash.parse::<hash_family::HashFamily>().map_err(ProofmanError::InvalidConfiguration)?;
 
         // Every proving key loads through here, so this catches an arity this build has no
         // aggregation path for before any consumer chunks proofs or derives MPI tags from it.
@@ -184,11 +183,11 @@ impl GlobalInfo {
         // wrong -- in practice a key written before `hash` existed, which is Poseidon at arity 4 but
         // takes the default. Catch it here rather than let `set_hash_family_c` below point blake3's
         // binary-tree kernels at arity-4 trees and fail somewhere unrecognisable.
-        let expected_arity = hash_family::transcript_arity(&global_info.hash) as usize;
+        let expected_arity = hash_family::transcript_arity(global_info.hash) as usize;
         if global_info.transcript_arity != expected_arity {
             return Err(ProofmanError::InvalidConfiguration(format!(
-                "proving key has transcriptArity {} but hash family {:?} uses {}; if the key predates \
-                 the `hash` field it is not {:?} -- add the right \"hash\" to {} or rebuild the key",
+                "proving key has transcriptArity {} but hash family \"{}\" uses {}; if the key predates \
+                 the `hash` field it is not \"{}\" -- add the right \"hash\" to {} or rebuild the key",
                 global_info.transcript_arity,
                 global_info.hash,
                 expected_arity,
@@ -197,7 +196,7 @@ impl GlobalInfo {
             )));
         }
 
-        proofman_starks_lib_c::set_hash_family_c(&global_info.hash);
+        proofman_starks_lib_c::set_hash_family_c(global_info.hash.as_str());
 
         Ok(global_info)
     }

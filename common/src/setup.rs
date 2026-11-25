@@ -375,8 +375,9 @@ impl<F: PrimeField64> Setup<F> {
         } else {
             // Otherwise, initialize the pointers with their respective values
             let stark_info_json = std::fs::read_to_string(&stark_info_path)
-                .unwrap_or_else(|_| panic!("Failed to read file {}", stark_info_path));
-            let stark_info = StarkInfo::from_json(&stark_info_json);
+                .map_err(|e| ProofmanError::InvalidSetup(format!("Failed to read {stark_info_path}: {e}")))?;
+            let stark_info = StarkInfo::try_from_json(&stark_info_json)
+                .map_err(|e| ProofmanError::InvalidSetup(format!("{stark_info_path}: {e}")))?;
             let recursive = setup_type != &ProofType::Basic || self_contained;
             let recursive_final = setup_type == &ProofType::RecursiveF;
             // The poseidon families' recursivef is a BN128 STARK, with a prover of its own (the

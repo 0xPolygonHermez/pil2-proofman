@@ -253,7 +253,7 @@ impl ProveAirCmd {
         )?;
 
         // Without this the CUDA context is unselected and check_device_memory_c returns 0.
-        init_gpu_setup(&pctx.global_info.hash, self.gpu)?;
+        init_gpu_setup(pctx.global_info.hash, self.gpu)?;
 
         let setup = sctx.get_setup(airgroup_id, air_id)?;
 

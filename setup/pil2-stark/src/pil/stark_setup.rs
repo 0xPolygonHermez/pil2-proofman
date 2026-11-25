@@ -8,7 +8,7 @@ use pil_info::emit::prover::{emit_prover, EmitParams};
 use pil_info::pipeline::{self, CorePass};
 use pil_info::PilInfoCfg;
 
-use crate::output::stark_info::{build_starkinfo_output_from_core, solve_low_degree_test};
+use crate::output::stark_info::{build_starkinfo_output, solve_low_degree_test};
 use crate::pil::info::{report, validate_stark_struct, PilInfoResult};
 use pil_info::PrepareOptions;
 use crate::types::stark_struct::StarkStruct;
@@ -27,8 +27,8 @@ pub struct KeyIdentity {
 
 /// Assemble the pil info of one air through the thin core.
 ///
-/// Fails on a pilout the core rejects and a starkStruct that does not fit the air; panics (the
-/// 128-bit gate) on a low-degree test that fails the exact security check.
+/// Fails on a pilout the core rejects, a starkStruct that does not fit the air and a low-degree test that fails
+/// the exact security check (the 128-bit gate).
 pub fn stark_setup(
     pilout: &pb::PilOut,
     airgroup_id: usize,
@@ -44,7 +44,7 @@ pub fn stark_setup(
     })?;
     // the degree bound comes from the blowup: (1 << (nBitsExt - nBits)) + 1
     let cfg = PilInfoCfg::goldilocks(blowup);
-    let CorePass { cs, im, chk, lay, exprs, ops, air_name } =
+    let CorePass { cs, im, chk, lay, exprs, ops } =
         pipeline::run(pilout, airgroup_id, air_id, &cfg, options.im_pols_stages).with_context(at)?;
     validate_stark_struct(stark_struct, cs.n_rows_bits, airgroup_id, air_id)?;
     let dag = build_dag(&cs, &im).map_err(|e| failed("constraint DAG", &e))?;
@@ -56,19 +56,17 @@ pub fn stark_setup(
         multiproof: key.multiproof,
     };
     let emitted = emit_prover(&cs, &im, &lay, &ops, exprs, &EmitParams { air_id, airgroup_id }).with_context(at)?;
-    let core = stark_info(&cs, &im, &chk, &lay, &ops, &p).map_err(|e| failed("starkinfo", &e))?;
+    let view = stark_info(&cs, &im, &chk, &lay, &ops, &p);
 
     // the 128-bit gate sits inside the solve
-    let ldt = solve_low_degree_test(stark_struct, core.verifier.fri_batch_size.max(1) as u64);
-    let name = key.name.as_deref().unwrap_or(&air_name);
-    let (key_airgroup, key_air) = key.ids.unwrap_or((airgroup_id, air_id));
-    let starkinfo = build_starkinfo_output_from_core(&core, stark_struct, &ldt, key_airgroup, key_air, name)?;
+    let ldt = solve_low_degree_test(stark_struct, view.fri_batch_size.max(1) as u64).with_context(at)?;
+    let name = key.name.as_deref().unwrap_or(&cs.name);
+    let starkinfo = build_starkinfo_output(&view, stark_struct, &ldt, key.ids.unwrap_or((airgroup_id, air_id)), name)?;
     let mut pil_code = emitted.code;
     pil_code.verifier_info.constraint_dag = Some(dag);
 
     let stages: Vec<usize> = emitted.constraints.iter().map(|c| c.stage.unwrap_or(0)).collect();
-    let (summary, prover_memory) =
-        report(&core.verifier, &air_name, &stages, emitted.arena.len(), stark_struct, options);
+    let (summary, prover_memory) = report(&view, &cs.name, &stages, emitted.arena.len(), stark_struct, options);
     Ok(PilInfoResult { starkinfo, pil_code, summary, prover_memory, im_pols_info: emitted.im_pols_info })
 }
 
@@ -88,7 +86,7 @@ mod tests {
         static CACHE: [OnceLock<StarkStruct>; 3] = [OnceLock::new(), OnceLock::new(), OnceLock::new()];
         CACHE[bits - 1].get_or_init(|| {
             let settings = StarkSettings { initial_blowup_factor: Some(bits), ..Default::default() };
-            generate_stark_struct(&settings, N_BITS, "blake3")
+            generate_stark_struct(&settings, N_BITS, proofman_common::hash_family::HashFamily::Blake3)
         })
     }
 
@@ -150,7 +148,7 @@ mod tests {
 
     /// The 128-bit gate sits in `solve_low_degree_test`; a schedule it refuses must stop the setup.
     #[test]
-    fn below_128_bits_still_fails_setup() {
+    fn below_128_bits_fails_setup() {
         let (seed, r) = feasible(1).remove(0);
         let p = sized(common::random_pilout(seed).0);
         let mut ss =
@@ -159,14 +157,10 @@ mod tests {
             crate::types::stark_struct::LowDegreeTest::Fri(f) => f.log_degrees[1] += 1,
             crate::types::stark_struct::LowDegreeTest::Stir(f) => f.log_degrees[1] += 1,
         }
-        let run = std::panic::catch_unwind(|| {
-            stark_setup(&p, 0, 0, &ss, &PrepareOptions::default(), &KeyIdentity::default())
-        });
-        let msg = match run {
-            Ok(r) => panic!("a refused schedule set up: ok={}", r.is_ok()),
-            Err(e) => e.downcast_ref::<String>().cloned().or_else(|| e.downcast_ref::<&str>().map(|s| s.to_string())),
+        let err = match stark_setup(&p, 0, 0, &ss, &PrepareOptions::default(), &KeyIdentity::default()) {
+            Ok(_) => panic!("a refused schedule set up"),
+            Err(e) => format!("{e:#}"),
         };
-        let msg = msg.unwrap_or_default();
-        assert!(msg.contains("exact security check"), "{msg}");
+        assert!(err.contains("exact security check"), "{err}");
     }
 }

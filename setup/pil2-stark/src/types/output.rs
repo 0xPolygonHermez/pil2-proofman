@@ -1,9 +1,6 @@
 use serde::{Deserialize, Serialize};
 use crate::types::stark_struct::LowDegreeTest;
 
-/// The starkinfo.json read by proofman-common StarkInfo; the core owns every key but starkStruct and security.
-pub type StarkInfoOutput = pil_info::core::project::StarkInfoOutput<StarkStructOutput, SecurityInfo>;
-
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct StarkStructOutput {

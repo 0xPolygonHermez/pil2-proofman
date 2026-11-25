@@ -1,12 +1,13 @@
 //! The data of `GetSha256Inputs` (static, `helper_circuits/sha256_inputs.circom`): publics_info's
 //! definitions as the final circuit's `vd_DEFS()`.
 
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
 use serde_json::Value;
 
 /// `(nPublics, nDefs, "function vd_DEFS() { return [..]; }")` of a publics_info.
 pub fn sha256_defs(publics: &Value) -> Result<(u64, usize, String)> {
-    let n_publics = publics["nPublics"].as_u64().unwrap_or(0);
+    let n_publics =
+        if publics.is_null() { 0 } else { publics["nPublics"].as_u64().context("publics info: no nPublics")? };
     let defs = publics["definitions"].as_array().map_or(&[][..], Vec::as_slice);
     let mut v: Vec<u64> = Vec::with_capacity(6 * defs.len());
     for d in defs {
@@ -16,7 +17,8 @@ pub fn sha256_defs(publics: &Value) -> Result<(u64, usize, String)> {
         if avoid && !(vk && n_chunks == 1) {
             bail!("publics definition {}: avoidAlias needs a single-chunk verificationKey", d["name"]);
         }
-        v.extend([d["initialPos"].as_u64().unwrap_or(0), d["nValues"].as_u64().unwrap_or(0), n_chunks, chunk(1, 64)]);
+        let field = |k: &str| d[k].as_u64().with_context(|| format!("publics definition {}: no {k}", d["name"]));
+        v.extend([field("initialPos")?, field("nValues")?, n_chunks, chunk(1, 64)]);
         v.extend([u64::from(avoid), u64::from(vk)]);
     }
     let list: Vec<String> = v.iter().map(u64::to_string).collect();

@@ -1,5 +1,5 @@
-//! The BN128 verifier (a recursivef's, in the final SNARK's circuit) of one key: its includes (field,
-//! family and `verifier/bn128_open_<family>.circom`), data (`lib_params`) and constraints
+//! The BN128 verifier (a recursivef's, in the final SNARK's circuit) of one key: its family's entry
+//! (`verifier/bn128_open_<family>.circom`), data (`lib_params`) and constraints
 //! (`ConstraintEval`). The verifier itself is the static `StarkVerifierBN128(k)`
 //! (`helper_circuits/verifier/stark_verifier_bn128.circom`).
 
@@ -17,10 +17,6 @@ pub fn gen_stark_verifier_bn128(
     verifier_info: &Value,
     opts: &Pil2CircomOptions,
 ) -> Result<String> {
-    let hash_type = stark_info["starkStruct"]["verificationHashType"].as_str().unwrap_or("GL");
-    if hash_type != "BN128" {
-        bail!("gen_stark_verifier_bn128: expected BN128 hash type, got '{hash_type}'");
-    }
     gen(const_root, stark_info, verifier_info, opts, false)
 }
 
@@ -34,16 +30,6 @@ pub fn gen_stark_verifier_bn128_blake3(
     verifier_info: &Value,
     opts: &Pil2CircomOptions,
 ) -> Result<String> {
-    let ss = &stark_info["starkStruct"];
-    if ss["verificationHashType"].as_str().unwrap_or("GL") != "GL" || opts.hash != "blake3" {
-        bail!("gen_stark_verifier_bn128_blake3: expected a Goldilocks STARK hashed with blake3");
-    }
-    if ss["merkleTreeArity"].as_u64() != Some(2) {
-        bail!("gen_stark_verifier_bn128_blake3: blake3 trees are binary");
-    }
-    if !ss["merkleTreeCustom"].as_bool().unwrap_or(false) {
-        bail!("gen_stark_verifier_bn128_blake3: the blake3 gates are custom templates (merkleTreeCustom)");
-    }
     gen(const_root, stark_info, verifier_info, opts, true)
 }
 
@@ -57,6 +43,20 @@ fn gen(
     let info = parse_stark_info(si)?;
     let ss = &info.stark_struct;
     let custom = ss.merkle_tree_custom;
+    let hash_type = &ss.verification_hash_type;
+    if blake3 {
+        if hash_type != "GL" || !opts.hash.is_blake3() {
+            bail!("gen_stark_verifier_bn128_blake3: expected a Goldilocks STARK hashed with blake3");
+        }
+        if ss.merkle_tree_arity != 2 {
+            bail!("gen_stark_verifier_bn128_blake3: blake3 trees are binary");
+        }
+        if !custom {
+            bail!("gen_stark_verifier_bn128_blake3: the blake3 gates are custom templates (merkleTreeCustom)");
+        }
+    } else if hash_type != "BN128" {
+        bail!("gen_stark_verifier_bn128: expected BN128 hash type, got '{hash_type}'");
+    }
     ss.low_degree_test.fri().context("the BN128 verifier checks FRI, and this STARK opens with STIR")?;
     if !info.custom_commits.is_empty() {
         bail!("the BN128 verifier does not support custom commits");
@@ -84,31 +84,18 @@ fn gen(
         },
     )?;
 
-    let mut out = String::from("pragma circom 2.1.0;\n");
-    if custom {
-        out += "pragma custom_templates;\n";
-    }
-    let c = if custom { "custom/" } else { "" };
-    out += &format!(
-        "\ninclude \"{c}evalpol.circom\";\ninclude \"{c}fft.circom\";\ninclude \"{c}gl.circom\";\ninclude \"{c}lessthangl.circom\";\n"
-    );
-    out += "include \"bitifyT.circom\";\ninclude \"treeselector.circom\";\n";
-    out += &if blake3 {
-        "include \"../circuits.gl/hash/blake3/merklehash.circom\";\ninclude \"../circuits.gl/hash/blake3/pow.circom\";\ninclude \"verifier/transcript_blake3.circom\";\ninclude \"verifier/bn128_open_blake3.circom\";\n".to_string()
+    // The family's entry includes its field, hash, transcript and verifier files.
+    let family = if blake3 {
+        "blake3"
+    } else if custom {
+        "custom"
     } else {
-        let open = if custom { "custom" } else { "poseidon" };
-        format!("include \"{c}merklehash.circom\";\ninclude \"pow.circom\";\ninclude \"{c}sponge.circom\";\ninclude \"verifier/transcript_sponge.circom\";\ninclude \"verifier/bn128_open_{open}.circom\";\n")
+        "poseidon"
     };
-    out += "include \"verifier/stark_verifier_bn128.circom\";\n\n";
-    if custom && !blake3 {
-        // The custom sponge is the tree's CustomPoseidon(arity).
-        out += &format!(
-            "function sponge_rate() {{ return {}; }}\nfunction sponge_capacity() {{ return 1; }}\n\n",
-            ss.merkle_tree_arity
-        );
-    }
+    let pragma = if custom { "pragma custom_templates;\n" } else { "" };
+    let mut out = format!("pragma circom 2.1.0;\n{pragma}\ninclude \"verifier/bn128_open_{family}.circom\";\n\n");
     out += &key.functions("");
-    let (dag, ctx) = super::dag_and_ctx(si, vi)?;
+    let (dag, ctx) = super::dag_and_ctx(&info, vi)?;
     out += &format!("\n{}", constraint_eval_bn128(&dag, &ctx)?);
     Ok(out)
 }
@@ -120,6 +107,7 @@ pub(crate) mod tests {
 
     pub(crate) fn stark_info(custom: bool, ll: u64) -> Value {
         json!({
+            "keyVersion": proofman_common::KEY_VERSION,
             "starkStruct": {
                 "verificationHashType": "BN128", "numQueries": 4, "nBits": 6, "nBitsExt": 10, "grindingBitsQueries": 0,
                 "merkleTreeArity": 4, "merkleTreeCustom": custom, "lastLevelVerification": ll, "hashCommits": false,
@@ -150,8 +138,10 @@ pub(crate) mod tests {
     #[test]
     fn per_key_output_is_includes_data_and_constraints() {
         let out = render(&stark_info(false, 0)).unwrap();
-        assert!(out.starts_with("pragma circom 2.1.0;\n\ninclude \"evalpol.circom\";"), "out:\n{out}");
-        assert!(out.contains("include \"sponge.circom\";\ninclude \"verifier/transcript_sponge.circom\";\ninclude \"verifier/bn128_open_poseidon.circom\";"), "out:\n{out}");
+        assert!(
+            out.starts_with("pragma circom 2.1.0;\n\ninclude \"verifier/bn128_open_poseidon.circom\";\n\nfunction "),
+            "out:\n{out}"
+        );
         assert!(out.contains("    tmp_0 <== evals[0];\n    signal {maxNum} tmp_1[3];\n    tmp_1 <== GLCMul()(tmp_0, Zh);\n\n    evalP <== tmp_1;\n}"), "out:\n{out}");
         assert!(out.contains("function sv_ROOT_C() { return [7, 0, 0, 0]; }"), "out:\n{out}");
         assert!(out.contains("function sv_OFF_ROOT() { return [0, 1, 2]; }"), "single-element roots:\n{out}");
@@ -159,11 +149,9 @@ pub(crate) mod tests {
         assert_eq!(templates, ["template ConstraintEval() {"], "{out}");
         let custom = render(&stark_info(true, 0)).unwrap();
         assert!(
-            custom.starts_with("pragma circom 2.1.0;\npragma custom_templates;\n\ninclude \"custom/evalpol.circom\";"),
-            "out:\n{custom}"
-        );
-        assert!(
-            custom.contains("include \"custom/sponge.circom\";") && custom.contains("bn128_open_custom.circom"),
+            custom.starts_with(
+                "pragma circom 2.1.0;\npragma custom_templates;\n\ninclude \"verifier/bn128_open_custom.circom\";\n\n"
+            ),
             "out:\n{custom}"
         );
     }
@@ -177,13 +165,13 @@ pub(crate) mod tests {
         assert!(none.contains("function sv_OFF_S0L() { return [-1, -1]; }"), "out:\n{none}");
     }
 
-    /// Custom trees of any arity (the sponge rate follows it), and a key with no fold step.
+    /// Custom trees of any arity (the sponge rate reads it), and a key with no fold step.
     #[test]
     fn custom_arity_and_no_fold_step() {
         let mut si = stark_info(true, 0);
         si["starkStruct"]["merkleTreeArity"] = json!(2);
         let out = render(&si).unwrap();
-        assert!(out.contains("function sponge_rate() { return 2; }"), "out:\n{out}");
+        assert!(out.contains("function sv_arity() { return 2; }"), "out:\n{out}");
         let mut si = stark_info(false, 0);
         si["starkStruct"]["logDomainSizes"] = json!([10]);
         si["starkStruct"]["logDegrees"] = json!([6]);

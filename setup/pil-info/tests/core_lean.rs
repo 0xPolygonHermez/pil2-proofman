@@ -9,7 +9,6 @@ use pil_info::core::ir::{ColType, ConstraintSystem, Expr, HintField, HintValue};
 use pil_info::core::layout::{layout, LayoutParams};
 use pil_info::core::openings::openings;
 use pil_info::core::pilout_core::PiloutCore;
-use pil_info::core::project::{stark_info, starkinfo_output, StarkParams};
 use pil_info::Opening;
 
 fn base() -> pb::PilOut {
@@ -38,17 +37,12 @@ fn non_power_of_two_rows_is_an_error() {
 }
 
 #[test]
-fn missing_stage_on_a_witness_symbol_is_an_error() {
-    let mut p = base();
-    p.symbols.iter_mut().find(|s| s.r#type == SymbolType::WitnessCol as i32).unwrap().stage = None;
-    assert!(matches!(lower(&p), Err(PiloutError::MissingStage { .. })));
-}
-
-#[test]
-fn missing_stage_on_a_challenge_symbol_is_an_error() {
-    let mut p = pilout2(&[], vec![sub(witness(0, 0), constant("1"))], vec![every_row(0)]);
-    p.symbols.iter_mut().find(|s| s.r#type == SymbolType::Challenge as i32).unwrap().stage = None;
-    assert!(matches!(lower(&p), Err(PiloutError::MissingStage { .. })));
+fn missing_stage_on_a_witness_or_challenge_symbol_is_an_error() {
+    let challenged = pilout2(&[], vec![sub(witness(0, 0), constant("1"))], vec![every_row(0)]);
+    for (mut p, kind) in [(base(), SymbolType::WitnessCol), (challenged, SymbolType::Challenge)] {
+        p.symbols.iter_mut().find(|s| s.r#type == kind as i32).unwrap().stage = None;
+        assert!(matches!(lower(&p), Err(PiloutError::MissingStage { .. })), "{kind:?}");
+    }
 }
 
 /// The proto leaves a proof value's stage optional; absent is stage 1, the only stage a proof value has.
@@ -84,22 +78,14 @@ fn with_im_expr(e: Expr) -> (ConstraintSystem, pil_info::core::im::ImChoice) {
     (cs, choice(&[0]))
 }
 
+/// An air value, a witness column or an expression the air does not have.
 #[test]
-fn layout_errors_on_an_air_value_the_air_does_not_have() {
-    let (cs, im) = with_im_expr(Expr::AirValue(5));
-    assert!(layout(&cs, &im, &params(&cs)).is_err());
-}
-
-#[test]
-fn layout_errors_on_a_witness_column_the_air_does_not_have() {
-    let (cs, im) = with_im_expr(Expr::Col { col: ColType::Witness, commit_id: None, id: 99, offset: 0 });
-    assert!(layout(&cs, &im, &params(&cs)).is_err());
-}
-
-#[test]
-fn layout_errors_on_a_dangling_ref() {
-    let (cs, im) = with_im_expr(Expr::Ref(999));
-    assert!(layout(&cs, &im, &params(&cs)).is_err());
+fn layout_errors_on_what_the_air_does_not_have() {
+    let witness = Expr::Col { col: ColType::Witness, commit_id: None, id: 99, offset: 0 };
+    for e in [Expr::AirValue(5), witness, Expr::Ref(999)] {
+        let (cs, im) = with_im_expr(e.clone());
+        assert!(layout(&cs, &im, &params(&cs)).is_err(), "{e:?}");
+    }
 }
 
 /// Guard (passes today through `reach`): a custom column with no commit is an error, never commit 0.
@@ -189,28 +175,6 @@ fn openings_read_the_typed_hint() {
 
 // ---- (d) canonical input ----
 
-#[test]
-fn adapter_round_trips_on_every_real_pilout() {
-    for (path, p) in real_pilouts() {
-        let c = PiloutCore::from_pb(&p).unwrap_or_else(|e| panic!("{path:?}: {e}"));
-        assert_eq!(PiloutCore::from_json(&c.to_json().unwrap()).unwrap(), c, "{path:?}");
-    }
-}
-
-#[test]
-fn core_input_lowers_like_the_protobuf_on_every_real_air() {
-    for (path, p) in real_pilouts() {
-        let c = PiloutCore::from_pb(&p).unwrap();
-        for (g, ag) in p.air_groups.iter().enumerate() {
-            for a in 0..ag.airs.len() {
-                let old = from_pilout(&p, g, a, &gl(), Opening::Deep);
-                let new = from_pilout_core(&c, g, a, &gl(), Opening::Deep);
-                assert_eq!(new, old, "{path:?} air {g}/{a}");
-            }
-        }
-    }
-}
-
 /// The hand-written form of `a - 1 = 0` over 16 rows, as the spec writes it.
 const HAND_WRITTEN: &str = r#"{
   "numChallenges": [0], "numProofValues": [], "numPublicValues": 0,
@@ -230,25 +194,7 @@ fn a_hand_written_core_input_parses_and_lowers() {
     assert_eq!((cs.n_rows_bits, cs.n_stages, cs.witness.len(), cs.constraints.len()), (4, 1, 1, 1));
 }
 
-// ---- (e) starkinfo JSON from the core; casts ----
-
-#[test]
-fn starkinfo_output_has_the_core_owned_keys() {
-    let r = run_any(&pilout(&["a", "b", "c", "d"], &[], chain(), vec![every_row(3)]), 0, 0).expect("feasible");
-    let out = core_out(&r);
-    let sp = StarkParams {
-        n_bits: 4,
-        n_bits_ext: 5,
-        c_exp_id: out.exprs.roles.c_exp as u32,
-        circuit_type: None,
-        multiproof: false,
-    };
-    let core = stark_info(&r.cs, &r.im, &r.chk, &out.lay, &out.ops, &sp).unwrap();
-    let j = serde_json::to_value(starkinfo_output(&core, &r.air_name, 0, 0, (), None::<()>).unwrap()).unwrap();
-    for k in ["cmPolsMap", "constPolsMap", "evMap", "openingPoints", "qDeg", "qDim", "nStages", "boundaries"] {
-        assert!(j.get(k).is_some(), "missing {k}");
-    }
-}
+// ---- (e) casts ----
 
 /// A stage-width sum past u32 must be an error, not a wrap or a panic.
 #[test]

@@ -1,5 +1,6 @@
 pragma circom 2.1.0;
 
+// Both field families' EvalPol: the includer brings its family's gl_family.circom.
 include "gl.circom";
 
 // Given a polynomial p(X) of degree lower than n over the GL³ field, and an evaluation point x from GL³,

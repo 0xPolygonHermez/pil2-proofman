@@ -573,7 +573,7 @@ pub fn join_thread(handle: std::thread::JoinHandle<ProofmanResult<()>>) -> Proof
     }
 }
 
-pub fn init_gpu_setup(hash_family: &str, gpu: bool) -> ProofmanResult<()> {
+pub fn init_gpu_setup(hash_family: crate::hash_family::HashFamily, gpu: bool) -> ProofmanResult<()> {
     if !set_gpu_mode_c(gpu) {
         return Err(ProofmanError::InvalidConfiguration(
             "GPU mode requested but library was built without CUDA support".into(),

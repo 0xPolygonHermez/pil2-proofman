@@ -68,7 +68,7 @@ pub struct StarkInfo {
     pub multiproof: bool,
     /// The same json as `proofman_common::StarkInfo`, the one typed starkinfo reader.
     pub common: proofman_common::StarkInfo,
-    /// The constraint DAG's resolver tables (`LowerTables::from_starkinfo`).
+    /// The constraint DAG's resolver tables.
     pub lower_tables: LowerTables,
 }
 
@@ -266,7 +266,7 @@ impl StarkInfo {
             c_exp_id: common.c_exp_id,
             map_sections_n: common.map_sections_n.clone(),
             multiproof: common.multiproof,
-            lower_tables: LowerTables::from_starkinfo(j).map_err(|e| anyhow!("starkinfo: {e:?}"))?,
+            lower_tables: pil2_stark_recurser::stark2circom::lower_tables(&common).context("starkinfo")?,
             common,
         })
     }
@@ -571,10 +571,9 @@ mod tests {
         }
     }
 
-    /// End to end: the passes keep a constant wider than Goldilocks as it is, and the STARK writers
-    /// refuse it where they narrow it, instead of writing 0.
+    /// End to end: a pilout constant wider than Goldilocks reaches the STARK writers reduced mod p, never as 0.
     #[test]
-    fn a_wide_constant_of_the_pilout_is_refused_by_the_stark_writers() {
+    fn a_wide_constant_of_the_pilout_reaches_the_stark_writers_reduced() {
         use pil2_pilout::pilout::{self as pb, constraint, expression, operand, SymbolType};
 
         // 2^64 + 5, big-endian.
@@ -613,8 +612,11 @@ mod tests {
 
         let cfg = pil_info::PilInfoCfg { opening: pil_info::Opening::Shplonk, ..pil_info::PilInfoCfg::goldilocks(1) };
         let result = pil_info::shplonk_info(&pilout, 0, 0, &cfg, &Default::default()).unwrap();
-        let err = ExpressionsInfo::try_from(&result.pil_code.expressions_info).unwrap_err();
-        assert!(format!("{err:#}").ends_with(&not_goldilocks("18446744073709551621")), "{err:#}");
+        let ei = ExpressionsInfo::try_from(&result.pil_code.expressions_info).unwrap();
+        let numbers = ei.expressions_code.iter().flat_map(|e| &e.code).flat_map(|op| &op.src);
+        let numbers: Vec<u64> =
+            numbers.filter(|s| s.op_type == pil_info::types::code::OpType::Number).map(|s| s.value).collect();
+        assert!(numbers.contains(&((1u64 << 32) + 4)), "2^64 + 5 mod p: {numbers:?}");
     }
 
     /// The same refusal when the code is read back from its JSON (the recursive setups).

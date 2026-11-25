@@ -24,7 +24,7 @@ pub struct SetupRecursiveTestOptions {
 /// Resolve the per-hash-family circom fixture.
 ///
 /// The test-recursive fixtures (test.circom + test.verifier.circom + proof.bin)
-/// live in per-hash subfolders (`poseidon1/`, `poseidon2/`). If the directory of
+/// live in per-hash subfolders (`poseidon1/`, `poseidon2/`, `blake3/`). If the directory of
 /// the given `circom_path` has a subfolder named after the lowercased hash that
 /// contains a same-named circom file, prefer that one. This lets a single
 /// `-c ./examples/test-recursive/test.circom` auto-select the right fixture from

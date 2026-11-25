@@ -1639,11 +1639,11 @@ template VerifySingleQuery0() {
     signal input s0_vals1[5];
     signal input s0_vals1_p[5][1];
     signal input s0_siblings1[19][4];
-    signal input s0_last_mt_levels1[16][4];
+    signal input s0_last_levels1[16][4];
     signal input s0_vals2[9];
     signal input s0_vals2_p[9][1];
     signal input s0_siblings2[19][4];
-    signal input s0_last_mt_levels2[16][4];
+    signal input s0_last_levels2[16][4];
 
     signal input s0_vals3[3];
     signal input s0_vals3_p[3][1];
@@ -1653,27 +1653,27 @@ template VerifySingleQuery0() {
     signal input s0_valsC_p[2][1];
     signal input s0_siblingsC[19][4];
 
-    signal input s0_last_mt_levels3[16][4];
-    signal input s0_last_mt_levelsC[16][4];
+    signal input s0_last_levels3[16][4];
+    signal input s0_last_levelsC[16][4];
 
     signal input s0_vals_rom_0[2];
     signal input s0_vals_rom_0_p[2][1];
     signal input root_rom_0[4];
     signal input s0_siblings_rom_0[19][4];
-    signal input s0_last_mt_levels_rom_0[16][4];
+    signal input s0_last_levels_rom_0[16][4];
 
     signal input s1_vals_p[32][3];
     signal input s1_siblings[14][4];
-    signal input s1_last_mt_levels[16][4];
+    signal input s1_last_levels[16][4];
     signal input s2_vals_p[16][3];
     signal input s2_siblings[10][4];
-    signal input s2_last_mt_levels[16][4];
+    signal input s2_last_levels[16][4];
     signal input s3_vals_p[16][3];
     signal input s3_siblings[6][4];
-    signal input s3_last_mt_levels[16][4];
+    signal input s3_last_levels[16][4];
     signal input s4_vals_p[16][3];
     signal input s4_siblings[2][4];
-    signal input s4_last_mt_levels[16][4];
+    signal input s4_last_levels[16][4];
 
     signal input finalPol[64][3];
 
@@ -1688,13 +1688,13 @@ template VerifySingleQuery0() {
         }
     }
 
-    VerifyMerkleHashUntilLevel(1, 5, 2, 19, 4, 8388608)(s0_vals1_p, s0_siblings1, queriesL0Bits, s0_last_mt_levels1, enable);
-    VerifyMerkleHashUntilLevel(1, 9, 2, 19, 4, 8388608)(s0_vals2_p, s0_siblings2, queriesL0Bits, s0_last_mt_levels2, enable);
+    VerifyMerkleHashUntilLevel(1, 5, 2, 19, 4, 8388608)(s0_vals1_p, s0_siblings1, queriesL0Bits, s0_last_levels1, enable);
+    VerifyMerkleHashUntilLevel(1, 9, 2, 19, 4, 8388608)(s0_vals2_p, s0_siblings2, queriesL0Bits, s0_last_levels2, enable);
 
-    VerifyMerkleHashUntilLevel(1, 3, 2, 19, 4, 8388608)(s0_vals3_p, s0_siblings3, queriesL0Bits, s0_last_mt_levels3, enable);
-    VerifyMerkleHashUntilLevel(1, 2, 2, 19, 4, 8388608)(s0_valsC_p, s0_siblingsC, queriesL0Bits, s0_last_mt_levelsC, enable);
+    VerifyMerkleHashUntilLevel(1, 3, 2, 19, 4, 8388608)(s0_vals3_p, s0_siblings3, queriesL0Bits, s0_last_levels3, enable);
+    VerifyMerkleHashUntilLevel(1, 2, 2, 19, 4, 8388608)(s0_valsC_p, s0_siblingsC, queriesL0Bits, s0_last_levelsC, enable);
 
-    VerifyMerkleHashUntilLevel(1, 2, 2, 19, 4, 8388608)(s0_vals_rom_0_p, s0_siblings_rom_0, queriesL0Bits, s0_last_mt_levels_rom_0, enable);
+    VerifyMerkleHashUntilLevel(1, 2, 2, 19, 4, 8388608)(s0_vals_rom_0_p, s0_siblings_rom_0, queriesL0Bits, s0_last_levels_rom_0, enable);
 
     signal {binary} s1_keys_merkle_bits[18][1];
     for (var j = 0; j < 18; j++) {
@@ -1707,7 +1707,7 @@ template VerifySingleQuery0() {
         }
     }
 
-    VerifyMerkleHashUntilLevel(3, 32, 2, 14, 4, 262144)(s1_vals_p, s1_siblings, s1_keys_merkle_bits, s1_last_mt_levels, enable);
+    VerifyMerkleHashUntilLevel(3, 32, 2, 14, 4, 262144)(s1_vals_p, s1_siblings, s1_keys_merkle_bits, s1_last_levels, enable);
     signal {binary} s2_keys_merkle_bits[14][1];
     for (var j = 0; j < 14; j++) {
         for (var k = 0; k < 1; k++) {
@@ -1719,7 +1719,7 @@ template VerifySingleQuery0() {
         }
     }
 
-    VerifyMerkleHashUntilLevel(3, 16, 2, 10, 4, 16384)(s2_vals_p, s2_siblings, s2_keys_merkle_bits, s2_last_mt_levels, enable);
+    VerifyMerkleHashUntilLevel(3, 16, 2, 10, 4, 16384)(s2_vals_p, s2_siblings, s2_keys_merkle_bits, s2_last_levels, enable);
     signal {binary} s3_keys_merkle_bits[10][1];
     for (var j = 0; j < 10; j++) {
         for (var k = 0; k < 1; k++) {
@@ -1731,7 +1731,7 @@ template VerifySingleQuery0() {
         }
     }
 
-    VerifyMerkleHashUntilLevel(3, 16, 2, 6, 4, 1024)(s3_vals_p, s3_siblings, s3_keys_merkle_bits, s3_last_mt_levels, enable);
+    VerifyMerkleHashUntilLevel(3, 16, 2, 6, 4, 1024)(s3_vals_p, s3_siblings, s3_keys_merkle_bits, s3_last_levels, enable);
     signal {binary} s4_keys_merkle_bits[6][1];
     for (var j = 0; j < 6; j++) {
         for (var k = 0; k < 1; k++) {
@@ -1743,7 +1743,7 @@ template VerifySingleQuery0() {
         }
     }
 
-    VerifyMerkleHashUntilLevel(3, 16, 2, 2, 4, 64)(s4_vals_p, s4_siblings, s4_keys_merkle_bits, s4_last_mt_levels, enable);
+    VerifyMerkleHashUntilLevel(3, 16, 2, 2, 4, 64)(s4_vals_p, s4_siblings, s4_keys_merkle_bits, s4_last_levels, enable);
 
     VerifyQuery0(23, 18)(queriesL0, challengeOut, friConsts, evals, s0_vals1, s0_vals2, s0_vals3, s0_valsC, s0_vals_rom_0, s1_vals_p, enable);
 
@@ -1780,11 +1780,11 @@ template parallel VerifyQueriesBatch0(nQueries) {
     signal input s0_vals1[nQueries][5];
     signal input s0_vals1_p[nQueries][5][1];
     signal input s0_siblings1[nQueries][19][4];
-    signal input s0_last_mt_levels1[16][4];
+    signal input s0_last_levels1[16][4];
     signal input s0_vals2[nQueries][9];
     signal input s0_vals2_p[nQueries][9][1];
     signal input s0_siblings2[nQueries][19][4];
-    signal input s0_last_mt_levels2[16][4];
+    signal input s0_last_levels2[16][4];
 
     signal input s0_vals3[nQueries][3];
     signal input s0_vals3_p[nQueries][3][1];
@@ -1794,27 +1794,27 @@ template parallel VerifyQueriesBatch0(nQueries) {
     signal input s0_valsC_p[nQueries][2][1];
     signal input s0_siblingsC[nQueries][19][4];
 
-    signal input s0_last_mt_levels3[16][4];
-    signal input s0_last_mt_levelsC[16][4];
+    signal input s0_last_levels3[16][4];
+    signal input s0_last_levelsC[16][4];
 
     signal input s0_vals_rom_0[nQueries][2];
     signal input s0_vals_rom_0_p[nQueries][2][1];
     signal input root_rom_0[4];
     signal input s0_siblings_rom_0[nQueries][19][4];
-    signal input s0_last_mt_levels_rom_0[16][4];
+    signal input s0_last_levels_rom_0[16][4];
 
     signal input s1_vals_p[nQueries][32][3];
     signal input s1_siblings[nQueries][14][4];
-    signal input s1_last_mt_levels[16][4];
+    signal input s1_last_levels[16][4];
     signal input s2_vals_p[nQueries][16][3];
     signal input s2_siblings[nQueries][10][4];
-    signal input s2_last_mt_levels[16][4];
+    signal input s2_last_levels[16][4];
     signal input s3_vals_p[nQueries][16][3];
     signal input s3_siblings[nQueries][6][4];
-    signal input s3_last_mt_levels[16][4];
+    signal input s3_last_levels[16][4];
     signal input s4_vals_p[nQueries][16][3];
     signal input s4_siblings[nQueries][2][4];
-    signal input s4_last_mt_levels[16][4];
+    signal input s4_last_levels[16][4];
 
     signal input finalPol[64][3];
 
@@ -1829,36 +1829,36 @@ template parallel VerifyQueriesBatch0(nQueries) {
             s0_vals1[q],
             s0_vals1_p[q],
             s0_siblings1[q],
-            s0_last_mt_levels1,
+            s0_last_levels1,
             s0_vals2[q],
             s0_vals2_p[q],
             s0_siblings2[q],
-            s0_last_mt_levels2,
+            s0_last_levels2,
             s0_vals3[q],
             s0_vals3_p[q],
             s0_siblings3[q],
             s0_valsC[q],
             s0_valsC_p[q],
             s0_siblingsC[q],
-            s0_last_mt_levels3,
-            s0_last_mt_levelsC,
+            s0_last_levels3,
+            s0_last_levelsC,
             s0_vals_rom_0[q],
             s0_vals_rom_0_p[q],
             root_rom_0,
             s0_siblings_rom_0[q],
-            s0_last_mt_levels_rom_0,
+            s0_last_levels_rom_0,
             s1_vals_p[q],
             s1_siblings[q],
-            s1_last_mt_levels,
+            s1_last_levels,
             s2_vals_p[q],
             s2_siblings[q],
-            s2_last_mt_levels,
+            s2_last_levels,
             s3_vals_p[q],
             s3_siblings[q],
-            s3_last_mt_levels,
+            s3_last_levels,
             s4_vals_p[q],
             s4_siblings[q],
-            s4_last_mt_levels,
+            s4_last_levels,
             finalPol
         );
     }
@@ -1913,15 +1913,15 @@ template StarkVerifier0() {
 
     // Merkle proofs for each of the evaluations
     signal input s0_siblings1[211][19][4];
-    signal input s0_last_mt_levels1[16][4];
+    signal input s0_last_levels1[16][4];
     signal input s0_siblings2[211][19][4];
-    signal input s0_last_mt_levels2[16][4];
+    signal input s0_last_levels2[16][4];
     signal input s0_siblings3[211][19][4];
-    signal input s0_last_mt_levels3[16][4];
+    signal input s0_last_levels3[16][4];
     signal input s0_siblingsC[211][19][4];
-    signal input s0_last_mt_levelsC[16][4];
+    signal input s0_last_levelsC[16][4];
     signal input s0_siblings_rom_0[211][19][4];
-    signal input s0_last_mt_levels_rom_0[16][4];
+    signal input s0_last_levels_rom_0[16][4];
 
     // Contains the root of the DEEP polynomial and of every folded oracle.
     signal input s1_root[4]; // Root of a polynomial of degree lower than 2^22, evaluated over 2^23 points
@@ -1934,16 +1934,16 @@ template StarkVerifier0() {
     // 2^{k_{i-1}}-roots of x.
     signal input s1_vals[211][96];
     signal input s1_siblings[211][14][4];
-    signal input s1_last_mt_levels[16][4];
+    signal input s1_last_levels[16][4];
     signal input s2_vals[211][48];
     signal input s2_siblings[211][10][4];
-    signal input s2_last_mt_levels[16][4];
+    signal input s2_last_levels[16][4];
     signal input s3_vals[211][48];
     signal input s3_siblings[211][6][4];
-    signal input s3_last_mt_levels[16][4];
+    signal input s3_last_levels[16][4];
     signal input s4_vals[211][48];
     signal input s4_siblings[211][2][4];
-    signal input s4_last_mt_levels[16][4];
+    signal input s4_last_levels[16][4];
 
     // The final polynomial is sent in clear as evaluations over the last folded domain.
     signal input finalPol[64][3]; // Evaluations over 2^6 points of a polynomial of degree lower than 2^5
@@ -2249,36 +2249,36 @@ template StarkVerifier0() {
             batch_work_s0_vals1[b],
             batch_work_s0_vals1_p[b],
             batch_work_s0_siblings1[b],
-            s0_last_mt_levels1,
+            s0_last_levels1,
             batch_work_s0_vals2[b],
             batch_work_s0_vals2_p[b],
             batch_work_s0_siblings2[b],
-            s0_last_mt_levels2,
+            s0_last_levels2,
             batch_work_s0_vals3[b],
             batch_work_s0_vals3_p[b],
             batch_work_s0_siblings3[b],
             batch_work_s0_valsC[b],
             batch_work_s0_valsC_p[b],
             batch_work_s0_siblingsC[b],
-            s0_last_mt_levels3,
-            s0_last_mt_levelsC,
+            s0_last_levels3,
+            s0_last_levelsC,
             batch_work_s0_vals_rom_0[b],
             batch_work_s0_vals_rom_0_p[b],
             root_rom_0,
             batch_work_s0_siblings_rom_0[b],
-            s0_last_mt_levels_rom_0,
+            s0_last_levels_rom_0,
             batch_work_s1_vals_p[b],
             batch_work_s1_siblings[b],
-            s1_last_mt_levels,
+            s1_last_levels,
             batch_work_s2_vals_p[b],
             batch_work_s2_siblings[b],
-            s2_last_mt_levels,
+            s2_last_levels,
             batch_work_s3_vals_p[b],
             batch_work_s3_siblings[b],
-            s3_last_mt_levels,
+            s3_last_levels,
             batch_work_s4_vals_p[b],
             batch_work_s4_siblings[b],
-            s4_last_mt_levels,
+            s4_last_levels,
             finalPol
         );
     }
@@ -2427,36 +2427,36 @@ template StarkVerifier0() {
             remainder_s0_vals1,
             remainder_s0_vals1_p,
             remainder_s0_siblings1,
-            s0_last_mt_levels1,
+            s0_last_levels1,
             remainder_s0_vals2,
             remainder_s0_vals2_p,
             remainder_s0_siblings2,
-            s0_last_mt_levels2,
+            s0_last_levels2,
             remainder_s0_vals3,
             remainder_s0_vals3_p,
             remainder_s0_siblings3,
             remainder_s0_valsC,
             remainder_s0_valsC_p,
             remainder_s0_siblingsC,
-            s0_last_mt_levels3,
-            s0_last_mt_levelsC,
+            s0_last_levels3,
+            s0_last_levelsC,
             remainder_s0_vals_rom_0,
             remainder_s0_vals_rom_0_p,
             root_rom_0,
             remainder_s0_siblings_rom_0,
-            s0_last_mt_levels_rom_0,
+            s0_last_levels_rom_0,
             remainder_s1_vals_p,
             remainder_s1_siblings,
-            s1_last_mt_levels,
+            s1_last_levels,
             remainder_s2_vals_p,
             remainder_s2_siblings,
-            s2_last_mt_levels,
+            s2_last_levels,
             remainder_s3_vals_p,
             remainder_s3_siblings,
-            s3_last_mt_levels,
+            s3_last_levels,
             remainder_s4_vals_p,
             remainder_s4_siblings,
-            s4_last_mt_levels,
+            s4_last_levels,
             finalPol
         );
     }
@@ -2466,19 +2466,19 @@ template StarkVerifier0() {
     // Verify Merkle roots for optimized last levels
     ///////////
 
-    VerifyMerkleRoot(4, 2, 8388608)(s0_last_mt_levels1, root1, enabled);
-    VerifyMerkleRoot(4, 2, 8388608)(s0_last_mt_levels2, root2, enabled);
+    VerifyMerkleRoot(4, 2, 8388608)(s0_last_levels1, root1, enabled);
+    VerifyMerkleRoot(4, 2, 8388608)(s0_last_levels2, root2, enabled);
 
-    VerifyMerkleRoot(4, 2, 8388608)(s0_last_mt_levels3, root3, enabled);
+    VerifyMerkleRoot(4, 2, 8388608)(s0_last_levels3, root3, enabled);
 
-    VerifyMerkleRoot(4, 2, 8388608)(s0_last_mt_levelsC, rootC, enabled);
+    VerifyMerkleRoot(4, 2, 8388608)(s0_last_levelsC, rootC, enabled);
 
-    VerifyMerkleRoot(4, 2, 8388608)(s0_last_mt_levels_rom_0, root_rom_0, enabled);
+    VerifyMerkleRoot(4, 2, 8388608)(s0_last_levels_rom_0, root_rom_0, enabled);
 
-    VerifyMerkleRoot(4, 2, 262144)(s1_last_mt_levels, s1_root, enabled);
-    VerifyMerkleRoot(4, 2, 16384)(s2_last_mt_levels, s2_root, enabled);
-    VerifyMerkleRoot(4, 2, 1024)(s3_last_mt_levels, s3_root, enabled);
-    VerifyMerkleRoot(4, 2, 64)(s4_last_mt_levels, s4_root, enabled);
+    VerifyMerkleRoot(4, 2, 262144)(s1_last_levels, s1_root, enabled);
+    VerifyMerkleRoot(4, 2, 16384)(s2_last_levels, s2_root, enabled);
+    VerifyMerkleRoot(4, 2, 1024)(s3_last_levels, s3_root, enabled);
+    VerifyMerkleRoot(4, 2, 64)(s4_last_levels, s4_root, enabled);
 
 
     ///////////

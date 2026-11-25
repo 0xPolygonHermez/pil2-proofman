@@ -276,7 +276,7 @@ fn write_section_row<F: PlonkField + QuotientMap<u64>>(
         }
         ConstFill::PoseidonT => {
             if sh.rc.is_empty() {
-                sh.rc = ROUND_CONSTANTS.iter().map(lift).collect();
+                sh.rc = ROUND_CONSTANTS.iter().map(|x| lift(x).expect("the poseidon wrap is over BN128")).collect();
             }
             for k in 0..s.rows {
                 let row = r + k;

@@ -6,114 +6,21 @@ use crate::expr::expression::{ExprChild, Expression};
 // add_info_expressions
 // ---------------------------------------------------------------------------
 
-/// Recursively walk expression trees computing `exp_deg`, `dim`, `stage`,
-/// and `rows_offsets`. Mirrors the JS `addInfoExpressions` from helpers.js.
-///
-/// The `expressions` slice must be the flat expression array (indexed by ID).
-/// This function mutates expressions in-place.
-///
-/// For arena-indexed expressions, call with the arena index. For expressions
-/// with inline children, the inline children are processed recursively.
-///
-/// Challenges, evaluations and the values of stages past the first get the
-/// field's extension dimension, and a `neg` becomes a multiplication by the
-/// field's `modulus − 1`. Fails on an op it does not know.
+/// Computes `exp_deg`, `dim`, `stage` and `rows_offsets` of arena entry `idx` and what it reaches, in place (the JS
+/// `addInfoExpressions`). Challenges, evaluations and the values past stage 1 take the field's extension dimension,
+/// and a `neg` becomes a multiplication by `modulus − 1`. Fails on an op it does not know.
 pub fn add_info_expressions(expressions: &mut Vec<Expression>, idx: usize, field: &FieldCfg) -> Result<()> {
-    // Guard: already processed (mirrors JS `if("expDeg" in exp) return;`)
     if expressions[idx].info_computed {
         return Ok(());
     }
-
-    let op = expressions[idx].op.clone();
-
-    match op.as_str() {
-        "exp" => {
-            let ref_id = expressions[idx].id.unwrap_or(0);
-            add_info_expressions(expressions, ref_id, field)?;
-
-            let exp_deg = expressions[ref_id].exp_deg;
-            let rows_offsets = expressions[ref_id].rows_offsets.clone();
-            let ref_dim = expressions[ref_id].dim;
-            let ref_stage = expressions[ref_id].stage;
-
-            expressions[idx].exp_deg = exp_deg;
-            expressions[idx].rows_offsets = rows_offsets;
-            if expressions[idx].dim <= 1 {
-                expressions[idx].dim = ref_dim;
-            }
-            if expressions[idx].stage == 0 {
-                expressions[idx].stage = ref_stage;
-            }
-        }
-        "cm" | "custom" | "const" => {
-            expressions[idx].exp_deg = 1;
-            if expressions[idx].stage == 0 || op == "const" {
-                expressions[idx].stage = if op == "cm" { 1 } else { 0 };
-            }
-            if expressions[idx].dim == 0 || expressions[idx].dim == 1 {
-                expressions[idx].dim = 1;
-            }
-            if let Some(row_off) = expressions[idx].row_offset {
-                expressions[idx].rows_offsets = vec![row_off];
-            }
-        }
-        "Zi" => {
-            let boundary = expressions[idx].boundary.clone();
-            if boundary.as_deref() != Some("everyRow") {
-                expressions[idx].exp_deg = 1;
-            } else {
-                // everyRow Zi
-                expressions[idx].exp_deg = 0;
-                expressions[idx].stage = 0;
-                if expressions[idx].dim <= 1 {
-                    expressions[idx].dim = 1;
-                }
-            }
-        }
-        "challenge" | "eval" => {
-            expressions[idx].exp_deg = 0;
-            expressions[idx].dim = field.ext_dim();
-        }
-        "airgroupvalue" | "proofvalue" => {
-            expressions[idx].exp_deg = 0;
-            if expressions[idx].dim <= 1 {
-                expressions[idx].dim = if expressions[idx].stage != 1 { field.ext_dim() } else { 1 };
-            }
-        }
-        "airvalue" => {
-            expressions[idx].exp_deg = 0;
-            if expressions[idx].dim <= 1 {
-                expressions[idx].dim = if expressions[idx].stage != 1 { field.ext_dim() } else { 1 };
-            }
-        }
-        "public" => {
-            expressions[idx].exp_deg = 0;
-            expressions[idx].stage = 1;
-            if expressions[idx].dim <= 1 {
-                expressions[idx].dim = 1;
-            }
-        }
-        "number" => {
-            expressions[idx].exp_deg = 0;
-            expressions[idx].stage = 0;
-            if expressions[idx].dim <= 1 {
-                expressions[idx].dim = 1;
-            }
-        }
-        "add" | "sub" | "mul" | "neg" => {
-            handle_binary_or_neg(expressions, idx, field)?;
-        }
-        _ => {
-            return Err(PilInfoError::UnknownOp { pass: "add_info_expressions", op });
-        }
-    }
-    expressions[idx].info_computed = true;
-    Ok(())
+    // the entry is processed as an inline expression; topological, so nothing it reaches reads it back
+    let mut e = std::mem::take(&mut expressions[idx]);
+    let r = add_info_expression_inline(expressions, &mut e, field);
+    expressions[idx] = e;
+    r
 }
 
-/// Compute info (exp_deg, dim, stage, rows_offsets) on a standalone
-/// Expression that is NOT in the arena. Inline children are processed
-/// recursively; `exp` references are resolved via the arena.
+/// `add_info_expressions` of an expression outside the arena; its `exp` references are resolved in the arena.
 pub fn add_info_expression_inline(
     expressions: &mut Vec<Expression>,
     expr: &mut Expression,
@@ -122,14 +29,12 @@ pub fn add_info_expression_inline(
     if expr.info_computed {
         return Ok(());
     }
-
     let op = expr.op.clone();
-
+    let value_dim = |e: &Expression| if e.stage != 1 { field.ext_dim() } else { 1 };
     match op.as_str() {
         "exp" => {
-            let ref_id = expr.id.unwrap_or(0);
+            let ref_id = exp_ref(expr)?;
             add_info_expressions(expressions, ref_id, field)?;
-
             expr.exp_deg = expressions[ref_id].exp_deg;
             expr.rows_offsets = expressions[ref_id].rows_offsets.clone();
             if expr.dim <= 1 {
@@ -144,7 +49,7 @@ pub fn add_info_expression_inline(
             if expr.stage == 0 || op == "const" {
                 expr.stage = if op == "cm" { 1 } else { 0 };
             }
-            if expr.dim == 0 || expr.dim == 1 {
+            if expr.dim == 0 {
                 expr.dim = 1;
             }
             if let Some(row_off) = expr.row_offset {
@@ -157,250 +62,79 @@ pub fn add_info_expression_inline(
             } else {
                 expr.exp_deg = 0;
                 expr.stage = 0;
-                if expr.dim <= 1 {
-                    expr.dim = 1;
-                }
+                expr.dim = expr.dim.max(1);
             }
         }
         "challenge" | "eval" => {
             expr.exp_deg = 0;
             expr.dim = field.ext_dim();
         }
-        "airgroupvalue" | "proofvalue" => {
+        "airgroupvalue" | "proofvalue" | "airvalue" => {
             expr.exp_deg = 0;
             if expr.dim <= 1 {
-                expr.dim = if expr.stage != 1 { field.ext_dim() } else { 1 };
+                expr.dim = value_dim(expr);
             }
         }
-        "airvalue" => {
+        "public" | "number" => {
             expr.exp_deg = 0;
-            if expr.dim <= 1 {
-                expr.dim = if expr.stage != 1 { field.ext_dim() } else { 1 };
-            }
+            expr.stage = usize::from(op == "public");
+            expr.dim = expr.dim.max(1);
         }
-        "public" => {
-            expr.exp_deg = 0;
-            expr.stage = 1;
-            if expr.dim <= 1 {
-                expr.dim = 1;
-            }
-        }
-        "number" => {
-            expr.exp_deg = 0;
-            expr.stage = 0;
-            if expr.dim <= 1 {
-                expr.dim = 1;
-            }
-        }
-        "add" | "sub" | "mul" | "neg" => {
-            handle_binary_or_neg_inline(expressions, expr, field)?;
-        }
-        _ => {
-            return Err(PilInfoError::UnknownOp { pass: "add_info_expressions", op });
-        }
+        "add" | "sub" | "mul" | "neg" => handle_binary_or_neg(expressions, expr, field)?,
+        _ => return Err(PilInfoError::UnknownOp { pass: "add_info_expressions", op }),
     }
     expr.info_computed = true;
     Ok(())
 }
 
-/// Handle add/sub/mul/neg operations in add_info_expressions.
-/// Mirrors the JS logic including neg->mul transformation and
-/// zero-constant optimizations.
-fn handle_binary_or_neg(expressions: &mut Vec<Expression>, idx: usize, field: &FieldCfg) -> Result<()> {
-    let op = expressions[idx].op.clone();
-
-    // neg -> mul by modulus - 1  (inline, NOT pushed to arena — matches JS behaviour)
-    if op == "neg" {
-        expressions[idx].op = "mul".to_string();
-        let neg_one = Expression {
-            op: "number".to_string(),
-            value: Some(field.neg_one().to_string()),
-            exp_deg: 0,
-            stage: 0,
-            dim: 1,
-            ..Default::default()
-        };
-        let existing_values = expressions[idx].values.clone();
-        expressions[idx].values = vec![ExprChild::Inline(Box::new(neg_one)), existing_values[0].clone()];
-    }
-
-    let current_op = expressions[idx].op.clone();
-
-    // For add where LHS is number(0), convert to mul with LHS=1
-    if current_op == "add" {
-        let lhs_is_zero = {
-            let lhs = expressions[idx].values[0].resolve(expressions);
-            lhs.op == "number" && lhs.value.as_deref() == Some("0")
-        };
-        if lhs_is_zero {
-            expressions[idx].op = "mul".to_string();
-            // Extract child kind first to avoid overlapping borrows
-            let child = expressions[idx].values[0].clone();
-            match child {
-                ExprChild::Id(id) => {
-                    expressions[id].value = Some("1".to_string());
-                }
-                ExprChild::Inline(mut expr) => {
-                    expr.value = Some("1".to_string());
-                    expressions[idx].values[0] = ExprChild::Inline(expr);
-                }
-            }
-        }
-    }
-
-    // For add/sub where RHS is number(0), convert to mul with RHS=1
-    let current_op = expressions[idx].op.clone();
-    if current_op == "add" || current_op == "sub" {
-        let rhs_is_zero = {
-            let rhs = expressions[idx].values[1].resolve(expressions);
-            rhs.op == "number" && rhs.value.as_deref() == Some("0")
-        };
-        if rhs_is_zero {
-            expressions[idx].op = "mul".to_string();
-            let child = expressions[idx].values[1].clone();
-            match child {
-                ExprChild::Id(id) => {
-                    expressions[id].value = Some("1".to_string());
-                }
-                ExprChild::Inline(mut expr) => {
-                    expr.value = Some("1".to_string());
-                    expressions[idx].values[1] = ExprChild::Inline(expr);
-                }
-            }
-        }
-    }
-
-    // Process children: for Id children, recurse via arena; for Inline, recurse inline
-    for i in 0..expressions[idx].values.len() {
-        match expressions[idx].values[i].clone() {
-            ExprChild::Id(child_id) => {
-                add_info_expressions(expressions, child_id, field)?;
-            }
-            ExprChild::Inline(mut child) => {
-                add_info_expression_inline(expressions, &mut child, field)?;
-                expressions[idx].values[i] = ExprChild::Inline(child);
-            }
-        }
-    }
-
-    // Read child info
-    let (lhs_deg, lhs_dim, lhs_stage, lhs_offsets) = {
-        let lhs = expressions[idx].values[0].resolve(expressions);
-        (lhs.exp_deg, lhs.dim, lhs.stage, if lhs.rows_offsets.is_empty() { vec![0] } else { lhs.rows_offsets.clone() })
-    };
-    let (rhs_deg, rhs_dim, rhs_stage, rhs_offsets) = {
-        let rhs = expressions[idx].values[1].resolve(expressions);
-        (rhs.exp_deg, rhs.dim, rhs.stage, if rhs.rows_offsets.is_empty() { vec![0] } else { rhs.rows_offsets.clone() })
-    };
-
-    let final_op = expressions[idx].op.clone();
-    expressions[idx].exp_deg = if final_op == "mul" { lhs_deg + rhs_deg } else { lhs_deg.max(rhs_deg) };
-
-    expressions[idx].dim = lhs_dim.max(rhs_dim);
-    expressions[idx].stage = lhs_stage.max(rhs_stage);
-
-    // Merge rows_offsets
-    let mut merged: Vec<i64> = lhs_offsets;
-    for o in rhs_offsets {
-        if !merged.contains(&o) {
-            merged.push(o);
-        }
-    }
-    expressions[idx].rows_offsets = merged;
-    Ok(())
+/// The arena id an `exp` node reads.
+fn exp_ref(expr: &Expression) -> Result<usize> {
+    expr.id.ok_or_else(|| PilInfoError::InvalidPilout("an expression reference without an id".into()))
 }
 
-/// Handle add/sub/mul/neg for inline expressions (not in the arena).
-fn handle_binary_or_neg_inline(
-    expressions: &mut Vec<Expression>,
-    expr: &mut Expression,
-    field: &FieldCfg,
-) -> Result<()> {
-    let op = expr.op.clone();
-
-    // neg -> mul by modulus - 1
-    if op == "neg" {
+/// add/sub/mul/neg (the JS logic): neg becomes `mul(modulus − 1, x)`, an add/sub of a 0 operand a mul by 1.
+fn handle_binary_or_neg(expressions: &mut Vec<Expression>, expr: &mut Expression, field: &FieldCfg) -> Result<()> {
+    if expr.op == "neg" {
         expr.op = "mul".to_string();
         let neg_one = Expression {
             op: "number".to_string(),
             value: Some(field.neg_one().to_string()),
-            exp_deg: 0,
-            stage: 0,
             dim: 1,
             ..Default::default()
         };
-        let existing_values = expr.values.clone();
-        expr.values = vec![ExprChild::Inline(Box::new(neg_one)), existing_values[0].clone()];
+        expr.values.insert(0, ExprChild::Inline(Box::new(neg_one)));
+        expr.values.truncate(2);
     }
-
-    let current_op = expr.op.clone();
-    if current_op == "add" {
-        let lhs_is_zero = {
-            let lhs = expr.values[0].resolve(expressions);
-            lhs.op == "number" && lhs.value.as_deref() == Some("0")
+    // add(0, x) and add/sub(x, 0) become mul with that operand set to 1 (the lhs first, as the JS)
+    for (i, ops) in [(0, &["add"][..]), (1, &["add", "sub"][..])] {
+        let zero = |c: &ExprChild| {
+            let e = c.resolve(expressions);
+            e.op == "number" && e.value.as_deref() == Some("0")
         };
-        if lhs_is_zero {
+        if ops.contains(&expr.op.as_str()) && zero(&expr.values[i]) {
             expr.op = "mul".to_string();
-            match &mut expr.values[0] {
-                ExprChild::Id(id) => {
-                    expressions[*id].value = Some("1".to_string());
-                }
-                ExprChild::Inline(e) => {
-                    e.value = Some("1".to_string());
-                }
+            match &mut expr.values[i] {
+                ExprChild::Id(id) => expressions[*id].value = Some("1".to_string()),
+                ExprChild::Inline(e) => e.value = Some("1".to_string()),
             }
         }
     }
-
-    let current_op = expr.op.clone();
-    if current_op == "add" || current_op == "sub" {
-        let rhs_is_zero = {
-            let rhs = expr.values[1].resolve(expressions);
-            rhs.op == "number" && rhs.value.as_deref() == Some("0")
-        };
-        if rhs_is_zero {
-            expr.op = "mul".to_string();
-            match &mut expr.values[1] {
-                ExprChild::Id(id) => {
-                    expressions[*id].value = Some("1".to_string());
-                }
-                ExprChild::Inline(e) => {
-                    e.value = Some("1".to_string());
-                }
-            }
+    for child in expr.values.iter_mut() {
+        match child {
+            ExprChild::Id(id) => add_info_expressions(expressions, *id, field)?,
+            ExprChild::Inline(e) => add_info_expression_inline(expressions, e, field)?,
         }
     }
-
-    // Process children
-    for i in 0..expr.values.len() {
-        match expr.values[i].clone() {
-            ExprChild::Id(child_id) => {
-                add_info_expressions(expressions, child_id, field)?;
-            }
-            ExprChild::Inline(mut child) => {
-                add_info_expression_inline(expressions, &mut child, field)?;
-                expr.values[i] = ExprChild::Inline(child);
-            }
-        }
-    }
-
-    // Read child info
-    let (lhs_deg, lhs_dim, lhs_stage, lhs_offsets) = {
-        let lhs = expr.values[0].resolve(expressions);
-        (lhs.exp_deg, lhs.dim, lhs.stage, if lhs.rows_offsets.is_empty() { vec![0] } else { lhs.rows_offsets.clone() })
+    let info = |c: &ExprChild| {
+        let e = c.resolve(expressions);
+        let offsets = if e.rows_offsets.is_empty() { vec![0] } else { e.rows_offsets.clone() };
+        (e.exp_deg, e.dim, e.stage, offsets)
     };
-    let (rhs_deg, rhs_dim, rhs_stage, rhs_offsets) = {
-        let rhs = expr.values[1].resolve(expressions);
-        (rhs.exp_deg, rhs.dim, rhs.stage, if rhs.rows_offsets.is_empty() { vec![0] } else { rhs.rows_offsets.clone() })
-    };
-
-    let final_op = expr.op.clone();
-    expr.exp_deg = if final_op == "mul" { lhs_deg + rhs_deg } else { lhs_deg.max(rhs_deg) };
-
+    let ((lhs_deg, lhs_dim, lhs_stage, mut merged), (rhs_deg, rhs_dim, rhs_stage, rhs_offsets)) =
+        (info(&expr.values[0]), info(&expr.values[1]));
+    expr.exp_deg = if expr.op == "mul" { lhs_deg + rhs_deg } else { lhs_deg.max(rhs_deg) };
     expr.dim = lhs_dim.max(rhs_dim);
     expr.stage = lhs_stage.max(rhs_stage);
-
-    let mut merged: Vec<i64> = lhs_offsets;
     for o in rhs_offsets {
         if !merged.contains(&o) {
             merged.push(o);
@@ -437,10 +171,7 @@ fn get_exp_dim_inner(expressions: &[Expression], exp: &Expression, field: &Field
             }
             max_dim
         }
-        "exp" => {
-            let id = exp.id.unwrap_or(0);
-            get_exp_dim_inner(expressions, &expressions[id], field)?
-        }
+        "exp" => get_exp_dim_inner(expressions, &expressions[exp_ref(exp)?], field)?,
         "cm" | "custom" => {
             if exp.dim > 0 {
                 exp.dim

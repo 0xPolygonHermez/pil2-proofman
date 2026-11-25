@@ -261,7 +261,7 @@ fn connection<F: PlonkField>(cs: &ConstraintSystem, expander: &mut Expander<F>) 
     let mut cols: BTreeMap<u32, ConnTerms<F>> = BTreeMap::new();
     let mut opids = BTreeSet::new();
     for h in cs.hints.iter().filter(|h| h.name == "gprod_debug_data") {
-        let f = h.entries();
+        let f = &h.fields;
         if !matches!(named(f, "name_piop"), Some(HintValue::Str(s)) if s == "Connection") {
             continue;
         }

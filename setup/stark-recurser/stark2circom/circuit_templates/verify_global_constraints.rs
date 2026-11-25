@@ -1,392 +1,347 @@
-//! Rust port of `vadcop/helpers/templates/verify_global_constraints.circom.ejs`.
-//!
-//! Generates the `VerifyGlobalConstraints` circom template and its helper
-//! `GlobalConstraint{c}_chunk{i}` templates.  The JS template splits each
-//! global constraint's instruction list into chunks of ≤50 instructions to
-//! keep circom compile times manageable.
+//! The global constraints of a vadcop_final: `GlobalConstraints(nAg, maxAgg, nPub, nPV, nCh)` and its
+//! `GlobalConstraint{c}_chunk{i}` parts (≤ 50 instructions each, to keep circom compile times down),
+//! over the padded `airgroupvalues[nAg][maxAgg][3]` that `VadcopFinal` (final_vadcop.circom) builds.
 
+use std::collections::{HashMap, HashSet};
+
+use anyhow::{bail, Context, Result};
+use serde::Deserialize;
 use serde_json::Value;
 
 use super::parse_num_proof_values;
 
 const MIN_CHUNK_SIZE: usize = 50;
 
-// ── ref helper ────────────────────────────────────────────────────────────────
+/// The inputs every chunk and `GlobalConstraints` take, in call order.
+const INPUTS: &str = "    signal input airgroupvalues[nAg][maxAgg][3];
+    signal input publics[nPub];
+    signal input proofValues[nPV][3];
+    signal input challenges[nCh][3];
+";
+const PARAMS: &str = "nAg, maxAgg, nPub, nPV, nCh";
 
-/// Convert a ref object to a circom expression string (mirrors JS `ref()` function).
-fn ref_expr(r: &Value, dest: bool, initialized: &[u64]) -> String {
-    match r["type"].as_str().unwrap_or("") {
-        "public" => {
-            let id = r["id"].as_u64().unwrap_or(0);
-            format!("publics[{id}]")
-        }
-        "proofvalue" => {
-            let id = r["id"].as_u64().unwrap_or(0);
-            let dim = r["dim"].as_u64().unwrap_or(1);
-            if dim == 1 {
-                format!("proofValues[{id}][0]")
-            } else {
-                format!("proofValues[{id}]")
-            }
-        }
-        "tmp" => {
-            let id = r["id"].as_u64().unwrap_or(0);
-            let dim = r["dim"].as_u64().unwrap_or(1);
-            if dest && !initialized.contains(&id) {
-                if dim == 1 {
-                    format!("signal tmp_{id}")
-                } else {
-                    format!("signal tmp_{id}[3]")
-                }
-            } else {
-                format!("tmp_{id}")
-            }
-        }
-        "number" => r["value"]
-            .as_str()
-            .map(|s| s.to_string())
-            .unwrap_or_else(|| r["value"].as_u64().map(|n| n.to_string()).unwrap_or_else(|| "0".to_string())),
-        "challenge" => {
-            let id = r["id"].as_u64().unwrap_or(0);
-            format!("challenges[{id}]")
-        }
-        "airgroupvalue" => {
-            let airgroup_id = r["airgroupId"].as_u64().unwrap_or(0);
-            let id = r["id"].as_u64().unwrap_or(0);
-            format!("s{airgroup_id}_airgroupvalues[{id}]")
-        }
-        other => panic!("verify_global_constraints: invalid ref type '{other}'"),
-    }
+/// One global constraint: its instructions; the last one's dest must be 0.
+#[derive(Deserialize)]
+struct GlobalConstraint {
+    code: Vec<Inst>,
 }
 
-// ── unroll_code ───────────────────────────────────────────────────────────────
+#[derive(Deserialize)]
+struct Inst {
+    op: Op,
+    dest: Ref,
+    src: Vec<Ref>,
+}
 
-/// Emit circom signal assignments for a slice of constraint instructions.
-fn unroll_code(code: &[Value], initialized: &[u64]) -> String {
-    let mut out = String::new();
-    let mut local_init: Vec<u64> = initialized.to_vec();
+#[derive(Deserialize, Clone, Copy)]
+#[serde(rename_all = "lowercase")]
+enum Op {
+    Add,
+    Sub,
+    Mul,
+    Copy,
+}
 
-    for inst in code {
-        let op = inst["op"].as_str().unwrap_or("");
-        let dest = &inst["dest"];
-        let src0 = &inst["src"][0];
-        let src1 = &inst["src"][1];
+#[derive(Deserialize)]
+struct Ref {
+    dim: u64,
+    #[serde(flatten)]
+    kind: Kind,
+}
 
-        let _dest_dim = dest["dim"].as_u64().unwrap_or(1);
-        let s0_dim = src0["dim"].as_u64().unwrap_or(1);
-        let s1_dim = src1["dim"].as_u64().unwrap_or(1);
+#[derive(Deserialize)]
+#[serde(tag = "type", rename_all = "lowercase")]
+enum Kind {
+    Public {
+        id: u64,
+    },
+    Proofvalue {
+        id: u64,
+    },
+    Tmp {
+        id: u64,
+    },
+    Number {
+        value: Number,
+    },
+    Challenge {
+        id: u64,
+    },
+    Airgroupvalue {
+        #[serde(rename = "airgroupId")]
+        airgroup_id: u64,
+        id: u64,
+    },
+}
 
-        let dest_str = ref_expr(dest, true, &local_init);
-        // After first use, mark as initialized
-        if dest["type"].as_str() == Some("tmp") {
-            let id = dest["id"].as_u64().unwrap_or(0);
-            if !local_init.contains(&id) {
-                local_init.push(id);
-            }
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum Number {
+    Str(String),
+    Int(u64),
+}
+
+/// The sizes the references are checked against.
+struct Shape {
+    n_agg: Vec<u64>,
+    n_publics: u64,
+    n_proof_values: u64,
+    n_challenges: u64,
+}
+
+impl Ref {
+    fn tmp(&self) -> Option<u64> {
+        match self.kind {
+            Kind::Tmp { id } => Some(id),
+            _ => None,
         }
-        let s0_str = ref_expr(src0, false, &local_init);
-        let s1_str = ref_expr(src1, false, &local_init);
+    }
 
-        let line = match op {
-            "add" => match (s0_dim, s1_dim) {
-                (1, 1) => format!("    {dest_str} <== {s0_str} + {s1_str};\n"),
-                (1, 3) => format!("    {dest_str} <== [{s0_str} + {s1_str}[0], {s1_str}[1], {s1_str}[2]];\n"),
-                (3, 1) => format!("    {dest_str} <== [{s0_str}[0] + {s1_str}, {s0_str}[1], {s0_str}[2]];\n"),
-                (3, 3) => format!("    {dest_str} <== [{s0_str}[0] + {s1_str}[0], {s0_str}[1] + {s1_str}[1], {s0_str}[2] + {s1_str}[2]];\n"),
-                _ => panic!("unroll_code: invalid add dims {s0_dim}x{s1_dim}"),
-            },
-            "sub" => match (s0_dim, s1_dim) {
-                (1, 1) => format!("    {dest_str} <== {s0_str} - {s1_str};\n"),
-                (1, 3) => format!("    {dest_str} <== [{s0_str} - {s1_str}[0], -{s1_str}[1], -{s1_str}[2]];\n"),
-                (3, 1) => format!("    {dest_str} <== [{s0_str}[0] - {s1_str}, {s0_str}[1], {s0_str}[2]];\n"),
-                (3, 3) => format!("    {dest_str} <== [{s0_str}[0] - {s1_str}[0], {s0_str}[1] - {s1_str}[1], {s0_str}[2] - {s1_str}[2]];\n"),
-                _ => panic!("unroll_code: invalid sub dims {s0_dim}x{s1_dim}"),
-            },
-            "mul" => match (s0_dim, s1_dim) {
-                (1, 1) => format!("    {dest_str} <== {s0_str} * {s1_str};\n"),
-                (1, 3) => format!("    {dest_str} <== [{s0_str} * {s1_str}[0], {s0_str} * {s1_str}[1], {s0_str} * {s1_str}[2]];\n"),
-                (3, 1) => format!("    {dest_str} <== [{s0_str}[0] * {s1_str}, {s0_str}[1] * {s1_str}, {s0_str}[2] * {s1_str}];\n"),
-                (3, 3) => format!("    {dest_str} <== CMul()({s0_str}, {s1_str});\n"),
-                _ => panic!("unroll_code: invalid mul dims {s0_dim}x{s1_dim}"),
-            },
-            "copy" => format!("    {dest_str} <== {s0_str};\n"),
-            other => panic!("unroll_code: unknown op '{other}'"),
+    /// A circom expression; `decl` declares a tmp dest the first time it is written.
+    fn expr(&self, decl: bool) -> String {
+        let idx = if self.dim == 1 { "[0]" } else { "" };
+        match &self.kind {
+            Kind::Public { id } => format!("publics[{id}]"),
+            Kind::Proofvalue { id } => format!("proofValues[{id}]{idx}"),
+            Kind::Challenge { id } => format!("challenges[{id}]{idx}"),
+            Kind::Airgroupvalue { airgroup_id, id } => format!("airgroupvalues[{airgroup_id}][{id}]{idx}"),
+            Kind::Tmp { id } if decl => format!("signal tmp_{id}{}", if self.dim == 1 { "" } else { "[3]" }),
+            Kind::Tmp { id } => format!("tmp_{id}"),
+            Kind::Number { value: Number::Int(n) } => n.to_string(),
+            Kind::Number { value: Number::Str(s) } => s.clone(),
+        }
+    }
+
+    /// Refuses what would not be the value the constraint names: a bad dim, a number that is not a
+    /// decimal literal, an index past its array (an airgroup value past its airgroup reads padding).
+    fn check(&self, s: &Shape) -> Result<()> {
+        if self.dim != 1 && self.dim != 3 {
+            bail!("dim {} is neither 1 nor 3", self.dim);
+        }
+        let (id, n, what) = match &self.kind {
+            Kind::Public { id } => (*id, s.n_publics, "publics"),
+            Kind::Proofvalue { id } => (*id, s.n_proof_values, "proofValues"),
+            Kind::Challenge { id } => (*id, s.n_challenges, "stage-2 challenges"),
+            Kind::Airgroupvalue { airgroup_id, id } => {
+                let n = s.n_agg.get(*airgroup_id as usize).with_context(|| format!("no airgroup {airgroup_id}"))?;
+                (*id, *n, "airgroupvalues")
+            }
+            Kind::Number { value: Number::Str(v) } if v.is_empty() || !v.bytes().all(|b| b.is_ascii_digit()) => {
+                bail!("number {v:?} is not a decimal literal")
+            }
+            Kind::Tmp { .. } | Kind::Number { .. } => return Ok(()),
         };
-        out.push_str(&line);
+        if id >= n {
+            bail!("{what}[{id}] is out of range ({n})");
+        }
+        Ok(())
     }
-    out
 }
 
-// ── chunk splitting ────────────────────────────────────────────────────────────
+/// The circom line of one instruction.
+fn line(inst: &Inst, declared: &mut HashSet<u64>) -> Result<String> {
+    let [a, b] = match (inst.op, inst.src.as_slice()) {
+        (Op::Copy, [a]) => return Ok(format!("    {} <== {};\n", dest(&inst.dest, declared), a.expr(false))),
+        (Op::Add | Op::Sub | Op::Mul, [a, b]) => [a, b],
+        _ => bail!("an instruction has {} sources", inst.src.len()),
+    };
+    let (x, y) = (a.expr(false), b.expr(false));
+    let rhs = match (inst.op, a.dim, b.dim) {
+        (Op::Add, 1, 1) => format!("{x} + {y}"),
+        (Op::Add, 1, 3) => format!("[{x} + {y}[0], {y}[1], {y}[2]]"),
+        (Op::Add, 3, 1) => format!("[{x}[0] + {y}, {x}[1], {x}[2]]"),
+        (Op::Add, 3, 3) => format!("[{x}[0] + {y}[0], {x}[1] + {y}[1], {x}[2] + {y}[2]]"),
+        (Op::Sub, 1, 1) => format!("{x} - {y}"),
+        (Op::Sub, 1, 3) => format!("[{x} - {y}[0], -{y}[1], -{y}[2]]"),
+        (Op::Sub, 3, 1) => format!("[{x}[0] - {y}, {x}[1], {x}[2]]"),
+        (Op::Sub, 3, 3) => format!("[{x}[0] - {y}[0], {x}[1] - {y}[1], {x}[2] - {y}[2]]"),
+        (Op::Mul, 1, 1) => format!("{x} * {y}"),
+        (Op::Mul, 1, 3) => format!("[{x} * {y}[0], {x} * {y}[1], {x} * {y}[2]]"),
+        (Op::Mul, 3, 1) => format!("[{x}[0] * {y}, {x}[1] * {y}, {x}[2] * {y}]"),
+        (Op::Mul, 3, 3) => format!("CMul()({x}, {y})"),
+        _ => unreachable!("dims are checked"),
+    };
+    let d = dest(&inst.dest, declared);
+    Ok(format!("    {d} <== {rhs};\n"))
+}
 
-struct Chunk {
-    code: Vec<Value>,
+fn dest(r: &Ref, declared: &mut HashSet<u64>) -> String {
+    r.expr(r.tmp().is_some_and(|id| declared.insert(id)))
+}
+
+struct Chunk<'a> {
+    code: &'a [Inst],
     inputs: Vec<u64>,
     outputs: Vec<u64>,
 }
 
-/// Split a constraint's code array into chunks of ≤ MIN_CHUNK_SIZE instructions,
-/// tracking which tmp IDs cross chunk boundaries as inputs/outputs.
-fn split_chunks(code: &[Value]) -> Vec<Chunk> {
-    // First pass: find last position of every tmp ref
-    let mut last_pos: std::collections::HashMap<u64, usize> = std::collections::HashMap::new();
-    let mut tmp_dims: std::collections::HashMap<u64, u64> = std::collections::HashMap::new();
-
+/// `code` in chunks of < MIN_CHUNK_SIZE instructions, with the tmps that cross into (inputs) and out of
+/// (outputs) each.
+fn split_chunks(code: &[Inst]) -> Vec<Chunk<'_>> {
+    let mut last_use: HashMap<u64, usize> = HashMap::new();
     for (i, inst) in code.iter().enumerate() {
-        let dest = &inst["dest"];
-        let src0 = &inst["src"][0];
-        let src1 = &inst["src"][1];
-
-        if dest["type"].as_str() == Some("tmp") {
-            let id = dest["id"].as_u64().unwrap_or(0);
-            last_pos.insert(id, i);
-            tmp_dims.insert(id, dest["dim"].as_u64().unwrap_or(1));
-        }
-        if src0["type"].as_str() == Some("tmp") {
-            let id = src0["id"].as_u64().unwrap_or(0);
-            last_pos.insert(id, i);
-        }
-        if src1["type"].as_str() == Some("tmp") {
-            let id = src1["id"].as_u64().unwrap_or(0);
-            last_pos.insert(id, i);
+        for id in std::iter::once(&inst.dest).chain(&inst.src).filter_map(Ref::tmp) {
+            last_use.insert(id, i);
         }
     }
-
-    let mut chunks: Vec<Chunk> = Vec::new();
-    let mut current: Vec<Value> = Vec::new();
-
-    let mut live_tmps: std::collections::HashSet<u64> = std::collections::HashSet::new();
-    let mut prev_live: std::collections::HashSet<u64> = std::collections::HashSet::new();
-    let mut outputs: std::collections::HashSet<u64> = std::collections::HashSet::new();
-    let mut inputs: std::collections::HashSet<u64> = std::collections::HashSet::new();
-
+    let mut chunks = Vec::new();
+    let mut start = 0;
+    let (mut live, mut prev_live) = (HashSet::new(), HashSet::new());
+    let (mut inputs, mut outputs) = (HashSet::new(), HashSet::new());
+    let sorted = |s: &HashSet<u64>| {
+        let mut v: Vec<u64> = s.iter().copied().collect();
+        v.sort();
+        v
+    };
     for (i, inst) in code.iter().enumerate() {
-        current.push(inst.clone());
-
-        let dest = &inst["dest"];
-        let src0 = &inst["src"][0];
-        let src1 = &inst["src"][1];
-
-        if dest["type"].as_str() == Some("tmp") {
-            let id = dest["id"].as_u64().unwrap_or(0);
-            live_tmps.insert(id);
+        if let Some(id) = inst.dest.tmp() {
+            live.insert(id);
             outputs.insert(id);
         }
-        for src in &[src0, src1] {
-            if src["type"].as_str() == Some("tmp") {
-                let id = src["id"].as_u64().unwrap_or(0);
-                if last_pos.get(&id) == Some(&i) {
-                    live_tmps.remove(&id);
-                    outputs.remove(&id);
-                }
-                if prev_live.contains(&id) {
-                    inputs.insert(id);
-                    if last_pos.get(&id) == Some(&i) {
-                        prev_live.remove(&id);
-                    }
+        for id in inst.src.iter().filter_map(Ref::tmp) {
+            let last = last_use.get(&id) == Some(&i);
+            if last {
+                live.remove(&id);
+                outputs.remove(&id);
+            }
+            if prev_live.contains(&id) {
+                inputs.insert(id);
+                if last {
+                    prev_live.remove(&id);
                 }
             }
         }
-
-        if current.len() + 1 >= MIN_CHUNK_SIZE {
-            let mut ins: Vec<u64> = inputs.iter().copied().collect();
-            ins.sort();
-            let mut outs: Vec<u64> = outputs.iter().copied().collect();
-            outs.sort();
-            chunks.push(Chunk { code: current.clone(), inputs: ins, outputs: outs });
-
-            current.clear();
-            for &t in &live_tmps {
-                prev_live.insert(t);
-            }
-            live_tmps.clear();
+        if i + 2 - start >= MIN_CHUNK_SIZE || i + 1 == code.len() {
+            chunks.push(Chunk { code: &code[start..=i], inputs: sorted(&inputs), outputs: sorted(&outputs) });
+            start = i + 1;
+            prev_live.extend(live.drain());
             outputs.clear();
             inputs.clear();
         }
     }
-
-    if !current.is_empty() {
-        let mut ins: Vec<u64> = inputs.iter().copied().collect();
-        ins.sort();
-        let mut outs: Vec<u64> = outputs.iter().copied().collect();
-        outs.sort();
-        chunks.push(Chunk { code: current, inputs: ins, outputs: outs });
-    }
-
     chunks
 }
 
-// ── main generator ────────────────────────────────────────────────────────────
-
-/// Port of `verify_global_constraints.circom.ejs`.
-///
-/// Returns the complete circom text: all `GlobalConstraint{c}_chunk{i}` helper
-/// templates followed by `template VerifyGlobalConstraints() { ... }`.
-pub fn gen_verify_global_constraints(vadcop_info: &Value) -> String {
-    let mut out = String::new();
-
-    let agg_types = vadcop_info["aggTypes"].as_array().cloned().unwrap_or_default();
-    let n_publics = vadcop_info["nPublics"].as_u64().unwrap_or(0) as usize;
-    let num_proof_values = parse_num_proof_values(&vadcop_info["numProofValues"]);
-    let num_challenges_1 =
-        vadcop_info["numChallenges"].as_array().and_then(|a| a.get(1)).and_then(|v| v.as_u64()).unwrap_or(0) as usize;
-
-    let global_constraints = vadcop_info["globalConstraints"].as_array().cloned().unwrap_or_default();
-
-    // Pre-compute chunks for each constraint
-    let all_chunks: Vec<Vec<Chunk>> = global_constraints
-        .iter()
-        .map(|gc| {
-            let code = gc["code"].as_array().cloned().unwrap_or_default();
-            split_chunks(&code)
-        })
-        .collect();
-
-    // We need a tmp_dims map for declaring signals
-    // We can re-derive dims from the flat code
-    let get_tmp_dim = |code: &[Value], id: u64| -> u64 {
-        for inst in code {
-            if inst["dest"]["type"].as_str() == Some("tmp") && inst["dest"]["id"].as_u64() == Some(id) {
-                return inst["dest"]["dim"].as_u64().unwrap_or(1);
-            }
-        }
-        1
+/// The global constraints of globalInfo `vi` (with its `globalConstraints`, absent meaning none), and
+/// `vd_nGlobalChallenges()`, the stage-2 challenges `VadcopFinal` draws for them.
+pub fn gen_verify_global_constraints(vi: &Value) -> Result<String> {
+    let constraints: Vec<GlobalConstraint> = match vi.get("globalConstraints") {
+        Some(c) => serde_json::from_value(c.clone()).context("globalConstraints")?,
+        None => Vec::new(),
+    };
+    let agg_types = vi["aggTypes"].as_array().context("globalInfo has no aggTypes")?;
+    let shape = Shape {
+        n_agg: agg_types.iter().map(|a| a.as_array().map_or(0, Vec::len) as u64).collect(),
+        n_publics: vi["nPublics"].as_u64().context("globalInfo has no nPublics")?,
+        n_proof_values: parse_num_proof_values(&vi["numProofValues"]) as u64,
+        // numChallenges[1]: stage 2's; a reference past it is refused.
+        n_challenges: vi["numChallenges"].get(1).and_then(Value::as_u64).unwrap_or(0),
     };
 
-    // ── Emit chunk helper templates ───────────────────────────────────────────
-    for (c, gc) in global_constraints.iter().enumerate() {
-        let flat_code: Vec<Value> = gc["code"].as_array().cloned().unwrap_or_default();
-        let chunks = &all_chunks[c];
-
-        for (ci, chunk) in chunks.iter().enumerate() {
-            out.push_str(&format!("template GlobalConstraint{c}_chunk{ci}() {{\n"));
-
-            // airgroupvalues inputs
-            for (i, ag) in agg_types.iter().enumerate() {
-                let len = ag.as_array().map(|a| a.len()).unwrap_or(0);
-                out.push_str(&format!("    signal input s{i}_airgroupvalues[{len}][3];\n"));
-            }
-
-            // publics
-            if n_publics > 0 {
-                out.push_str(&format!("    signal input publics[{n_publics}];\n"));
-            }
-
-            // proofValues
-            if num_proof_values > 0 {
-                out.push_str(&format!("    signal input proofValues[{num_proof_values}][3];\n"));
-            }
-
-            // challenges
-            out.push_str(&format!("    signal input challenges[{num_challenges_1}][3];\n\n"));
-
-            // chunk inputs (tmp signals from previous chunks)
-            for &id in &chunk.inputs {
-                let dim = get_tmp_dim(&flat_code, id);
-                if dim == 1 {
-                    out.push_str(&format!("    signal input tmp_{id};\n"));
-                } else {
-                    out.push_str(&format!("    signal input tmp_{id}[3];\n"));
-                }
-            }
-            out.push('\n');
-
-            // chunk outputs
-            for &id in &chunk.outputs {
-                let dim = get_tmp_dim(&flat_code, id);
-                if dim == 1 {
-                    out.push_str(&format!("    signal output tmp_{id};\n"));
-                } else {
-                    out.push_str(&format!("    signal output tmp_{id}[3];\n"));
-                }
-            }
-            out.push('\n');
-
-            // All initialized from inputs + outputs
-            let initialized: Vec<u64> = chunk.inputs.iter().chain(chunk.outputs.iter()).copied().collect();
-            out.push_str(&unroll_code(&chunk.code, &initialized));
-
-            out.push_str("}\n");
+    let mut out = format!("function vd_nGlobalChallenges() {{ return {}; }}\n\n", shape.n_challenges);
+    let mut main = String::new();
+    for (c, gc) in constraints.iter().enumerate() {
+        let ctx = || format!("global constraint {c}");
+        let last = gc.code.last().with_context(|| format!("{}: no instructions", ctx()))?;
+        let mut dims: HashMap<u64, u64> = HashMap::new();
+        for r in gc.code.iter().flat_map(|i| std::iter::once(&i.dest).chain(&i.src)) {
+            r.check(&shape).with_context(ctx)?;
         }
-    }
-
-    // ── Emit VerifyGlobalConstraints template ─────────────────────────────────
-    out.push_str("template VerifyGlobalConstraints() {\n\n");
-
-    // Fixed inputs (vadcop_final wires them statically); each airgroup's values, from its padded row.
-    let max_agg = agg_types.iter().map(|a| a.as_array().map_or(0, Vec::len)).max().unwrap_or(0).max(1);
-    out.push_str(&format!("    signal input airgroupvalues[{}][{max_agg}][3];\n", agg_types.len()));
-    out.push_str(&format!(
-        "    signal input publics[{n_publics}];\n    signal input proofValues[{num_proof_values}][3];\n"
-    ));
-    let mut inputs_list: Vec<String> = Vec::new();
-    for (i, ag) in agg_types.iter().enumerate() {
-        let len = ag.as_array().map(|a| a.len()).unwrap_or(0);
-        out.push_str(&format!(
-            "    signal s{i}_airgroupvalues[{len}][3];\n    for (var j = 0; j < {len}; j++) {{ s{i}_airgroupvalues[j] <== airgroupvalues[{i}][j]; }}\n"
-        ));
-        inputs_list.push(format!("s{i}_airgroupvalues"));
-    }
-    if n_publics > 0 {
-        inputs_list.push("publics".into());
-    }
-    if num_proof_values > 0 {
-        inputs_list.push("proofValues".into());
-    }
-
-    out.push_str("\n    signal input globalChallenge[3];\n\n");
-    out.push_str(&format!("    signal challenges[{num_challenges_1}][3];\n"));
-
-    if num_challenges_1 > 0 {
-        out.push_str("    challenges <== GlobalChallenges(");
-        out.push_str(&format!("{num_challenges_1})(globalChallenge);\n"));
-    }
-
-    inputs_list.push("challenges".into());
-
-    // Verify global constraints
-    out.push_str("    // Verify global constraints\n");
-    for (c, gc) in global_constraints.iter().enumerate() {
-        let flat_code: Vec<Value> = gc["code"].as_array().cloned().unwrap_or_default();
-        let chunks = &all_chunks[c];
-
-        for (ci, chunk) in chunks.iter().enumerate() {
-            // Declare output tmp signals
-            for &id in &chunk.outputs {
-                let dim = get_tmp_dim(&flat_code, id);
-                if dim == 1 {
-                    out.push_str(&format!("    signal output tmp_{id};\n"));
-                } else {
-                    out.push_str(&format!("    signal output tmp_{id}[3];\n"));
-                }
-            }
-
-            // Instantiate chunk
-            let all_args: Vec<String> =
-                inputs_list.iter().cloned().chain(chunk.inputs.iter().map(|id| format!("tmp_{id}"))).collect();
-            let out_list: Vec<String> = chunk.outputs.iter().map(|id| format!("tmp_{id}")).collect();
-            out.push_str(&format!(
-                "    ({}) <== GlobalConstraint{c}_chunk{ci}()({});\n",
-                out_list.join(","),
-                all_args.join(",")
-            ));
-        }
-
-        // Constraint check on last instruction's dest
-        if let Some(last_inst) = flat_code.last() {
-            let dest_id = last_inst["dest"]["id"].as_u64().unwrap_or(0);
-            let dest_dim = last_inst["dest"]["dim"].as_u64().unwrap_or(1);
-            if dest_dim == 1 {
-                out.push_str(&format!("    tmp_{dest_id} === 0;\n"));
-            } else {
-                out.push_str(&format!("    tmp_{dest_id}[0] === 0;\n"));
-                out.push_str(&format!("    tmp_{dest_id}[1] === 0;\n"));
-                out.push_str(&format!("    tmp_{dest_id}[2] === 0;\n"));
+        for inst in &gc.code {
+            if let Some(id) = inst.dest.tmp() {
+                dims.insert(id, inst.dest.dim);
             }
         }
-        out.push('\n');
+        let sig = |io: &str, id: &u64| {
+            format!("    signal {io}tmp_{id}{};\n", if dims.get(id) == Some(&1) { "" } else { "[3]" })
+        };
+        for (ci, chunk) in split_chunks(&gc.code).iter().enumerate() {
+            out += &format!("template GlobalConstraint{c}_chunk{ci}({PARAMS}) {{\n{INPUTS}");
+            out += &chunk.inputs.iter().map(|id| sig("input ", id)).collect::<String>();
+            out += &chunk.outputs.iter().map(|id| sig("output ", id)).collect::<String>();
+            let mut declared: HashSet<u64> = chunk.inputs.iter().chain(&chunk.outputs).copied().collect();
+            for inst in chunk.code {
+                out += &line(inst, &mut declared).with_context(ctx)?;
+            }
+            out += "}\n";
+
+            main += &chunk.outputs.iter().map(|id| sig("", id)).collect::<String>();
+            let args: Vec<String> = ["airgroupvalues", "publics", "proofValues", "challenges"]
+                .iter()
+                .map(|s| s.to_string())
+                .chain(chunk.inputs.iter().map(|id| format!("tmp_{id}")))
+                .collect();
+            let outs: Vec<String> = chunk.outputs.iter().map(|id| format!("tmp_{id}")).collect();
+            main += &format!(
+                "    ({}) <== GlobalConstraint{c}_chunk{ci}({PARAMS})({});\n",
+                outs.join(", "),
+                args.join(", ")
+            );
+        }
+        let id = last.dest.tmp().with_context(|| format!("{}: its last instruction writes no tmp", ctx()))?;
+        if last.dest.dim == 1 {
+            main += &format!("    tmp_{id} === 0;\n");
+        } else {
+            main += &format!("    tmp_{id}[0] === 0;\n    tmp_{id}[1] === 0;\n    tmp_{id}[2] === 0;\n");
+        }
+    }
+    Ok(out + &format!("template GlobalConstraints({PARAMS}) {{\n{INPUTS}{main}}}\n"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn tmp(id: u64, dim: u64) -> Value {
+        json!({"type": "tmp", "id": id, "dim": dim})
     }
 
-    out.push_str("}\n");
-    out
+    fn info(constraints: Value) -> Value {
+        json!({"aggTypes": [[{"aggType": 0}], [{"aggType": 0}, {"aggType": 1}]], "nPublics": 2,
+               "numProofValues": [1], "numChallenges": [0, 2], "globalConstraints": constraints})
+    }
+
+    /// 60 dim-3 instructions chain across two chunks; a dim-1 constraint checks one `=== 0`.
+    #[test]
+    fn chunks_chain_and_the_last_dest_is_zero() {
+        let mut code = vec![json!({"op": "mul", "dest": tmp(0, 3), "src": [
+            {"type": "airgroupvalue", "airgroupId": 1, "id": 1, "dim": 3}, {"type": "challenge", "id": 1, "dim": 3}]})];
+        for i in 1..60u64 {
+            let (op, src) = (["add", "sub", "mul"][i as usize % 3], json!({"type": "public", "id": i % 2, "dim": 1}));
+            code.push(json!({"op": op, "dest": tmp(i, 3), "src": [tmp(i - 1, 3), src]}));
+        }
+        let binary = json!([
+            {"op": "sub", "dest": tmp(0, 1), "src": [{"type": "number", "value": "1", "dim": 1}, {"type": "proofvalue", "id": 0, "dim": 1}]},
+            {"op": "mul", "dest": tmp(1, 1), "src": [{"type": "proofvalue", "id": 0, "dim": 1}, tmp(0, 1)]}
+        ]);
+        let out = gen_verify_global_constraints(&info(json!([{"code": code}, {"code": binary}]))).unwrap();
+        for l in [
+            "function vd_nGlobalChallenges() { return 2; }",
+            "    signal tmp_0[3] <== CMul()(airgroupvalues[1][1], challenges[1]);",
+            "template GlobalConstraint0_chunk1(nAg, maxAgg, nPub, nPV, nCh) {",
+            "    signal input tmp_48[3];",
+            "    (tmp_48) <== GlobalConstraint0_chunk0(nAg, maxAgg, nPub, nPV, nCh)(airgroupvalues, publics, proofValues, challenges);",
+            "    (tmp_59) <== GlobalConstraint0_chunk1(nAg, maxAgg, nPub, nPV, nCh)(airgroupvalues, publics, proofValues, challenges, tmp_48);",
+            "    tmp_59[0] === 0;\n    tmp_59[1] === 0;\n    tmp_59[2] === 0;\n",
+            "    signal tmp_0 <== 1 - proofValues[0][0];",
+            "    tmp_1 <== proofValues[0][0] * tmp_0;\n}",
+            "    tmp_1 === 0;\n}",
+        ] {
+            assert!(out.contains(l), "missing `{l}`:\n{out}");
+        }
+        assert!(!out.contains("GlobalConstraint0_chunk2"), "{out}");
+    }
+
+    #[test]
+    fn refuses_references_past_their_arrays() {
+        let refused = |r: Value| {
+            let c = json!([{"code": [{"op": "copy", "dest": tmp(0, 3), "src": [r]}]}]);
+            gen_verify_global_constraints(&info(c)).unwrap_err().root_cause().to_string()
+        };
+        assert!(refused(json!({"type": "airgroupvalue", "airgroupId": 0, "id": 1, "dim": 3})).contains("out of range"));
+        assert!(refused(json!({"type": "challenge", "id": 2, "dim": 3})).contains("out of range"));
+        assert!(refused(json!({"type": "number", "value": "1); x <== (2", "dim": 1})).contains("decimal"));
+        assert!(refused(json!({"type": "nope", "id": 0, "dim": 1})).contains("nope"));
+    }
 }

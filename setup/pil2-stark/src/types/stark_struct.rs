@@ -1,5 +1,6 @@
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
+use proofman_common::hash_family::{self, HashFamily};
 
 /// Configuration settings provided by the user to generate a StarkStruct.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -514,9 +515,9 @@ pub fn default_last_level_verification(arity: usize, n_bits_ext: usize) -> usize
 /// One FRI schedule and what it costs: `((per-query compressions, trees), steps)`.
 type Walk = ((usize, usize), Vec<usize>);
 
-fn optimal_fri_steps(n_bits_ext: usize, final_degree: usize, llv: usize, arity: usize, hash: &str) -> Vec<usize> {
+fn optimal_fri_steps(n_bits_ext: usize, final_degree: usize, llv: usize, arity: usize, hash: HashFamily) -> Vec<usize> {
     const FE: usize = 3;
-    let block = proofman_common::hash_family::compression_block_elements(hash);
+    let block = hash_family::compression_block_elements(hash);
     let log_arity = (arity as f64).log2().round() as usize;
     let depth = |b: usize| b.div_ceil(log_arity.max(1));
     let path = |b: usize| depth(b).saturating_sub(llv);
@@ -543,7 +544,7 @@ fn optimal_fri_steps(n_bits_ext: usize, final_degree: usize, llv: usize, arity: 
     best[n_bits_ext].clone().expect("a FRI schedule always exists: folding by 1 reaches any terminal").1
 }
 
-pub fn generate_stark_struct(settings: &StarkSettings, n_bits: usize, hash: &str) -> StarkStruct {
+pub fn generate_stark_struct(settings: &StarkSettings, n_bits: usize, hash: HashFamily) -> StarkStruct {
     let verification_hash_type = settings.verification_hash_type.clone().unwrap_or_else(|| "GL".to_string());
 
     if !["GL", "BN128"].contains(&verification_hash_type.as_str()) {
@@ -553,13 +554,8 @@ pub fn generate_stark_struct(settings: &StarkSettings, n_bits: usize, hash: &str
     let initial_blowup_factor = settings.initial_blowup_factor.unwrap_or(1);
     let is_stir = settings.low_degree_test.unwrap_or_default() == LowDegreeTestKind::Stir;
     let initial_folding_factor = settings.initial_folding_factor.unwrap_or(if is_stir { 4 } else { 3 });
-    let final_degree = settings.final_degree.unwrap_or_else(|| {
-        if is_stir {
-            proofman_common::hash_family::fri_terminal_degree(hash)
-        } else {
-            5
-        }
-    });
+    let final_degree =
+        settings.final_degree.unwrap_or_else(|| if is_stir { hash_family::fri_terminal_degree(hash) } else { 5 });
 
     let (merkle_tree_arity, transcript_arity, merkle_tree_custom, hash_commits, last_level_verification, pow_bits) =
         if verification_hash_type == "BN128" {
@@ -569,8 +565,8 @@ pub fn generate_stark_struct(settings: &StarkSettings, n_bits: usize, hash: &str
             let llv = settings.last_level_verification.unwrap_or(0);
             (mta, mta, mtc, false, llv, pb)
         } else {
-            let family_arity = proofman_common::hash_family::merkle_tree_arity(hash) as usize;
-            let mta = if proofman_common::hash_family::has_forced_tree_geometry(hash) {
+            let family_arity = hash_family::merkle_tree_arity(hash) as usize;
+            let mta = if hash_family::has_forced_tree_geometry(hash) {
                 if let Some(requested) = settings.merkle_tree_arity {
                     if requested != family_arity {
                         panic!("{hash} kernels only support merkle tree arity {family_arity}, settings request {requested}");
@@ -582,14 +578,13 @@ pub fn generate_stark_struct(settings: &StarkSettings, n_bits: usize, hash: &str
             };
             // Grinding bits are what a family can afford to search for, not a constant: see
             // hash_family::default_grinding_bits. They come straight off the query count.
-            let pb =
-                settings.grinding_bits.unwrap_or_else(|| proofman_common::hash_family::default_grinding_bits(hash));
+            let pb = settings.grinding_bits.unwrap_or_else(|| hash_family::default_grinding_bits(hash));
             // Same 16-node bottom level whatever the arity, so switching hash family does not
             // silently change how deep every Merkle path is walked.
             let llv = settings
                 .last_level_verification
                 .unwrap_or_else(|| default_last_level_verification(mta, n_bits + initial_blowup_factor));
-            (mta, proofman_common::hash_family::transcript_arity(hash) as usize, true, true, llv, pb)
+            (mta, hash_family::transcript_arity(hash) as usize, true, true, llv, pb)
         };
 
     let n_bits_ext = n_bits + initial_blowup_factor;
@@ -612,7 +607,7 @@ pub fn generate_stark_struct(settings: &StarkSettings, n_bits: usize, hash: &str
                     steps.push(last - k);
                 }
                 LowDegreeTest::Fri(fri_schedule_from_domain_sizes(steps, initial_blowup_factor, pow_bits))
-            } else if proofman_common::hash_family::uses_optimal_fri_schedule(hash) {
+            } else if hash_family::uses_optimal_fri_schedule(hash) {
                 // The solved schedule walks committed DOMAIN sizes down to a terminal domain; the
                 // final polynomial's degree bound is that terminal minus the (constant) log rate.
                 let steps = optimal_fri_steps(
@@ -675,7 +670,7 @@ pub fn generate_stark_struct(settings: &StarkSettings, n_bits: usize, hash: &str
 }
 
 /// A basic air's StarkStruct: unless configured, STIR grinds only round 1 (queries into f₀).
-pub fn generate_basic_stark_struct(settings: &StarkSettings, n_bits: usize, hash: &str) -> StarkStruct {
+pub fn generate_basic_stark_struct(settings: &StarkSettings, n_bits: usize, hash: HashFamily) -> StarkStruct {
     let mut ss = generate_stark_struct(settings, n_bits, hash);
     if let (LowDegreeTest::Stir(stir), None) = (&mut ss.low_degree_test, &settings.grinding_bits_queries) {
         stir.grinding_bits_queries.iter_mut().skip(1).for_each(|g| *g = 0);
@@ -721,11 +716,17 @@ mod tests {
     fn blake3_defaults_to_more_grinding_than_poseidon() {
         let settings = StarkSettings::default();
         assert_eq!(
-            generate_stark_struct(&settings, 20, "blake3").low_degree_test.expect_fri("test").grinding_bits_queries,
+            generate_stark_struct(&settings, 20, HashFamily::Blake3)
+                .low_degree_test
+                .expect_fri("test")
+                .grinding_bits_queries,
             24
         );
         assert_eq!(
-            generate_stark_struct(&settings, 20, "Poseidon2").low_degree_test.expect_fri("test").grinding_bits_queries,
+            generate_stark_struct(&settings, 20, HashFamily::Poseidon2)
+                .low_degree_test
+                .expect_fri("test")
+                .grinding_bits_queries,
             16
         );
     }
@@ -735,7 +736,7 @@ mod tests {
     #[test]
     fn a_binary_tree_defaults_to_four_levels() {
         let settings = StarkSettings::default();
-        let ss = generate_stark_struct(&settings, 20, "blake3");
+        let ss = generate_stark_struct(&settings, 20, HashFamily::Blake3);
         assert_eq!(ss.merkle_tree_arity, 2);
         assert_eq!(ss.last_level_verification, 4);
     }
@@ -744,13 +745,13 @@ mod tests {
     #[test]
     fn an_explicit_llv_overrides_the_default() {
         let settings = StarkSettings { last_level_verification: Some(1), ..Default::default() };
-        assert_eq!(generate_stark_struct(&settings, 20, "blake3").last_level_verification, 1);
+        assert_eq!(generate_stark_struct(&settings, 20, HashFamily::Blake3).last_level_verification, 1);
     }
 
     #[test]
     fn test_generate_stark_struct_defaults() {
         let settings = StarkSettings::default();
-        let ss = generate_stark_struct(&settings, 20, "Poseidon1");
+        let ss = generate_stark_struct(&settings, 20, HashFamily::Poseidon1);
 
         assert_eq!(ss.n_bits, 20);
         assert_eq!(ss.n_bits_ext, 21); // 20 + 1 (default blowup)
@@ -779,7 +780,7 @@ mod tests {
             final_degree: Some(3),
             ..Default::default()
         };
-        let ss = generate_stark_struct(&settings, 16, "Poseidon1");
+        let ss = generate_stark_struct(&settings, 16, HashFamily::Poseidon1);
 
         assert_eq!(ss.n_bits, 16);
         assert_eq!(ss.n_bits_ext, 18);
@@ -802,7 +803,7 @@ mod tests {
             final_degree: Some(5),
             ..Default::default()
         };
-        let ss = generate_stark_struct(&settings, 20, "Poseidon1");
+        let ss = generate_stark_struct(&settings, 20, HashFamily::Poseidon1);
 
         // Degrees fold by 3 down to finalDegree: 20, 17, 14, 11, 8, 5; the domain
         // follows at constant rate 1/4 (blowup 2).
@@ -822,12 +823,12 @@ mod tests {
     #[should_panic(expected = "Invalid verificationHashType")]
     fn test_invalid_hash_type() {
         let settings = StarkSettings { verification_hash_type: Some("INVALID".to_string()), ..Default::default() };
-        generate_stark_struct(&settings, 10, "Poseidon1");
+        generate_stark_struct(&settings, 10, HashFamily::Poseidon1);
     }
 
     #[test]
     fn test_blake3_forces_binary_geometry() {
-        let ss = generate_stark_struct(&StarkSettings::default(), 20, "blake3");
+        let ss = generate_stark_struct(&StarkSettings::default(), 20, HashFamily::Blake3);
         assert_eq!(ss.merkle_tree_arity, 2);
         assert_eq!(ss.transcript_arity, 2);
         assert!(ss.merkle_tree_custom); // GL value; stored by GL trees/transcripts but only consumed on the BN128 path
@@ -837,7 +838,7 @@ mod tests {
     #[should_panic(expected = "only support merkle tree arity")]
     fn test_blake3_rejects_conflicting_arity_setting() {
         let settings = StarkSettings { merkle_tree_arity: Some(4), ..Default::default() };
-        generate_stark_struct(&settings, 20, "blake3");
+        generate_stark_struct(&settings, 20, HashFamily::Blake3);
     }
 
     #[test]
@@ -878,7 +879,7 @@ mod tests {
         // Resolves only under the matching airgroup.
         let pos = cfg.resolve("Zisk", "Poseidon2");
         assert_eq!(pos.initial_blowup_factor, Some(2));
-        assert_eq!(generate_stark_struct(&pos, 20, proofman_common::hash_family::DEFAULT_HASH_ID).n_bits_ext, 22); // 20 + 2
+        assert_eq!(generate_stark_struct(&pos, 20, HashFamily::DEFAULT).n_bits_ext, 22); // 20 + 2
 
         let kec = cfg.resolve("Zisk", "Keccakf");
         assert_eq!(kec.grinding_bits, Some(23));
@@ -890,14 +891,20 @@ mod tests {
         assert_eq!(miss.initial_blowup_factor, None);
         assert_eq!(miss.grinding_bits, None);
         assert_eq!(
-            generate_stark_struct(&miss, 20, "Poseidon2").low_degree_test.expect_fri("test").grinding_bits_queries,
+            generate_stark_struct(&miss, 20, HashFamily::Poseidon2)
+                .low_degree_test
+                .expect_fri("test")
+                .grinding_bits_queries,
             16
         );
         assert_eq!(
-            generate_stark_struct(&miss, 20, "blake3").low_degree_test.expect_fri("test").grinding_bits_queries,
+            generate_stark_struct(&miss, 20, HashFamily::Blake3)
+                .low_degree_test
+                .expect_fri("test")
+                .grinding_bits_queries,
             24
         );
-        assert_eq!(generate_stark_struct(&miss, 20, proofman_common::hash_family::DEFAULT_HASH_ID).n_bits_ext, 21);
+        assert_eq!(generate_stark_struct(&miss, 20, HashFamily::DEFAULT).n_bits_ext, 21);
         // 20 + 1
     }
 
@@ -983,7 +990,7 @@ mod tests {
             grinding_bits_queries: Some(vec![26, 24, 20]),
             ..Default::default()
         };
-        let ss = generate_stark_struct(&settings, 17, "Poseidon2");
+        let ss = generate_stark_struct(&settings, 17, HashFamily::Poseidon2);
         let sched = ss.low_degree_test.stir().unwrap();
         assert_eq!(sched.num_iterations(), 3, "degrees {:?}", sched.log_degrees);
         assert_eq!(sched.grinding_bits_queries, vec![26, 24, 20]);
@@ -997,14 +1004,14 @@ mod tests {
             grinding_bits_queries: Some(vec![24, 24]),
             ..Default::default()
         };
-        generate_stark_struct(&settings, 17, "Poseidon2");
+        generate_stark_struct(&settings, 17, HashFamily::Poseidon2);
     }
 
     #[test]
     #[should_panic(expected = "STIR-only")]
     fn grinding_bits_queries_is_rejected_for_fri() {
         let settings = StarkSettings { grinding_bits_queries: Some(vec![24]), ..Default::default() };
-        generate_stark_struct(&settings, 17, "Poseidon2");
+        generate_stark_struct(&settings, 17, HashFamily::Poseidon2);
     }
 
     /// The STIR schedule: degree drops by kᵢ bits, domain by one bit, rate by kᵢ−1 bits,
@@ -1031,7 +1038,7 @@ mod tests {
             grinding_bits_queries: Some(vec![27, 26, 27]),
             ..Default::default()
         };
-        let ss = generate_stark_struct(&settings, 18, "blake3");
+        let ss = generate_stark_struct(&settings, 18, HashFamily::Blake3);
         let stir = ss.low_degree_test.stir().unwrap();
         assert_eq!(stir.folding_factors, vec![4, 3, 3]);
         assert_eq!(stir.log_degrees, vec![18, 14, 11, 8]);
@@ -1044,19 +1051,19 @@ mod tests {
     #[test]
     fn basic_air_stir_grinds_only_the_first_round() {
         let stir = StarkSettings { low_degree_test: Some(LowDegreeTestKind::Stir), ..Default::default() };
-        let basic = generate_basic_stark_struct(&stir, 22, "blake3");
+        let basic = generate_basic_stark_struct(&stir, 22, HashFamily::Blake3);
         assert_eq!(basic.low_degree_test.stir().unwrap().grinding_bits_queries, vec![24, 0, 0, 0]);
-        let shared = generate_stark_struct(&stir, 22, "blake3");
+        let shared = generate_stark_struct(&stir, 22, HashFamily::Blake3);
         assert_eq!(shared.low_degree_test.stir().unwrap().grinding_bits_queries, vec![24; 4]);
 
         let explicit = StarkSettings { grinding_bits_queries: Some(vec![24, 20, 10, 0]), ..stir };
-        let basic = generate_basic_stark_struct(&explicit, 22, "blake3");
+        let basic = generate_basic_stark_struct(&explicit, 22, HashFamily::Blake3);
         assert_eq!(basic.low_degree_test.stir().unwrap().grinding_bits_queries, vec![24, 20, 10, 0]);
 
-        let fri = generate_basic_stark_struct(&StarkSettings::default(), 22, "Poseidon2");
+        let fri = generate_basic_stark_struct(&StarkSettings::default(), 22, HashFamily::Poseidon2);
         assert_eq!(
             fri.low_degree_test,
-            generate_stark_struct(&StarkSettings::default(), 22, "Poseidon2").low_degree_test
+            generate_stark_struct(&StarkSettings::default(), 22, HashFamily::Poseidon2).low_degree_test
         );
     }
 
@@ -1073,7 +1080,7 @@ mod tests {
             folding_factors: Some(vec![4, 3, 3, 3, 3]),
             ..Default::default()
         };
-        let fri = generate_stark_struct(&settings, 18, "blake3").low_degree_test.expect_fri("test").clone();
+        let fri = generate_stark_struct(&settings, 18, HashFamily::Blake3).low_degree_test.expect_fri("test").clone();
         assert_eq!(fri.log_domain_sizes, vec![23, 19, 16, 13, 10, 7]);
         assert_eq!(fri.log_degrees, vec![18, 14, 11, 8, 5, 2]);
     }
@@ -1082,7 +1089,7 @@ mod tests {
     /// settings produce exactly the FRI struct of before, with no `stir` block.
     #[test]
     fn low_degree_test_selection() {
-        let fri = generate_stark_struct(&StarkSettings::default(), 17, "Poseidon2");
+        let fri = generate_stark_struct(&StarkSettings::default(), 17, HashFamily::Poseidon2);
         assert_eq!(fri.low_degree_test.kind(), LowDegreeTestKind::Fri);
         let steps: Vec<usize> = fri.low_degree_test.expect_fri("test").log_domain_sizes.clone();
         assert_eq!(steps, vec![18, 15, 12, 9, 6]);
@@ -1101,7 +1108,7 @@ mod tests {
         assert_eq!(back.low_degree_test, fri.low_degree_test);
 
         let settings = StarkSettings { low_degree_test: Some(LowDegreeTestKind::Stir), ..Default::default() };
-        let stir = generate_stark_struct(&settings, 17, "Poseidon2");
+        let stir = generate_stark_struct(&settings, 17, HashFamily::Poseidon2);
         let sched = stir.low_degree_test.stir().unwrap();
         // finalDegree means the same thing in both tests: the final polynomial's log-degree
         // bound. STIR defaults to the family's terminal (poseidon's 5) and folds by 16, so this
@@ -1119,7 +1126,7 @@ mod tests {
 
 #[cfg(test)]
 mod optimal_fri_tests {
-    use super::optimal_fri_steps;
+    use super::{optimal_fri_steps, HashFamily};
 
     /// The schedule the cost model picks at the recursion's own size. Folds of 4, 4, 3, 3 -- hard
     /// where the bits are high, gently near the end -- against the uniform fold-3 schedule's
@@ -1127,7 +1134,7 @@ mod optimal_fri_tests {
     /// generated verifier changes with it.
     #[test]
     fn blake3_recursion_schedule_is_the_measured_optimum() {
-        assert_eq!(optimal_fri_steps(21, 7, 4, 2, "blake3"), vec![21, 17, 13, 10, 7]);
+        assert_eq!(optimal_fri_steps(21, 7, 4, 2, HashFamily::Blake3), vec![21, 17, 13, 10, 7]);
     }
 
     /// Terminating high is free, so the solver always ends exactly at the ceiling rather than
@@ -1136,7 +1143,7 @@ mod optimal_fri_tests {
     fn the_walk_stops_at_the_terminal_it_is_given() {
         for ext in 12..=24 {
             for terminal in [5usize, 7] {
-                let s = optimal_fri_steps(ext, terminal, 4, 2, "blake3");
+                let s = optimal_fri_steps(ext, terminal, 4, 2, HashFamily::Blake3);
                 assert_eq!(s[0], ext, "the committed domain opens the schedule");
                 assert_eq!(*s.last().unwrap(), terminal, "ext {ext}, terminal {terminal}");
                 assert!(s.windows(2).all(|w| w[0] > w[1]), "steps must strictly decrease: {s:?}");
@@ -1153,7 +1160,7 @@ mod optimal_fri_tests {
             steps.windows(2).map(|w| ((1usize << (w[0] - w[1])) * FE).div_ceil(8) + w[1].saturating_sub(4)).sum()
         };
         for ext in 12..=24 {
-            let solved = optimal_fri_steps(ext, 7, 4, 2, "blake3");
+            let solved = optimal_fri_steps(ext, 7, 4, 2, HashFamily::Blake3);
             for fold in 2..=6usize {
                 let mut uniform = vec![ext];
                 let mut b = ext;

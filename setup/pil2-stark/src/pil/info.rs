@@ -9,7 +9,7 @@ use pil_info::core::project::VerifierView;
 
 use crate::pil::gen_code::PilCodeResult;
 use pil_info::PrepareOptions;
-use crate::types::output::StarkInfoOutput;
+use crate::output::stark_info::StarkInfoOutput;
 use crate::types::stark_struct::{LowDegreeTest, StarkStruct};
 use crate::types::FIELD_EXTENSION;
 
@@ -113,7 +113,7 @@ pub(crate) fn report(
         let in_stage = || v.cm_pols_map.iter().filter(move |p| p.stage as usize == i);
         let n_cols_stage = in_stage().count();
         let n_cols_base_field = section(&format!("cm{}", i));
-        let im_pols: Vec<_> = in_stage().filter(|p| p.im_pol).collect();
+        let im_pols: Vec<_> = in_stage().filter(|p| p.exp_id.is_some()).collect();
 
         // stage 1 absorbs the stage-0 constraints
         let stage_constraints_count = constraint_stages.iter().filter(|&&s| s == i || (i == 1 && s == 0)).count();
@@ -173,7 +173,7 @@ pub(crate) fn report(
         n_columns_base_field += n_cols_base_field;
     }
 
-    let all_im_pols: Vec<_> = v.cm_pols_map.iter().filter(|p| p.im_pol).collect();
+    let all_im_pols: Vec<_> = v.cm_pols_map.iter().filter(|p| p.exp_id.is_some()).collect();
     let im_dim_sum: u32 = all_im_pols.iter().map(|p| p.dim).sum();
     let im_dim1_sum: u32 = all_im_pols.iter().filter(|p| p.dim == 1).map(|p| p.dim).sum();
     let im_dim3_sum: u32 = all_im_pols.iter().filter(|p| p.dim as usize == FIELD_EXTENSION).map(|p| p.dim).sum();

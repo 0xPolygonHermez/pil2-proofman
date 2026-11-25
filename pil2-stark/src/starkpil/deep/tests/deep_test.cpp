@@ -236,9 +236,7 @@ struct Layouts
         fill(vCustom, nQueries);
         for (const EvMap &e : si.evMap) {
             const auto &val = f.values.at(Fixture::key(e.type, e.commitId, e.id));
-            const PolMap &p = e.type == EvMap::eType::cm       ? si.cmPolsMap[e.id]
-                              : e.type == EvMap::eType::custom ? si.customCommitsMap[e.commitId][e.id]
-                                                               : si.constPolsMap[e.id];
+            const PolMap &p = si.evPol(e);
             for (uint64_t k = 0; k < p.dim; k++) {
                 if (e.type == EvMap::eType::cm) {
                     const std::string sec = "cm" + std::to_string(p.stage);

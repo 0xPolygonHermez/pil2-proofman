@@ -114,21 +114,8 @@ pub(crate) fn deep_denominators_inv(
     Some(den.chunks(n_open).map(|c| c.to_vec()).collect())
 }
 
-/// The DEEP polynomial at one query point (FRI's first-layer value and STIR's f_0 alike): terms
-/// weighted by vf2^col, scaled by `xdivxsub`, Horner on vf1 across openings.
-#[cfg(test)]
-fn deep_query_eval(
-    info: &VerifierInfo,
-    challenges: &[CubicExtensionField<Goldilocks>],
-    evals: &[CubicExtensionField<Goldilocks>],
-    vals: &[Vec<Goldilocks>],
-    xdivxsub: &[CubicExtensionField<Goldilocks>],
-) -> CubicExtensionField<Goldilocks> {
-    let consts = DeepQueryConsts::new(&info.fri_ev_groups, (info.vf1_idx, info.vf2_idx), challenges, evals);
-    consts.eval(&info.fri_ev_groups, vals, xdivxsub)
-}
-
-/// The query-independent half of [`deep_query_eval`], built once per proof.
+/// The query-independent half of the DEEP polynomial at one query point (FRI's first-layer value and STIR's f_0
+/// alike), built once per proof: terms weighted by vf2^col, scaled by `xdivxsub`, Horner on vf1 across openings.
 pub(crate) struct DeepQueryConsts {
     vf1: CubicExtensionField<Goldilocks>,
     vf2_pow: Vec<CubicExtensionField<Goldilocks>>,
@@ -750,6 +737,18 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The DEEP polynomial at one query point, from scratch.
+    fn deep_query_eval(
+        info: &VerifierInfo,
+        challenges: &[CubicExtensionField<Goldilocks>],
+        evals: &[CubicExtensionField<Goldilocks>],
+        vals: &[Vec<Goldilocks>],
+        xdivxsub: &[CubicExtensionField<Goldilocks>],
+    ) -> CubicExtensionField<Goldilocks> {
+        let consts = DeepQueryConsts::new(&info.fri_ev_groups, (info.vf1_idx, info.vf2_idx), challenges, evals);
+        consts.eval(&info.fri_ev_groups, vals, xdivxsub)
+    }
 
     fn gl(x: u64) -> CubicExtensionField<Goldilocks> {
         CubicExtensionField { value: [Goldilocks::new(x), Goldilocks::ZERO, Goldilocks::ZERO] }

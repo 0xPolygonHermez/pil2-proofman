@@ -10,6 +10,7 @@ use pil2_pilout::pilout as pb;
 
 use crate::commands::common::{parse_root_strings, witness_tracker_from_env};
 use crate::commands::setup::SetupOptions;
+use crate::output::witness_gen::WitnessTracker;
 use crate::proving_key::pipeline::{ReusedSetup, Tools};
 use crate::proving_key::recursive::{RecursiveSetupConfig, RecursiveTemplate};
 use crate::types::stark_struct::StarkStructsConfig;
@@ -25,15 +26,8 @@ pub(crate) struct RecursiveSetupSummary {
 
 /// Run the recursive setup pipeline after non-recursive AIR setup.
 ///
-/// For each airgroup/air:
-///   1. Check whether a compressor is needed
-///   2. If so, run compressor recursive setup
-///   3. Run recursive1 (air[0] serial, air[1..N] parallel)
-///   4. Run recursive2 immediately after all airs in the airgroup
-///
-/// Then globally:
-///   5. Run final setup
-///   6. Run compressed final setup
+/// Per airgroup: each air's compressor (if needed) and recursive1 (air[0] serially, the rest in
+/// parallel), then the airgroup's recursive2. Then the final and compressed-final setups.
 pub(crate) fn run_recursive_setup(
     pilout: &pb::PilOut,
     pilout_name: &str,
@@ -58,356 +52,81 @@ pub(crate) fn run_recursive_setup(
     let tools = Tools::from_env();
     let witness_tracker = witness_tracker_from_env();
 
-    let proving_key_dir = Path::new(build_dir).join("provingKey");
-
-    let global_constraints_path = proving_key_dir.join("pilout.globalConstraints.json");
-    let global_constraints: serde_json::Value = if global_constraints_path.exists() {
-        serde_json::from_str(&fs::read_to_string(&global_constraints_path)?)?
-    } else {
+    let global_constraints_path = Path::new(build_dir).join("provingKey").join("pilout.globalConstraints.json");
+    if !global_constraints_path.exists() {
         anyhow::bail!("globalConstraints.json not found at {:?}, cannot run recursive setup", global_constraints_path);
-    };
+    }
+    let global_constraints: serde_json::Value = serde_json::from_str(&fs::read_to_string(&global_constraints_path)?)?;
     let hash = opts.hash;
-    // What every recursion circuit of the run shares.
-    let base = RecursiveSetupConfig {
-        build_dir,
-        template: RecursiveTemplate::Recursive1,
-        airgroup_name: "",
-        airgroup_id: 0,
-        air_id: 0,
-        air_name: "",
-        global_info: &global_info,
-        const_root: &[String::new(), String::new(), String::new(), String::new()],
-        verification_keys: &[],
-        stark_info: &serde_json::Value::Null,
-        verifier_info: &serde_json::Value::Null,
-        has_compressor: false,
-        hash,
-        recursion_settings: &recursion_settings,
-        agg_arity: opts.agg_arity,
-        recursive_n_bits: opts.recursive_n_bits,
-        reuse: None,
-        tools: &tools,
+    let run = Run {
+        // What every recursion circuit of the run shares.
+        base: RecursiveSetupConfig {
+            build_dir,
+            template: RecursiveTemplate::Recursive1,
+            airgroup_name: "",
+            airgroup_id: 0,
+            air_id: 0,
+            air_name: "",
+            global_info: &global_info,
+            const_root: &[String::new(), String::new(), String::new(), String::new()],
+            verification_keys: &[],
+            stark_info: &serde_json::Value::Null,
+            verifier_info: &serde_json::Value::Null,
+            has_compressor: false,
+            hash,
+            recursion_settings: &recursion_settings,
+            agg_arity: opts.agg_arity,
+            recursive_n_bits: opts.recursive_n_bits,
+            reuse: None,
+            tools: &tools,
+        },
+        witness_tracker: &witness_tracker,
+        stark_structs_path: opts.stark_structs_path.as_deref(),
+        persist_mutex: std::sync::Mutex::new(()),
     };
 
-    // Per-airgroup, per-air: run recursive1 then recursive2.
-    //
-    // Within each airgroup:
-    //   - air[0] runs first (serial) to produce existing_pil_info (skips pil_info on reuse)
-    //   - air[1..N] run in parallel bounded by opts.recursive_jobs
-    //
-    // The r1 and r2 loops are merged: r2 starts immediately after all r1s for
-    // that airgroup finish — no need to wait for all airgroups.
-    let recursive_jobs = opts.recursive_jobs.max(1);
-    let mut recursive1_vkeys: Vec<Vec<Vec<String>>> = Vec::new();
+    // 64 MB per worker, as every pool running this work: the pil_info and expression recursion
+    // follows the air's size, and rayon's default stack overflows on it.
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(opts.recursive_jobs.max(1))
+        .stack_size(64 * 1024 * 1024)
+        .build()
+        .context("Failed to build recursive-jobs rayon pool")?;
 
-    let mut ag_existing_pil_info: Vec<Option<ReusedSetup>> = vec![None; pilout.air_groups.len()];
-
-    // Mutex protecting writes to starkstructs.json during the rare auto-compressor retry.
-    let persist_mutex = std::sync::Mutex::new(());
-
-    // Tracks which air names needed a compressor (auto-detected via NeedsCompressorError or
-    // already set in settings). Returned to the caller so globalInfo can always be re-written
-    // with the correct hasCompressor flags regardless of whether a starkstructs path was given.
-    let mut airs_with_compressor: std::collections::HashSet<String> = Default::default();
-
-    // Proofs each air's recursive1 verifies, keyed by index: two airgroups may share a name.
-    let mut r1_batch_sizes: std::collections::HashMap<(usize, usize), usize> = Default::default();
-
+    let mut summary = RecursiveSetupSummary::default();
     for (ag_idx, airgroup) in pilout.air_groups.iter().enumerate() {
         let airgroup_name = airgroup.name.clone().unwrap_or_else(|| format!("airgroup_{}", ag_idx));
+        let items = air_items(build_dir, pilout_name, &airgroup_name, airgroup, settings_map)?;
+        let Some((first, rest)) = items.split_first() else { continue };
 
-        // Collect all valid airs for this airgroup.
-        struct AirItem {
-            air_idx: usize,
-            air_name: String,
-            stark_info: serde_json::Value,
-            verifier_info: serde_json::Value,
-            const_root_strings: [String; 4],
-            has_compressor: bool,
-        }
-
-        let mut air_items: Vec<AirItem> = Vec::new();
-        for (air_idx, air) in airgroup.airs.iter().enumerate() {
-            let air_name = air.name.clone().unwrap_or_else(|| format!("air_{}", air_idx));
-            let num_rows = air.num_rows.unwrap_or(0) as usize;
-            if num_rows == 0 {
-                continue;
-            }
-
-            let files_dir = PathBuf::from(build_dir)
-                .join("provingKey")
-                .join(pilout_name)
-                .join(&airgroup_name)
-                .join("airs")
-                .join(&air_name)
-                .join("air");
-
-            let si_path = files_dir.join(format!("{}.starkinfo.json", air_name));
-            let vi_path = files_dir.join(format!("{}.verifierinfo.json", air_name));
-            let vk_path = files_dir.join(format!("{}.verkey.json", air_name));
-
-            if !si_path.exists() || !vi_path.exists() {
-                anyhow::bail!(
-                    "Recursive setup failed for air '{}': starkinfo/verifierinfo not found at {:?}",
-                    air_name,
-                    files_dir
-                );
-            }
-
-            let stark_info: serde_json::Value = serde_json::from_str(&fs::read_to_string(&si_path)?)?;
-            let verifier_info: serde_json::Value = serde_json::from_str(&fs::read_to_string(&vi_path)?)?;
-            let const_root_strings =
-                parse_verkey_json(&vk_path).with_context(|| format!("Failed to load verkey for air '{}'", air_name))?;
-
-            let has_compressor = settings_map.has_compressor(&airgroup_name, &air_name);
-            if has_compressor {
-                tracing::info!("Air '{}': hasCompressor=true from settings", air_name);
-            }
-
-            air_items.push(AirItem {
-                air_idx,
-                air_name,
-                stark_info,
-                verifier_info,
-                const_root_strings,
-                has_compressor,
-            });
-        }
-
-        if air_items.is_empty() {
-            recursive1_vkeys.push(vec![]);
-            continue;
-        }
-
-        // Helper closure: runs compressor (if needed) then recursive1 for one air.
-        // Returns (air_idx, vk_strings, Option<existing_pil_info>, has_compressor, r1_n_bits, batch).
-        // existing_pil_info is Some only when the input `existing` was None (first air).
-        // has_compressor may be upgraded to true if NeedsCompressorError fires at runtime.
-        // r1_n_bits is the recursive1 circuit size; the caller compares it against
-        // recursive2's n_bits to catch starkStruct mismatches.
-        #[allow(clippy::type_complexity)]
-        let run_one_air = |item: &AirItem,
-                           existing: Option<ReusedSetup>|
-         -> Result<(usize, Vec<String>, Option<ReusedSetup>, bool, usize, usize)> {
-            // Inside, not at the call sites: air[0] runs sequentially and the rest in a pool, and
-            // every line plonk2pil, circom and pil2com emit from here names no air of its own.
-            // With --recursive-jobs above 1 those interleave.
-            let _span = tracing::info_span!("air", name = %item.air_name).entered();
-            let mut has_compressor = item.has_compressor;
-            let mut compressor_result: Option<crate::proving_key::recursive::RecursiveSetupResult> = None;
-
-            // One retry trigger: NeedsCompressorError → enable a compressor. Two passes at most.
-            const MAX_R1_ATTEMPTS: usize = 2;
-            let r1_result = (|| -> Result<crate::proving_key::recursive::RecursiveSetupResult> {
-                for _ in 0..MAX_R1_ATTEMPTS {
-                    // (Re)run the compressor if this air has one.
-                    if has_compressor {
-                        tracing::info!("Running compressor setup for air '{}'", item.air_name);
-                        let cfg = RecursiveSetupConfig {
-                            template: RecursiveTemplate::Compressor,
-                            airgroup_name: &airgroup_name,
-                            airgroup_id: ag_idx,
-                            air_id: item.air_idx,
-                            air_name: &item.air_name,
-                            const_root: &item.const_root_strings,
-                            stark_info: &item.stark_info,
-                            verifier_info: &item.verifier_info,
-                            ..base
-                        };
-                        compressor_result = Some(
-                            crate::proving_key::recursive::gen_recursive_setup(&cfg, &witness_tracker)
-                                .with_context(|| format!("Compressor setup failed for air '{}'", item.air_name))?,
-                        );
-                        tracing::info!("Compressor setup complete for air '{}'", item.air_name);
-                    }
-
-                    // Build r1 inputs from the compressor result (if any) or directly from item.
-                    let (r1_const_root, r1_si, r1_vi) = match &compressor_result {
-                        Some(cr) => (cr.const_root.map(|v| v.to_string()), &cr.setup.pil_info.0, &cr.setup.pil_info.1),
-                        None => (item.const_root_strings.clone(), &item.stark_info, &item.verifier_info),
-                    };
-                    let r1_cfg = RecursiveSetupConfig {
-                        template: RecursiveTemplate::Recursive1,
-                        airgroup_name: &airgroup_name,
-                        airgroup_id: ag_idx,
-                        air_id: item.air_idx,
-                        air_name: &item.air_name,
-                        const_root: &r1_const_root,
-                        stark_info: r1_si,
-                        verifier_info: r1_vi,
-                        has_compressor,
-                        reuse: existing.as_ref(),
-                        ..base
-                    };
-
-                    tracing::info!("Running recursive1 for air '{}'", item.air_name);
-                    match crate::proving_key::recursive::gen_recursive_setup(&r1_cfg, &witness_tracker) {
-                        Ok(r) => return Ok(r),
-                        Err(e) if e.is::<crate::proving_key::recursive::NeedsCompressorError>() => {
-                            let n_bits =
-                                e.downcast_ref::<crate::proving_key::recursive::NeedsCompressorError>().unwrap().n_bits;
-                            tracing::warn!(
-                                "Air '{}' needs compressor (n_bits={}); retrying with compressor",
-                                item.air_name,
-                                n_bits
-                            );
-                            if let Some(ref sp) = opts.stark_structs_path {
-                                let _lock = persist_mutex.lock().unwrap();
-                                if let Err(we) = persist_has_compressor(sp, &item.air_name) {
-                                    tracing::warn!("Could not update starkstructs.json: {}", we);
-                                } else {
-                                    tracing::info!(
-                                        "Updated starkstructs.json: hasCompressor=true for air '{}'",
-                                        item.air_name
-                                    );
-                                }
-                            }
-                            has_compressor = true;
-                            // loop: recompress + recursive1 with the now-enabled compressor.
-                        }
-                        Err(e) => {
-                            return Err(e.context(format!("Recursive1 setup failed for air '{}'", item.air_name)));
-                        }
-                    }
-                }
-                Err(anyhow::anyhow!(
-                    "Air '{}' recursive1 still asks for a compressor after {} attempts",
-                    item.air_name,
-                    MAX_R1_ATTEMPTS
-                ))
-            })()?;
-
-            tracing::info!("Recursive1 setup complete for air '{}'", item.air_name);
-
-            let vk_str: Vec<String> = r1_result.const_root.iter().map(|v| v.to_string()).collect();
-            let produced_pil_info = existing.is_none().then_some(r1_result.setup);
-
-            Ok((item.air_idx, vk_str, produced_pil_info, has_compressor, r1_result.n_bits, r1_result.batch_size))
+        // Logged, not just propagated: tracing goes to stdout and the error to stderr, so a run
+        // redirected with `> log` would show no line at all for the air that failed.
+        let one = |item: &AirItem, existing: Option<&ReusedSetup>| {
+            run_one_air(&run, &airgroup_name, ag_idx, item, existing)
+                .inspect_err(|e| tracing::error!("Recursive setup FAILED for air '{}': {e:#}", item.air_name))
         };
+        // air[0] serially: its recursive1 setup is the one the rest of the airgroup reuse.
+        let first_out = one(first, None)?;
+        let r1_setup = first_out.setup.clone().expect("a fresh run returns its setup");
+        let rest_out: Vec<AirOutcome> = pool.install(|| {
+            use rayon::prelude::*;
+            rest.par_iter().map(|item| one(item, Some(&r1_setup))).collect::<Result<_>>()
+        })?;
 
-        // --- air[0]: run serially to produce existing_pil_info ---
-        // Logged, not just propagated: tracing goes to stdout and the returned anyhow error surfaces
-        // on stderr, so a run redirected with `> log` recorded 42 airs succeeding and simply no line
-        // at all for the one that failed -- the air looked skipped rather than broken.
-        let (_, first_vk, first_pil_info, first_hc, first_air_r1_n_bits, first_batch) =
-            run_one_air(&air_items[0], ag_existing_pil_info[ag_idx].clone()).inspect_err(|e| {
-                tracing::error!("Recursive setup FAILED for air '{}': {e:#}", air_items[0].air_name)
-            })?;
-        if first_hc {
-            airs_with_compressor.insert(air_items[0].air_name.clone());
-        }
-        if first_batch > 1 {
-            r1_batch_sizes.insert((ag_idx, air_items[0].air_idx), first_batch);
-        }
-
-        let mut ag_vkeys: Vec<Vec<String>> = vec![first_vk];
-        if let Some(pil_info) = first_pil_info {
-            ag_existing_pil_info[ag_idx] = Some(pil_info);
-        }
-
-        // --- air[1..N]: run in parallel (bounded by recursive_jobs) ---
-        if air_items.len() > 1 {
-            let existing_for_rest = ag_existing_pil_info[ag_idx].clone();
-
-            // 64 MB per worker, matching every other pool that runs this work (main.rs's global
-            // pool, setup.rs's setup-jobs pool). These workers run the same pil_info and
-            // expression machinery, whose recursion depth follows the air's size, and rayon's
-            // default stack is far too small for it -- the airs after the first overflowed it.
-            let pool = rayon::ThreadPoolBuilder::new()
-                .num_threads(recursive_jobs)
-                .stack_size(64 * 1024 * 1024)
-                .build()
-                .context("Failed to build recursive-jobs rayon pool")?;
-
-            #[allow(clippy::type_complexity)]
-            let parallel_results: Vec<Result<(usize, String, Vec<String>, bool, usize)>> = pool.install(|| {
-                use rayon::prelude::*;
-                air_items[1..]
-                    .par_iter()
-                    .map(|item| {
-                        let (air_idx, vk, _, hc, _, batch) =
-                            run_one_air(item, existing_for_rest.clone()).inspect_err(|e| {
-                                tracing::error!("Recursive setup FAILED for air '{}': {e:#}", item.air_name)
-                            })?;
-                        Ok((air_idx, item.air_name.clone(), vk, hc, batch))
-                    })
-                    .collect()
-            });
-
-            let mut indexed: Vec<(usize, String, Vec<String>, bool, usize)> =
-                parallel_results.into_iter().collect::<Result<_>>()?;
-            indexed.sort_by_key(|(idx, _, _, _, _)| *idx);
-            for (air_idx, air_name, vk, hc, batch) in indexed {
-                ag_vkeys.push(vk);
-                if hc {
-                    airs_with_compressor.insert(air_name);
-                }
-                if batch > 1 {
-                    r1_batch_sizes.insert((ag_idx, air_idx), batch);
-                }
+        let mut vkeys = Vec::with_capacity(items.len());
+        for (item, out) in items.iter().zip(std::iter::once(&first_out).chain(&rest_out)) {
+            vkeys.push(out.vk.clone());
+            if out.has_compressor {
+                summary.airs_with_compressor.insert(item.air_name.clone());
+            }
+            if out.batch > 1 {
+                summary.r1_batch_sizes.insert((ag_idx, item.air_idx), out.batch);
             }
         }
-
-        recursive1_vkeys.push(ag_vkeys.clone());
-
-        // --- recursive2 for this airgroup (immediately after all r1s) ---
-        {
-            let first_air = airgroup.airs.first();
-            let first_air_name = first_air.and_then(|a| a.name.clone()).unwrap_or_else(|| "air_0".to_string());
-
-            // Use the in-memory starkinfo/verifierinfo produced by recursive1 for the
-            // first air (ag_existing_pil_info holds the result from the fresh run).
-            // These files are not persisted to disk for recursive1 (they're temp-only
-            // for bctree) so we cannot read from disk here.
-            let (r2_stark_info, r2_verifier_info) = match ag_existing_pil_info[ag_idx].as_ref() {
-                Some(r) => (r.pil_info.0.clone(), r.pil_info.1.clone()),
-                None => anyhow::bail!(
-                    "Recursive2 requires recursive1 starkinfo/verifierinfo for airgroup '{}' air '{}' \
-                     but it was not produced (missing in-memory pil_info)",
-                    airgroup_name,
-                    first_air_name,
-                ),
-            };
-
-            let vkeys_nested: Vec<Vec<Vec<String>>> = vec![ag_vkeys.clone()];
-
-            tracing::info!("Running recursive2 for airgroup '{}'", airgroup_name);
-            // Its verifier takes the root as an input: the constant root is never read.
-            let r2_config = RecursiveSetupConfig {
-                template: RecursiveTemplate::Recursive2,
-                airgroup_name: &airgroup_name,
-                airgroup_id: ag_idx,
-                air_name: &first_air_name,
-                verification_keys: &vkeys_nested,
-                stark_info: &r2_stark_info,
-                verifier_info: &r2_verifier_info,
-                ..base
-            };
-
-            // recursive2 is per-airgroup, so it sits outside run_one_air's `air` span and needs its own
-            // identity: without it these lines are the only ones in a parallel run with no prefix.
-            let _span = tracing::info_span!("airgroup", name = %airgroup_name).entered();
-            let r2_result = crate::proving_key::recursive::gen_recursive_setup(&r2_config, &witness_tracker)
-                .with_context(|| format!("Recursive2 setup failed for airgroup '{}'", airgroup_name))?;
-
-            if r2_result.n_bits != first_air_r1_n_bits {
-                anyhow::bail!(
-                    "Recursive2 n_bits ({}) does not match recursive1 n_bits ({}) for airgroup '{}' \
-                     (first air '{}'). The recursive2 circuit must be sized identically to recursive1; \
-                     a mismatch usually means the recursive2 starkStruct is inconsistent with recursive1's, \
-                     or recursive2's circom expands to a different row count than expected.",
-                    r2_result.n_bits,
-                    first_air_r1_n_bits,
-                    airgroup_name,
-                    first_air_name,
-                );
-            }
-
-            tracing::info!("Recursive2 setup complete for airgroup '{}' (n_bits={})", airgroup_name, r2_result.n_bits);
-        }
+        let first_air_name = airgroup.airs.first().and_then(|a| a.name.clone()).unwrap_or_else(|| "air_0".into());
+        run_recursive2(&run, &airgroup_name, ag_idx, &first_air_name, &r1_setup, vkeys, first_out.n_bits)?;
     }
 
-    // Run final setup
     tracing::info!("Running final setup...");
     let final_config = final_setup::FinalSetupConfig {
         build_dir,
@@ -416,13 +135,10 @@ pub(crate) fn run_recursive_setup(
         global_constraints: &global_constraints,
         tools: &tools,
     };
-
     let final_result = final_setup::gen_final_setup(&final_config, &witness_tracker).context("Final setup failed")?;
     tracing::info!("Final setup complete");
 
-    // Run compressed final setup, unless this key is built without it. Skipping leaves the rest of
-    // the key complete: nothing downstream requires the stage, and `witness_rebuild` already treats
-    // it as optional.
+    // Skipping leaves the rest of the key complete: `witness_rebuild` treats the stage as optional.
     if !opts.compressed_final {
         tracing::info!(
             "Skipping the compressed final stage: it is off for the {} family, which measured a 2% \
@@ -444,17 +160,221 @@ pub(crate) fn run_recursive_setup(
             tools: &compressed_tools,
             low_degree_test: None,
         };
-
         compressed_final::gen_compressed_final_setup(&compressed_config, &witness_tracker)
             .context("Compressed final setup failed")?;
         tracing::info!("Compressed final setup complete");
     }
 
-    // Wait for all witness library builds
     witness_tracker.await_all()?;
-
     tracing::info!("Recursive setup complete");
-    Ok(RecursiveSetupSummary { airs_with_compressor, r1_batch_sizes })
+    Ok(summary)
+}
+
+/// What every air's and airgroup's recursion setup of a run shares.
+struct Run<'a> {
+    base: RecursiveSetupConfig<'a>,
+    witness_tracker: &'a WitnessTracker,
+    stark_structs_path: Option<&'a str>,
+    /// Serialises starkstructs.json rewrites (the rare auto-compressor retry).
+    persist_mutex: std::sync::Mutex<()>,
+}
+
+/// One air's basic artefacts, which its compressor or recursive1 verifies.
+struct AirItem {
+    air_idx: usize,
+    air_name: String,
+    stark_info: serde_json::Value,
+    verifier_info: serde_json::Value,
+    const_root_strings: [String; 4],
+    has_compressor: bool,
+}
+
+/// One air's recursive1 (after its compressor, if any).
+struct AirOutcome {
+    vk: Vec<String>,
+    /// This run's setup when it reused none (the airgroup's first air).
+    setup: Option<ReusedSetup>,
+    /// From the settings, or turned on by a `NeedsCompressorError`.
+    has_compressor: bool,
+    /// recursive1's rows, which recursive2's must match.
+    n_bits: usize,
+    batch: usize,
+}
+
+/// The airgroup's airs with rows, read from their basic setup's files.
+fn air_items(
+    build_dir: &str,
+    pilout_name: &str,
+    airgroup_name: &str,
+    airgroup: &pb::AirGroup,
+    settings_map: &StarkStructsConfig,
+) -> Result<Vec<AirItem>> {
+    let mut items = Vec::new();
+    for (air_idx, air) in airgroup.airs.iter().enumerate() {
+        let air_name = air.name.clone().unwrap_or_else(|| format!("air_{}", air_idx));
+        if air.num_rows.unwrap_or(0) == 0 {
+            continue;
+        }
+        let files_dir = PathBuf::from(build_dir)
+            .join("provingKey")
+            .join(pilout_name)
+            .join(airgroup_name)
+            .join("airs")
+            .join(&air_name)
+            .join("air");
+        let si_path = files_dir.join(format!("{}.starkinfo.json", air_name));
+        let vi_path = files_dir.join(format!("{}.verifierinfo.json", air_name));
+        let vk_path = files_dir.join(format!("{}.verkey.json", air_name));
+        if !si_path.exists() || !vi_path.exists() {
+            anyhow::bail!(
+                "Recursive setup failed for air '{}': starkinfo/verifierinfo not found at {:?}",
+                air_name,
+                files_dir
+            );
+        }
+        let stark_info = serde_json::from_str(&fs::read_to_string(&si_path)?)?;
+        let verifier_info = serde_json::from_str(&fs::read_to_string(&vi_path)?)?;
+        let const_root_strings =
+            parse_verkey_json(&vk_path).with_context(|| format!("Failed to load verkey for air '{}'", air_name))?;
+        let has_compressor = settings_map.has_compressor(airgroup_name, &air_name);
+        if has_compressor {
+            tracing::info!("Air '{}': hasCompressor=true from settings", air_name);
+        }
+        items.push(AirItem { air_idx, air_name, stark_info, verifier_info, const_root_strings, has_compressor });
+    }
+    Ok(items)
+}
+
+/// The compressor (if needed) then recursive1 of one air; `existing` is the airgroup's first
+/// recursive1 setup, reused by the others.
+fn run_one_air(
+    run: &Run,
+    airgroup_name: &str,
+    ag_idx: usize,
+    item: &AirItem,
+    existing: Option<&ReusedSetup>,
+) -> Result<AirOutcome> {
+    use crate::proving_key::recursive::{gen_recursive_setup, NeedsCompressorError};
+    // Every line plonk2pil, circom and pil2com emit from here names no air of its own, and with
+    // --recursive-jobs above 1 those interleave.
+    let _span = tracing::info_span!("air", name = %item.air_name).entered();
+    let mut has_compressor = item.has_compressor;
+    // One retry trigger: NeedsCompressorError turns the compressor on. Two passes at most.
+    for _ in 0..2 {
+        let compressor = if has_compressor {
+            tracing::info!("Running compressor setup for air '{}'", item.air_name);
+            let cfg = RecursiveSetupConfig {
+                template: RecursiveTemplate::Compressor,
+                airgroup_name,
+                airgroup_id: ag_idx,
+                air_id: item.air_idx,
+                air_name: &item.air_name,
+                const_root: &item.const_root_strings,
+                stark_info: &item.stark_info,
+                verifier_info: &item.verifier_info,
+                ..run.base
+            };
+            let r = gen_recursive_setup(&cfg, run.witness_tracker)
+                .with_context(|| format!("Compressor setup failed for air '{}'", item.air_name))?;
+            tracing::info!("Compressor setup complete for air '{}'", item.air_name);
+            Some(r)
+        } else {
+            None
+        };
+        let (const_root, stark_info, verifier_info) = match &compressor {
+            Some(c) => (c.const_root.map(|v| v.to_string()), &c.setup.pil_info.0, &c.setup.pil_info.1),
+            None => (item.const_root_strings.clone(), &item.stark_info, &item.verifier_info),
+        };
+        let cfg = RecursiveSetupConfig {
+            template: RecursiveTemplate::Recursive1,
+            airgroup_name,
+            airgroup_id: ag_idx,
+            air_id: item.air_idx,
+            air_name: &item.air_name,
+            const_root: &const_root,
+            stark_info,
+            verifier_info,
+            has_compressor,
+            reuse: existing,
+            ..run.base
+        };
+        tracing::info!("Running recursive1 for air '{}'", item.air_name);
+        match gen_recursive_setup(&cfg, run.witness_tracker) {
+            Ok(r) => {
+                tracing::info!("Recursive1 setup complete for air '{}'", item.air_name);
+                return Ok(AirOutcome {
+                    vk: r.const_root.iter().map(|v| v.to_string()).collect(),
+                    setup: existing.is_none().then_some(r.setup),
+                    has_compressor,
+                    n_bits: r.n_bits,
+                    batch: r.batch_size,
+                });
+            }
+            Err(e) if e.is::<NeedsCompressorError>() => {
+                let n_bits = e.downcast_ref::<NeedsCompressorError>().expect("checked").n_bits;
+                tracing::warn!(
+                    "Air '{}' needs compressor (n_bits={}); retrying with compressor",
+                    item.air_name,
+                    n_bits
+                );
+                if let Some(sp) = run.stark_structs_path {
+                    let _lock = run.persist_mutex.lock().unwrap();
+                    match persist_has_compressor(sp, &item.air_name) {
+                        Err(we) => tracing::warn!("Could not update starkstructs.json: {}", we),
+                        Ok(()) => {
+                            tracing::info!("Updated starkstructs.json: hasCompressor=true for air '{}'", item.air_name)
+                        }
+                    }
+                }
+                has_compressor = true;
+            }
+            Err(e) => return Err(e.context(format!("Recursive1 setup failed for air '{}'", item.air_name))),
+        }
+    }
+    anyhow::bail!("Air '{}' recursive1 still asks for a compressor after 2 attempts", item.air_name)
+}
+
+/// The airgroup's recursive2 over its airs' recursive1 keys, from the first air's recursive1 setup
+/// (in memory: recursive1's starkinfo is never written).
+fn run_recursive2(
+    run: &Run,
+    airgroup_name: &str,
+    ag_idx: usize,
+    first_air_name: &str,
+    r1: &ReusedSetup,
+    vkeys: Vec<Vec<String>>,
+    r1_n_bits: usize,
+) -> Result<()> {
+    // Outside run_one_air's `air` span: without its own these lines have no prefix.
+    let _span = tracing::info_span!("airgroup", name = %airgroup_name).entered();
+    tracing::info!("Running recursive2 for airgroup '{}'", airgroup_name);
+    // Its verifier takes the root as an input: the constant root is never read.
+    let cfg = RecursiveSetupConfig {
+        template: RecursiveTemplate::Recursive2,
+        airgroup_name,
+        airgroup_id: ag_idx,
+        air_name: first_air_name,
+        verification_keys: &[vkeys],
+        stark_info: &r1.pil_info.0,
+        verifier_info: &r1.pil_info.1,
+        ..run.base
+    };
+    let r2 = crate::proving_key::recursive::gen_recursive_setup(&cfg, run.witness_tracker)
+        .with_context(|| format!("Recursive2 setup failed for airgroup '{}'", airgroup_name))?;
+    if r2.n_bits != r1_n_bits {
+        anyhow::bail!(
+            "Recursive2 n_bits ({}) does not match recursive1 n_bits ({}) for airgroup '{}' \
+             (first air '{}'). The recursive2 circuit must be sized identically to recursive1; \
+             a mismatch usually means the recursive2 starkStruct is inconsistent with recursive1's, \
+             or recursive2's circom expands to a different row count than expected.",
+            r2.n_bits,
+            r1_n_bits,
+            airgroup_name,
+            first_air_name,
+        );
+    }
+    tracing::info!("Recursive2 setup complete for airgroup '{}' (n_bits={})", airgroup_name, r2.n_bits);
+    Ok(())
 }
 
 /// Parse a verkey.json file and return exactly 4 u64 limb strings.
@@ -491,75 +411,34 @@ pub(crate) fn persist_has_compressor(path: &str, air_name: &str) -> anyhow::Resu
     Ok(())
 }
 
-/// Resolve the circom executable path from env, well-known locations, or PATH.
-pub fn resolve_circom_exec(circom_helpers_dir: &str) -> String {
-    // Preferred binary name depends on the OS (mirrors JS logic)
-    let bin_name = if cfg!(target_os = "macos") { "circom_mac" } else { "circom" };
-
-    // Look inside circom_helpers_dir first
-    let in_helpers = Path::new(circom_helpers_dir).join(bin_name);
-    if in_helpers.is_file() {
-        if let Ok(abs) = in_helpers.canonicalize() {
-            return abs.to_string_lossy().to_string();
-        }
-        return in_helpers.to_string_lossy().to_string();
-    }
-
-    // Fall back to PATH
-    bin_name.to_string()
-}
-
-/// Resolve a path from an environment variable; if not set, search for `fallback` by
-/// checking (in order):
-///   1. `<proofman-repo-root>/fallback`, where the root is captured at compile time
-///      from `CARGO_MANIFEST_DIR` (this crate sits at `<root>/setup/pil2-stark`).
-///      Works regardless of where the binary is invoked from, including when
-///      proofman is consumed as a git dep from another workspace.
-///   2. `fallback` relative to the current working directory
-///   3. `fallback` relative to each ancestor directory of the running executable
-///   4. `fallback` as a literal string (last resort / relative-path pass-through)
-pub fn resolve_path_env(env_var: &str, fallback: &str) -> String {
-    if let Ok(v) = std::env::var(env_var) {
-        if !v.is_empty() {
-            return v;
-        }
-    }
-    // Compile-time path to the proofman repo root.
-    const PROOFMAN_ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
-    let baked = std::path::Path::new(PROOFMAN_ROOT).join(fallback);
-    if baked.exists() {
-        if let Ok(abs) = baked.canonicalize() {
-            return abs.to_string_lossy().into_owned();
-        }
-    }
-    // CWD-relative
-    let cwd_rel = std::path::Path::new(fallback);
-    if cwd_rel.exists() {
-        if let Ok(abs) = cwd_rel.canonicalize() {
-            return abs.to_string_lossy().into_owned();
-        }
-    }
-    // Walk up from the executable
-    if let Ok(exe) = std::env::current_exe() {
-        let mut dir = exe.parent();
-        while let Some(d) = dir {
-            let candidate = d.join(fallback);
-            if candidate.exists() {
-                if let Ok(abs) = candidate.canonicalize() {
-                    return abs.to_string_lossy().into_owned();
-                }
-            }
-            dir = d.parent();
-        }
-    }
-    fallback.to_string()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::commands::setup::SetupOptions;
     use prost::Message;
+
+    fn options(pilout_path: &std::path::Path, build_dir: &std::path::Path) -> SetupOptions {
+        SetupOptions {
+            airout_path: pilout_path.to_str().unwrap().to_string(),
+            build_dir: build_dir.to_str().unwrap().to_string(),
+            fixed_dir: None,
+            stark_structs_path: None,
+            recursive: true,
+            recursive_jobs: 1,
+            setup_jobs: 1,
+            stats_output_path: None,
+            hash: proofman_common::hash_family::HashFamily::Poseidon2,
+            agg_arity: 3,
+            recursive_n_bits: None,
+            compressed_final: true,
+            setup_version: None,
+            gen_exps: false,
+            exps_arch: "auto".to_string(),
+            exps_cap: 60000,
+            exps_chunk: None,
+            exps_stark_src: None,
+        }
+    }
 
     #[test]
     fn test_recursive_fails_on_missing_global_constraints() {
@@ -579,26 +458,7 @@ mod tests {
             .unwrap();
 
         let pilout = pb::PilOut::decode(std::fs::read(&pilout_path).unwrap().as_slice()).unwrap();
-        let opts = SetupOptions {
-            airout_path: pilout_path.to_str().unwrap().to_string(),
-            build_dir: build_dir.to_str().unwrap().to_string(),
-            fixed_dir: None,
-            stark_structs_path: None,
-            recursive: true,
-            recursive_jobs: 1,
-            setup_jobs: 1,
-            stats_output_path: None,
-            hash: proofman_common::hash_family::HashFamily::Poseidon2,
-            agg_arity: 3,
-            recursive_n_bits: None,
-            compressed_final: true,
-            setup_version: None,
-            gen_exps: false,
-            exps_arch: "auto".to_string(),
-            exps_cap: 60000,
-            exps_chunk: None,
-            exps_stark_src: None,
-        };
+        let opts = options(&pilout_path, &build_dir);
         let result = run_recursive_setup(&pilout, "zisk", &opts, &StarkStructsConfig::default(), serde_json::json!({}));
         assert!(result.is_err());
         assert!(format!("{:#}", result.unwrap_err()).contains("globalConstraints.json not found"));
@@ -628,26 +488,7 @@ mod tests {
         std::fs::write(pk_dir.join("Dma.verifierinfo.json"), r#"{}"#).unwrap();
 
         let pilout = pb::PilOut::decode(std::fs::read(&pilout_path).unwrap().as_slice()).unwrap();
-        let opts = SetupOptions {
-            airout_path: pilout_path.to_str().unwrap().to_string(),
-            build_dir: build_dir.to_str().unwrap().to_string(),
-            fixed_dir: None,
-            stark_structs_path: None,
-            recursive: true,
-            recursive_jobs: 1,
-            setup_jobs: 1,
-            stats_output_path: None,
-            hash: proofman_common::hash_family::HashFamily::Poseidon2,
-            agg_arity: 3,
-            recursive_n_bits: None,
-            compressed_final: true,
-            setup_version: None,
-            gen_exps: false,
-            exps_arch: "auto".to_string(),
-            exps_cap: 60000,
-            exps_chunk: None,
-            exps_stark_src: None,
-        };
+        let opts = options(&pilout_path, &build_dir);
         let result = run_recursive_setup(&pilout, "zisk", &opts, &StarkStructsConfig::default(), serde_json::json!({}));
         assert!(result.is_err());
         let msg = format!("{:#}", result.unwrap_err());
@@ -680,26 +521,7 @@ mod tests {
         pilout.encode(&mut buf).unwrap();
         std::fs::write(&pilout_path, &buf).unwrap();
 
-        let opts = SetupOptions {
-            airout_path: pilout_path.to_str().unwrap().to_string(),
-            build_dir: build_dir.to_str().unwrap().to_string(),
-            fixed_dir: None,
-            stark_structs_path: None,
-            recursive: true,
-            recursive_jobs: 1,
-            setup_jobs: 1,
-            stats_output_path: None,
-            hash: proofman_common::hash_family::HashFamily::Poseidon2,
-            agg_arity: 3,
-            recursive_n_bits: None,
-            compressed_final: true,
-            setup_version: None,
-            gen_exps: false,
-            exps_arch: "auto".to_string(),
-            exps_cap: 60000,
-            exps_chunk: None,
-            exps_stark_src: None,
-        };
+        let opts = options(&pilout_path, &build_dir);
         let result = run_recursive_setup(&pilout, "test", &opts, &StarkStructsConfig::default(), serde_json::json!({}));
         assert!(result.is_err());
         let msg = format!("{:#}", result.unwrap_err());
@@ -708,57 +530,7 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_verkey_json_valid() {
-        let tmp = std::env::temp_dir().join(format!("pil2_vk_valid_{}", std::process::id()));
-        std::fs::create_dir_all(&tmp).unwrap();
-        let p = tmp.join("vk.json");
-        std::fs::write(&p, "[1,2,3,4]").unwrap();
-        assert_eq!(parse_verkey_json(&p).unwrap(), ["1", "2", "3", "4"]);
-        let _ = std::fs::remove_dir_all(&tmp);
-    }
-
-    #[test]
-    fn test_parse_verkey_json_rejects_5_entries() {
-        let tmp = std::env::temp_dir().join(format!("pil2_vk_5_{}", std::process::id()));
-        std::fs::create_dir_all(&tmp).unwrap();
-        let p = tmp.join("vk.json");
-        std::fs::write(&p, "[1,2,3,4,5]").unwrap();
-        assert!(parse_verkey_json(&p).is_err());
-        let _ = std::fs::remove_dir_all(&tmp);
-    }
-
-    #[test]
-    fn test_parse_verkey_json_rejects_short_array() {
-        let tmp = std::env::temp_dir().join(format!("pil2_vk_short_{}", std::process::id()));
-        std::fs::create_dir_all(&tmp).unwrap();
-        let p = tmp.join("vk.json");
-        std::fs::write(&p, "[1,2]").unwrap();
-        assert!(parse_verkey_json(&p).is_err());
-        let _ = std::fs::remove_dir_all(&tmp);
-    }
-
-    #[test]
-    fn test_parse_verkey_json_rejects_non_numeric() {
-        let tmp = std::env::temp_dir().join(format!("pil2_vk_nan_{}", std::process::id()));
-        std::fs::create_dir_all(&tmp).unwrap();
-        let p = tmp.join("vk.json");
-        std::fs::write(&p, r#"[1, "bad", 3, 4]"#).unwrap();
-        assert!(parse_verkey_json(&p).is_err());
-        let _ = std::fs::remove_dir_all(&tmp);
-    }
-
-    #[test]
-    fn test_parse_verkey_json_rejects_non_array() {
-        let tmp = std::env::temp_dir().join(format!("pil2_vk_obj_{}", std::process::id()));
-        std::fs::create_dir_all(&tmp).unwrap();
-        let p = tmp.join("vk.json");
-        std::fs::write(&p, r#"{"a":1}"#).unwrap();
-        assert!(parse_verkey_json(&p).is_err());
-        let _ = std::fs::remove_dir_all(&tmp);
-    }
-
-    #[test]
-    fn test_parse_verkey_json_rejects_missing() {
-        assert!(parse_verkey_json(std::path::Path::new("/tmp/nonexistent_verkey.json")).is_err());
+    fn parse_verkey_json_rejects_a_missing_file() {
+        assert!(parse_verkey_json(std::path::Path::new("/nonexistent/verkey.json")).is_err());
     }
 }

@@ -9,8 +9,6 @@ use serde_json::Value;
 
 use proofman_starks_lib_c::{generate_fflonk_zkey_c, generate_plonk_zkey_c, get_plonk_circuit_stats_c};
 
-use crate::commands::compile_pil::{run_compile_pil, CompilePilOptions};
-use pil2_pilout::pilout_proxy::PilOutProxy;
 use pil2_stark_recurser::stark2circom::templates::{gen_solidity, gen_iverifier, SnarkVerifier};
 use pil2_stark_recurser::stark2circom::{CircomGenOptions, CircuitTemplate, StarkVerifierOptions};
 use crate::output::witness_gen::WitnessTracker;
@@ -24,7 +22,7 @@ use proofman_common::hash_family::HashFamily;
 use proofman_fields::Bn128;
 use proofman_pilfflonk::{CalldataLayout, FrBytes, JsonFile, PilfflonkGlobalInfo, Vkey};
 use crate::commands::common::parse_root_strings;
-use crate::proving_key::pipeline::steps::{CircomOpt, Prime, Step, VerifierGen};
+use crate::proving_key::pipeline::steps::{check_plonk_result, compile_plonk_pil, CircomOpt, Prime, Step, VerifierGen};
 use crate::proving_key::pipeline::{self, kinds, kinds::RecursivefCfg, CircuitInput, PipelineCtx, Tools, VerifierInput};
 use crate::types::stark_struct::StarkSettings;
 
@@ -176,7 +174,7 @@ pub fn gen_snark_setup(
     // ── Phase 1: recursivef ───────────────────────────────────────────────────
     // blake3's recursivef is one more Goldilocks layer (setup-recursivef), which proofman proves:
     // the final circuit verifies it as it is. The poseidon families' is the BN128 bridge, set up here.
-    let blake3 = !proofman_common::hash_family::has_bn128_recursivef(config.hash.as_str());
+    let blake3 = !proofman_common::hash_family::has_bn128_recursivef(config.hash);
     let recursivef_dir = snark_dir.join("recursivef");
     let starkinfo_rf_json = if blake3 {
         let path = recursivef_dir.join("recursivef.starkinfo.json");
@@ -255,7 +253,7 @@ fn gen_final_snark(
         enable_input: false,
         input_challenges: false,
         fri_queries_batch_size: None,
-        hash: config.hash.as_str().to_string(),
+        hash: config.hash,
     };
     let verifier = if blake3 { VerifierGen::Bn128Blake3(opts) } else { VerifierGen::Gl(opts) };
     let mut ctx = PipelineCtx::new(build_dir.clone(), final_dir.clone(), "final", config.hash);
@@ -556,12 +554,9 @@ fn gen_wrap_exps(proving_key: &Path, archspec: &str) -> Result<()> {
         tracing::warn!("nvcc not found: the wrap's Q stays on the GPU's interpreter (gen-exps makes its kernel)");
         return Ok(());
     }
-    let summary = proofman_exps_codegen::generate_all(proving_key, &crate::commands::setup::exps_config(archspec))
+    let cfg = crate::commands::setup::exps_config(archspec);
+    proofman_exps_codegen::generate_all_logged(proving_key, &cfg, "the wrap's Q kernel")
         .context("the wrap's Q kernel")?;
-    for (air, why) in &summary.skipped {
-        tracing::warn!("the wrap's Q kernel of {air} skipped (it stays on the interpreter): {why}");
-    }
-    tracing::info!("the wrap's Q kernel: {} generated", summary.generated.len());
     Ok(())
 }
 
@@ -652,20 +647,9 @@ fn set_up_wrap_air(
     crate::proving_key::pipeline::steps::write_exec(&files.exec, &res.exec)?;
 
     tracing::info!("Compiling {} over BN128...", files.pil.display());
-    run_compile_pil(&CompilePilOptions {
-        pil_path: files.pil.to_string_lossy().into_owned(),
-        output_path: files.pilout.to_string_lossy().into_owned(),
-        include_paths: includes.to_vec(),
-        field: Some("bn128".to_string()),
-        ..Default::default()
-    })?;
-    let pilout = PilOutProxy::new(&files.pilout.to_string_lossy())
-        .map_err(|e| anyhow::anyhow!("Failed to load pilout {}: {e}", files.pilout.display()))?
-        .pilout;
+    let pilout = compile_plonk_pil("the wrap", &files.pil, &files.pilout, includes, Some("bn128"))?;
     let r1cs_data = fs::read(r1cs)?; // re-read: peak memory unchanged
-    let report = plonk2pil::check::load::check_result(&r1cs_data, &res, &pilout)
-        .with_context(|| format!("{}: the wrap layout does not implement its r1cs", r1cs.display()))?;
-    tracing::info!("wrap plonk check OK: {report}");
+    check_plonk_result(&r1cs.display().to_string(), &r1cs_data, &res, &pilout)?;
     drop((r1cs_data, pilout));
 
     tracing::info!("Running the pilfflonk setup of {}...", files.pilout.display());

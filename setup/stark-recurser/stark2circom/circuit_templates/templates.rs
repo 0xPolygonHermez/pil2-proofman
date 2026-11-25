@@ -4,14 +4,15 @@
 //! Solidity contracts are static too (`sol/`): [`gen_solidity`] and [`gen_iverifier`] fill in their
 //! `__TOKEN__`s.
 
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
 use serde_json::Value;
 
 use super::get_sha256_inputs::sha256_defs;
 use super::vadcop_inputs::{air_id_vars, vadcop_data};
 use super::verify_global_constraints::gen_verify_global_constraints;
 use super::CircomGenOptions;
-use crate::stark2circom::circom_verifier::lib_params::{proof_inputs, Origin};
+use crate::stark2circom::circom_verifier::lib_params::parse_stark_info;
+use proofman_common::proof_inputs::{proof_inputs, Origin};
 use crate::stark2circom::circom_verifier::{key_dispatch, key_suffix};
 
 // ── The static Solidity contracts ────────────────────────────────────────────
@@ -64,46 +65,49 @@ pub fn gen_recursivef(stark_info: &Value, verifier_filenames: &[String]) -> Resu
 }
 
 /// The final circuit: the recursivef's BN128 verifier and the publics hash (`FinalSnark`, static).
-/// Its witness is computed from a JSON zkin addressed by input name (`gl_proof_zkin`), so the main
-/// takes the proof's inputs by their names and flattens them into `FinalSnark`'s proof.
+/// Its witness is computed from a JSON zkin addressed by input name (`proof2json`, `gl_proof_zkin`),
+/// so the main takes every proof input by its name and flattens them into `FinalSnark`'s proof.
 pub fn gen_recursion_final(
     stark_info: &Value,
     verifier_filenames: &[String],
     publics: Option<&Value>,
 ) -> Result<String> {
+    let vk_pos = program_vk_pos(publics)?;
     let (n_sha, n_defs, defs) = sha256_defs(publics.unwrap_or(&Value::Null))?;
-    // A custom-tree verifier wants the pragma on every file that includes it.
-    let custom = stark_info["starkStruct"]["merkleTreeCustom"].as_bool() == Some(true);
-    let inputs = proof_inputs(&serde_json::from_value(stark_info.clone())?)?;
+    let info = parse_stark_info(stark_info)?;
+    // rootCVadcopFinal(4) | is_vadcop_final_proof(1) | the program's publics.
+    if info.n_publics < 5 {
+        bail!("gen_recursion_final: the recursivef has {} publics, fewer than rootC and the flag", info.n_publics);
+    }
     let (mut decl, mut wire, mut at) = (String::new(), String::new(), 0u64);
-    for i in inputs.iter().filter(|i| i.origin != Origin::ProofValues) {
+    for i in proof_inputs(&info).map_err(anyhow::Error::msg)? {
         let shape: String = i.dims.iter().map(|d| format!("[{d}]")).collect();
         decl += &format!("    signal input {}{shape};\n", i.name);
-        if i.origin == Origin::Publics {
-            wire += &format!("    f.publics <== {};\n", i.name);
-            continue;
+        match i.origin {
+            Origin::Publics => wire += &format!("    f.publics <== {};\n", i.name),
+            Origin::ProofValues => bail!("gen_recursion_final: the final circuit takes no proof values"),
+            Origin::Proof | Origin::Unread => {
+                // Row-major flattening: nested loops over the dims, the flat index from the loop variables.
+                let vars: Vec<String> = (0..i.dims.len()).map(|d| format!("i{d}")).collect();
+                let mut flat = String::from("0");
+                for (v, d) in vars.iter().zip(&i.dims) {
+                    flat = format!("({flat}) * {d} + {v}");
+                }
+                let idx: String = vars.iter().map(|v| format!("[{v}]")).collect();
+                let mut line = format!("f.proof[{at} + {flat}] <== {}{idx};", i.name);
+                for (v, d) in vars.iter().zip(&i.dims).rev() {
+                    line = format!("for (var {v} = 0; {v} < {d}; {v}++) {{ {line} }}");
+                }
+                wire += &format!("    {line}\n");
+                at += i.words();
+            }
         }
-        // Row-major flattening: nested loops over the dims, the flat index from the loop variables.
-        let vars: Vec<String> = (0..i.dims.len()).map(|d| format!("i{d}")).collect();
-        let mut flat = String::from("0");
-        for (v, d) in vars.iter().zip(&i.dims) {
-            flat = format!("({flat}) * {d} + {v}");
-        }
-        let mut line = format!(
-            "f.proof[{at} + {flat}] <== {}{};",
-            i.name,
-            vars.iter().map(|v| format!("[{v}]")).collect::<String>()
-        );
-        for (v, d) in vars.iter().zip(&i.dims).rev() {
-            line = format!("for (var {v} = 0; {v} < {d}; {v}++) {{ {line} }}");
-        }
-        wire += &format!("    {line}\n");
-        at += i.dims.iter().product::<u64>();
     }
-    Ok(head(verifier_filenames, "final_snark.circom", &[stark_info], false, custom)
+    Ok(head(verifier_filenames, "final_snark.circom", &[stark_info], false, info.stark_struct.merkle_tree_custom)
         + &defs
         + &format!(
-            "\ntemplate Main() {{\n    signal output publicsHash;\n{decl}\n    component f = FinalSnark({n_sha}, {n_defs});\n{wire}    publicsHash <== f.publicsHash;\n}}\n"
+            "\ntemplate Main() {{\n    signal output publicsHash;\n{decl}\n    component f = FinalSnark({n_sha}, {n_defs}, {});\n{wire}    publicsHash <== f.publicsHash;\n}}\n",
+            vk_pos.map_or(-1, |p| p as i64)
         )
         + &main_line(&[], "Main()"))
 }
@@ -138,7 +142,6 @@ pub fn gen_recursive1(
     stark_info: &Value,
     verifier_filenames: &[String],
     vadcop_info: &Value,
-    _airgroup_id: usize,
     opts: &CircomGenOptions,
 ) -> Result<String> {
     let k = opts.batch_size.max(1);
@@ -203,7 +206,7 @@ pub fn gen_vadcop_final(
     Ok(head(verifier_filenames, "final_vadcop.circom", &sis, true, true)
         + &vd
         + "\n"
-        + &gen_verify_global_constraints(vadcop_info)
+        + &gen_verify_global_constraints(vadcop_info)?
         + &main_line(&GLOBALS[..1], &format!("VadcopFinal({n_ag})")))
 }
 
@@ -345,6 +348,20 @@ fn program_vk(publics: Option<&Value>) -> (bool, bool) {
     (vk(defs.first()) || vk(defs.last()), vk(defs.first()))
 }
 
+/// The program VK's position in the real publics (its `initialPos`), if the publics carry one.
+fn program_vk_pos(publics: Option<&Value>) -> Result<Option<u64>> {
+    let (has_vk, first_is_vk) = program_vk(publics);
+    if !has_vk {
+        return Ok(None);
+    }
+    let defs = publics.and_then(|v| v["definitions"].as_array()).context("publics: no definitions")?;
+    let d = if first_is_vk { defs.first() } else { defs.last() }.context("publics: no definitions")?;
+    match (d["initialPos"].as_u64(), d["nValues"].as_u64()) {
+        (Some(pos), Some(4)) => Ok(Some(pos)),
+        _ => bail!("publics: the program VK needs an initialPos and nValues 4"),
+    }
+}
+
 fn capitalise(s: &str) -> String {
     let mut chars = s.chars();
     match chars.next() {
@@ -369,6 +386,7 @@ mod tests {
     /// head of its verifier read.
     pub(super) fn recursivef_stark_info(merkle_tree_custom: bool) -> Value {
         json!({
+            "keyVersion": proofman_common::KEY_VERSION,
             "starkStruct": {
                 "verificationHashType": "BN128",
                 "numQueries": 4,
@@ -414,8 +432,9 @@ mod tests {
         gen_recursion_final(&recursivef_stark_info(merkle_tree_custom), &verifiers, Some(&Value::Null)).unwrap()
     }
 
+    /// A custom-tree verifier wants the pragma on the main too; otherwise there is none.
     #[test]
-    fn final_declares_custom_templates_for_custom_trees() {
+    fn final_pragma_follows_custom_trees() {
         let out = final_circuit(true);
         assert!(
             out.starts_with(
@@ -423,13 +442,78 @@ mod tests {
             ),
             "out:\n{out}"
         );
-    }
-
-    #[test]
-    fn final_without_custom_trees_is_unchanged() {
         let out = final_circuit(false);
         assert!(out.starts_with("pragma circom 2.1.0;\n\ninclude \"recursivef.verifier.circom\";\n"), "out:\n{out}");
         assert!(!out.contains("custom_templates"), "out:\n{out}");
+    }
+
+    /// The final circuit's main: the publics definitions as data, the static FinalSnark.
+    #[test]
+    fn recursion_final_is_data_over_final_snark() {
+        let si = recursivef_stark_info(false);
+        let out = gen_recursion_final(&si, &["v.circom".into()], None).unwrap();
+        assert!(out.contains("include \"final_snark.circom\";"), "{out}");
+        assert!(out.contains("function vd_DEFS() { return [0]; }"), "{out}");
+        assert!(
+            out.contains("component f = FinalSnark(0, 0, -1);") && out.ends_with("\ncomponent main = Main();\n"),
+            "{out}"
+        );
+    }
+
+    /// The main declares exactly the keys `proof2json` (after `dropEmpty`) and gen_recursivef_proof's
+    /// publics emit: here with no grinding (the nonce is still sent), an empty stage 2 (its path is
+    /// sent, its values are not) and one last level.
+    #[test]
+    fn final_main_declares_the_proof2json_keys() {
+        let mut si = recursivef_stark_info(false);
+        si["mapSectionsN"]["cm2"] = json!(0);
+        si["starkStruct"]["lastLevelVerification"] = json!(1);
+        let out = gen_recursion_final(&si, &["v.circom".into()], None).unwrap();
+        let decls: Vec<&str> = out.lines().filter_map(|l| l.trim().strip_prefix("signal input ")).collect();
+        assert_eq!(
+            decls,
+            [
+                "publics[6];",
+                "root1;",
+                "root2;",
+                "root3;",
+                "evals[2][3];",
+                "s0_valsC[4][3];",
+                "s0_siblingsC[4][4][4];",
+                "s0_last_levelsC[4];",
+                "s0_vals1[4][2];",
+                "s0_siblings1[4][4][4];",
+                "s0_last_levels1[4];",
+                "s0_siblings2[4][4][4];",
+                "s0_last_levels2[4];",
+                "s0_vals3[4][2];",
+                "s0_siblings3[4][4][4];",
+                "s0_last_levels3[4];",
+                "s1_root;",
+                "s1_vals[4][48];",
+                "s1_siblings[4][2][4];",
+                "s1_last_levels[4];",
+                "finalPol[64][3];",
+                "nonce;",
+            ]
+        );
+    }
+
+    /// FinalSnark needs rootC and the flag; it binds a program VK where it sits, and refuses a malformed one.
+    #[test]
+    fn final_binds_the_program_vk_where_it_sits() {
+        let mut si = recursivef_stark_info(false);
+        si["nPublics"] = json!(4);
+        assert!(gen_recursion_final(&si, &["v.circom".into()], None).unwrap_err().to_string().contains("publics"));
+        let si = recursivef_stark_info(false);
+        let vk = |n: u64| {
+            json!({"nPublics": 5, "definitions": [{"name": "out", "initialPos": 0, "nValues": 1, "chunks": [1, 64]},
+            {"name": "vk", "initialPos": 1, "nValues": n, "chunks": [1, 64], "verificationKey": true}]})
+        };
+        let out = gen_recursion_final(&si, &["v.circom".into()], Some(&vk(4))).unwrap();
+        assert!(out.lines().any(|l| l.contains("FinalSnark(") && l.ends_with(", 1);")), "{out}");
+        let err = gen_recursion_final(&si, &["v.circom".into()], Some(&vk(1))).unwrap_err().to_string();
+        assert!(err.contains("nValues 4"), "{err}");
     }
 
     /// The project's verifier of a program whose publics end with its verification key, extending
@@ -571,7 +655,7 @@ mod main_tests {
     }
 
     fn gen(k: usize, has_compressor: bool) -> String {
-        gen_recursive1(&stark_info(), &["v.circom".into()], &vadcop(), 0, &opts(k, has_compressor)).unwrap()
+        gen_recursive1(&stark_info(), &["v.circom".into()], &vadcop(), &opts(k, has_compressor)).unwrap()
     }
 
     /// A main is data: the verifier's include, the keys' dispatch, the vadcop data and the main line.
@@ -598,7 +682,7 @@ mod main_tests {
     #[test]
     fn past_the_cap_it_refuses() {
         let o = opts(super::super::MAX_RECURSIVE1_BATCH + 1, false);
-        assert!(gen_recursive1(&stark_info(), &["v.circom".into()], &vadcop(), 0, &o).is_err());
+        assert!(gen_recursive1(&stark_info(), &["v.circom".into()], &vadcop(), &o).is_err());
     }
 
     /// Each recursive2 accepts only its own airgroup's types, and so does each final slot.
@@ -639,7 +723,7 @@ mod main_tests {
             fin.contains("function svd_nBits(k) { if (k == 0) { return sv0_nBits(); } return sv1_nBits(); }"),
             "{fin}"
         );
-        assert!(fin.contains("template VerifyGlobalConstraints() {"), "{fin}");
+        assert!(fin.contains("template GlobalConstraints(nAg, maxAgg, nPub, nPV, nCh) {"), "{fin}");
         assert!(fin.ends_with("component main {public [publics]} = VadcopFinal(2);\n"), "{fin}");
     }
 }
@@ -648,28 +732,6 @@ mod main_tests {
 mod solidity_version_tests {
     use super::*;
 
-    /// The final circuit's main: the publics definitions as data, the static FinalSnark.
-    #[test]
-    fn recursion_final_is_data_over_final_snark() {
-        let si = super::tests::recursivef_stark_info(false);
-        let out = gen_recursion_final(&si, &["v.circom".into()], None).unwrap();
-        // The zkin addresses the inputs by name: the proof's, as the recursivef proof names them.
-        for decl in [
-            "signal input publics[6];",
-            "signal input root1;",
-            "signal input evals[2][3];",
-            "signal input s0_valsC[4][3];",
-            "signal input finalPol[",
-        ] {
-            assert!(out.contains(decl), "missing `{decl}`:\n{out}");
-        }
-        assert!(out.contains("include \"final_snark.circom\";"), "{out}");
-        assert!(out.contains("function vd_DEFS() { return [0]; }"), "{out}");
-        assert!(
-            out.contains("component f = FinalSnark(0, 0);") && out.ends_with("\ncomponent main = Main();\n"),
-            "{out}"
-        );
-    }
     fn zisk_publics() -> Value {
         serde_json::json!({
             "nPublics": 68,

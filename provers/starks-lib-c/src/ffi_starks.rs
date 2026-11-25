@@ -161,10 +161,6 @@ pub fn get_map_totaln_c(p_stark_info: *mut c_void) -> u64 {
     unsafe { get_map_total_n(p_stark_info) }
 }
 
-pub fn get_tree_size_c(p_stark_info: *mut c_void) -> u64 {
-    unsafe { get_tree_size(p_stark_info) }
-}
-
 pub fn get_map_totaln_custom_commits_fixed_c(p_stark_info: *mut c_void) -> u64 {
     unsafe { get_map_total_n_custom_commits_fixed(p_stark_info) }
 }
@@ -175,6 +171,10 @@ pub fn get_proof_size_c(p_stark_info: *mut c_void) -> u64 {
 
 pub fn get_n_publics_c(p_stark_info: *mut c_void) -> u64 {
     unsafe { get_n_publics(p_stark_info) }
+}
+
+pub fn get_proof_values_size_c(p_stark_info: *mut c_void) -> u64 {
+    unsafe { get_proof_values_size(p_stark_info) }
 }
 
 pub fn set_hash_family_c(family: &str) {
@@ -233,10 +233,6 @@ pub fn load_const_pols_c(pConstPolsAddress: *mut u8, const_filename: &str, const
             const_size,
         );
     }
-}
-
-pub fn get_const_size_c(pStarkInfo: *mut c_void) -> u64 {
-    unsafe { get_const_size(pStarkInfo) }
 }
 
 pub fn get_const_tree_size_c(pStarkInfo: *mut c_void) -> u64 {
@@ -401,14 +397,6 @@ pub fn get_max_n_tmp1_c(p_expressions_bin: *mut c_void) -> u64 {
 
 pub fn get_max_n_tmp3_c(p_expressions_bin: *mut c_void) -> u64 {
     unsafe { get_max_n_tmp3(p_expressions_bin) }
-}
-
-pub fn get_max_n_args_c(p_expressions_bin: *mut c_void) -> u64 {
-    unsafe { get_max_args(p_expressions_bin) }
-}
-
-pub fn get_max_n_ops_c(p_expressions_bin: *mut c_void) -> u64 {
-    unsafe { get_max_ops(p_expressions_bin) }
 }
 
 pub fn get_operations_quotient_c(p_expressions_bin: *mut c_void, p_stark_info: *mut c_void) -> u64 {
@@ -662,10 +650,6 @@ pub fn calculate_witness_expressions_c(p_setup: *mut c_void, p_steps_params: *mu
     unsafe {
         calculate_witness_expr(p_setup, p_steps_params as *mut std::os::raw::c_void);
     }
-}
-
-pub fn custom_commit_size_c(p_setup: *mut c_void, commit_id: u64) -> u64 {
-    unsafe { custom_commit_size(p_setup, commit_id) }
 }
 
 pub fn load_custom_commit_c(
@@ -1383,16 +1367,6 @@ pub fn write_fixed_cols_bin_c(
     }
 }
 
-pub fn get_omp_max_threads_c() -> u64 {
-    unsafe { get_omp_max_threads() }
-}
-
-pub fn set_omp_num_threads_c(num_threads: u64) {
-    unsafe {
-        set_omp_num_threads(num_threads);
-    }
-}
-
 pub fn gen_device_buffers_c(
     node_rank: u32,
     node_n_processes: u32,
@@ -1650,10 +1624,6 @@ pub fn acquire_first_gpu_buffer_c(d_buffers: *mut ::std::os::raw::c_void) {
 
 pub fn release_first_gpu_buffer_c(d_buffers: *mut ::std::os::raw::c_void) {
     unsafe { release_first_gpu_buffer(d_buffers) }
-}
-
-pub fn is_first_gpu_buffer_borrowed_c(d_buffers: *mut ::std::os::raw::c_void) -> bool {
-    unsafe { is_first_gpu_buffer_borrowed(d_buffers) != 0 }
 }
 
 /// Device of the first GPU (my_gpu_ids[0]); not always 0 (NUMA can reorder).
@@ -1971,12 +1941,6 @@ pub type GpuWitnessFillFn = unsafe extern "C" fn(
 /// Forget every registered kernel, so a later prover in the process does not inherit them.
 pub fn gpu_witness_clear_c(d_buffers: *mut c_void) {
     unsafe { gpu_witness_clear(d_buffers) }
-}
-
-/// Whether a kernel is registered for this air, i.e. the prover produces its witness on the
-/// device. The single source of truth for staging kernel inputs vs filling a trace.
-pub fn gpu_witness_is_registered_c(d_buffers: *mut c_void, airgroup_id: u64, air_id: u64) -> bool {
-    unsafe { gpu_witness_is_registered(d_buffers, airgroup_id, air_id) == 1 }
 }
 
 /// Declare that this air's stage-1 witness comes from `fill`, not a host upload.

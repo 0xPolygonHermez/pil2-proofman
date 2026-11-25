@@ -35,7 +35,7 @@ pub fn shplonk_info(
     if cfg.opening != Opening::Shplonk {
         return Err(PilInfoError::DeepPasses);
     }
-    let crate::pipeline::CorePass { cs, im, chk, lay, exprs, ops, air_name } =
+    let crate::pipeline::CorePass { cs, im, chk, lay, exprs, ops } =
         crate::pipeline::run(pilout, airgroup_id, air_id, cfg, options.im_pols_stages)?;
     let c_exp_id = exprs.roles.c_exp;
     let e = emit_prover(&cs, &im, &lay, &ops, exprs, &EmitParams { air_id, airgroup_id })?;
@@ -45,7 +45,7 @@ pub fn shplonk_info(
     let q_deg = if top == 0 { -1 } else { i64::from(chk.q_deg) };
     let m = e.maps;
     let setup = ShplonkAir {
-        name: air_name,
+        name: cs.name.clone(),
         pil_power: cs.n_rows_bits,
         n_stages: cs.n_stages as usize,
         cm_pols_map: m.cm,

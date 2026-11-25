@@ -8,9 +8,9 @@ use proofman_fields::Bn128;
 
 use crate::plonk2pil::field::PlonkField;
 
-/// `x` in `F`, which has to be BN128: the constants are its elements.
-pub fn lift<F: PlonkField>(x: &Bn128) -> F {
-    F::from_canonical_le(&x.to_le_bytes()).expect("PoseidonT's constants are elements of BN128")
+/// `x` in `F`; `None` unless `F` holds BN128's elements.
+pub fn lift<F: PlonkField>(x: &Bn128) -> Option<F> {
+    F::from_canonical_le(&x.to_le_bytes())
 }
 
 /// The lanes of the state.

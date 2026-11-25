@@ -54,16 +54,15 @@ inline DeepTables buildDeepTables(const StarkInfo &si)
     t.openings = si.openingPoints;
 
     std::vector<std::vector<DeepTerm>> byOpening(si.openingPoints.size());
-    std::map<std::tuple<int, uint64_t, uint64_t>, uint32_t> polIndex;
+    std::map<std::tuple<uint64_t, uint64_t, uint64_t>, uint32_t> polIndex;
     for (uint64_t i = 0; i < si.evMap.size(); i++) {
         const EvMap &ev = si.evMap[i];
         if (ev.openingPos >= byOpening.size()) {
             zklog.error("buildDeepTables: evMap entry " + std::to_string(i) + " has openingPos out of range");
             exitProcess();
         }
-        const uint64_t commitKey = ev.type == EvMap::eType::custom ? ev.commitId : 0;
         const uint32_t vf2Exp =
-            polIndex.emplace(std::make_tuple((int)ev.type, commitKey, ev.id), (uint32_t)polIndex.size()).first->second;
+            polIndex.emplace(StarkInfo::colKey(ev.type, ev.commitId, ev.id), (uint32_t)polIndex.size()).first->second;
         const PolMap &pol = si.evPol(ev);
         byOpening[ev.openingPos].push_back(
             DeepTerm{(uint32_t)i, vf2Exp, ev.type, ev.id, ev.commitId, pol.stage, pol.stagePos, pol.dim});

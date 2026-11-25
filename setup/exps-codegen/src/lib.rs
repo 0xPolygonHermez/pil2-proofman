@@ -168,13 +168,14 @@ fn make_sym(si: &StarkInfo, phase: &str) -> String {
     format!("{phase}_a{}_{}_b{}_e{}", si.airgroup_id, si.air_id, si.stark_struct.n_bits, si.c_exp_id)
 }
 
+fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> std::result::Result<T, String> {
+    let bytes = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    serde_json::from_slice(&bytes).map_err(|e| format!("{}: {e}", path.display()))
+}
+
 /// Parse one starkinfo + sibling expressionsinfo into a Candidate, or return a
-/// skip reason (string), or `None` if the file pair isn't a codegen target.
-fn load_candidate(
-    stark_info_path: &Path,
-    root: &Path,
-    cap: usize,
-) -> Result<Option<Candidate>, Option<(String, String)>> {
+/// skip reason, or `None` if there is no expressionsinfo (not a codegen target).
+fn load_candidate(stark_info_path: &Path, root: &Path, cap: usize) -> Result<Candidate, Option<(String, String)>> {
     let air_dir = stark_info_path.parent().unwrap();
     let fname = stark_info_path.file_name().unwrap().to_string_lossy();
     let base = fname.strip_suffix(".starkinfo.json").unwrap().to_string();
@@ -184,20 +185,12 @@ fn load_candidate(
     }
     let name = air_dir.strip_prefix(root).unwrap_or(air_dir).to_string_lossy().to_string();
 
-    let stark_info: StarkInfo = match std::fs::read(stark_info_path).ok().and_then(|b| serde_json::from_slice(&b).ok())
-    {
-        Some(si) => si,
-        None => return Err(None), // unparseable / not a full AIR starkinfo
-    };
-    let expr_info: ExpressionsInfo =
-        match std::fs::read(&expr_info_path).ok().and_then(|b| serde_json::from_slice(&b).ok()) {
-            Some(ei) => ei,
-            None => return Err(None),
-        };
+    let stark_info: StarkInfo = read_json(stark_info_path).map_err(|e| Some((name.clone(), e)))?;
+    let expr_info: ExpressionsInfo = read_json(&expr_info_path).map_err(|e| Some((name.clone(), e)))?;
 
     let cexp = stark_info.c_exp_id;
     let Some(code) = expr_info.expressions_code.iter().find(|e| e.exp_id == cexp) else {
-        return Err(None); // cExpId not in expressionsCode
+        return Err(Some((name, format!("cExpId {cexp} not in expressionsCode"))));
     };
     let n_ops = code.code.len();
     let nbits = stark_info.stark_struct.n_bits;
@@ -205,7 +198,7 @@ fn load_candidate(
         return Err(Some((name, format!("{n_ops} ops > CAP"))));
     }
     let sym = make_sym(&stark_info, &proof_phase(air_dir));
-    Ok(Some(Candidate { stark_info, expr_info, sym, nbits, cexp, name, n_ops, base }))
+    Ok(Candidate { stark_info, expr_info, sym, nbits, cexp, name, n_ops, base })
 }
 
 /// Generate every AIR's `.exps.so` under `proving_key`. Returns a summary of
@@ -226,7 +219,7 @@ pub fn generate_all(proving_key: &Path, cfg: &GenConfig) -> Result<GenSummary> {
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
     for si_path in find_starkinfos(proving_key) {
         match load_candidate(&si_path, proving_key, cfg.cap) {
-            Ok(Some(c)) => {
+            Ok(c) => {
                 placements.push(Placement {
                     name: c.name.clone(),
                     base: c.base.clone(),
@@ -237,7 +230,6 @@ pub fn generate_all(proving_key: &Path, cfg: &GenConfig) -> Result<GenSummary> {
                     candidates.push(c);
                 }
             }
-            Ok(None) => {}
             Err(Some(skip)) => skipped.push(skip),
             Err(None) => {}
         }
@@ -259,6 +251,21 @@ pub fn generate_all(proving_key: &Path, cfg: &GenConfig) -> Result<GenSummary> {
     Ok(summary)
 }
 
+/// [`generate_all`], logging each skip (the AIR stays on the interpreter) and the totals under `what`.
+pub fn generate_all_logged(proving_key: &Path, cfg: &GenConfig, what: &str) -> Result<GenSummary> {
+    let summary = generate_all(proving_key, cfg)?;
+    for (air, why) in &summary.skipped {
+        tracing::warn!("{what} of {air} skipped (it stays on the interpreter): {why}");
+    }
+    tracing::info!(
+        "{what}: {} generated -> {} .exps.so ({} skipped)",
+        summary.generated.len(),
+        summary.placed,
+        summary.skipped.len()
+    );
+    Ok(summary)
+}
+
 /// Generate the `.exps.so` for a single AIR directory (the dir containing its
 /// `*.starkinfo.json` + `*.expressionsinfo.json`). Returns the `.so` path, or
 /// an error if the AIR was skipped (unhandled operand, over CAP, or spills).
@@ -274,10 +281,9 @@ pub fn generate_air(air_dir: &Path, cfg: &GenConfig) -> Result<PathBuf> {
 
     let root = air_dir;
     let candidate = match load_candidate(&si_path, root, cfg.cap) {
-        Ok(Some(c)) => c,
-        Ok(None) => anyhow::bail!("{} is not a codegen target", air_dir.display()),
+        Ok(c) => c,
         Err(Some((_, why))) => anyhow::bail!("skipped: {why}"),
-        Err(None) => anyhow::bail!("{} missing/invalid expressionsinfo", air_dir.display()),
+        Err(None) => anyhow::bail!("{} has no expressionsinfo", air_dir.display()),
     };
     let placement = Placement {
         name: candidate.name.clone(),

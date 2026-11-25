@@ -115,7 +115,7 @@ fn phases(p: &Params, regime: &ExactRegime) -> Result<Vec<(String, Rational)>, S
 fn report_params(params: &Params, regime: &ExactRegime) -> Result<SecurityReport, SecurityError> {
     let phases = phases(params, regime)?;
     let (weakest_phase, bits) = phases.into_iter().min_by(|a, b| a.1.cmp(&b.1)).expect("a query phase always exists");
-    let min_bits_floor = bits.floor_u32();
+    let min_bits_floor = bits.floor_u32().ok_or_else(|| SecurityError::Gap(format!("{bits} bits past u32")))?;
     Ok(SecurityReport {
         config: format!("{}/{}", if params.stir { "STIR" } else { "FRI" }, regime.name()),
         bchks25_bits: bits,
@@ -129,17 +129,19 @@ fn u32s<T: Copy + TryInto<u32>>(v: &[T]) -> Vec<u32> {
     v.iter().map(|&x| x.try_into().unwrap_or(u32::MAX)).collect()
 }
 
-/// The schedule of a stark struct, with the counts of `queries`/`grinding`/`ood` (all of them
-/// are the solver's, or a built key's).
-fn params_of(ss: &StarkStruct, queries: Vec<u64>, grinding: Vec<u32>, ood: Vec<u64>, batch: u64) -> Params {
-    let (stir, folding, log_degrees, log_domains) = match &ss.low_degree_test {
-        Ldt::Fri(f) => (false, &f.folding_factors, &f.log_degrees, &f.log_domain_sizes),
-        Ldt::Stir(s) => (true, &s.folding_factors, &s.log_degrees, &s.log_domain_sizes),
-    };
+/// A schedule's geometry: STIR or FRI, `(n_bits, n_bits_ext)` and the folding factors, log degrees and log domains.
+type Geometry<'a, T> = (bool, (usize, usize), [&'a [T]; 3]);
+
+/// The schedule of `geometry` with the counts of `queries`/`grinding`/`ood` (the solver's, or a built key's).
+fn params<T: Copy + TryInto<u32>>(
+    (stir, (n_bits, n_bits_ext), [folding, log_degrees, log_domains]): Geometry<T>,
+    (queries, grinding, ood): (Vec<u64>, Vec<u32>, Vec<u64>),
+    batch: u64,
+) -> Params {
     Params {
         stir,
-        n_bits: ss.n_bits as u32,
-        n_bits_ext: ss.n_bits_ext as u32,
+        n_bits: n_bits as u32,
+        n_bits_ext: n_bits_ext as u32,
         folding: u32s(folding),
         log_degrees: u32s(log_degrees),
         log_domains: u32s(log_domains),
@@ -148,6 +150,16 @@ fn params_of(ss: &StarkStruct, queries: Vec<u64>, grinding: Vec<u32>, ood: Vec<u
         ood,
         batch,
     }
+}
+
+/// `params` of a stark struct's geometry.
+fn params_of(ss: &StarkStruct, queries: Vec<u64>, grinding: Vec<u32>, ood: Vec<u64>, batch: u64) -> Params {
+    let bits = (ss.n_bits, ss.n_bits_ext);
+    let geometry = match &ss.low_degree_test {
+        Ldt::Fri(f) => (false, bits, [&f.folding_factors[..], &f.log_degrees, &f.log_domain_sizes]),
+        Ldt::Stir(s) => (true, bits, [&s.folding_factors[..], &s.log_degrees, &s.log_domain_sizes]),
+    };
+    params(geometry, (queries, grinding, ood), batch)
 }
 
 /// The query and grinding counts a stark struct already carries.
@@ -160,13 +172,14 @@ fn struct_counts(ss: &StarkStruct) -> (Vec<u64>, Vec<u32>) {
 
 /// The regime of a solved test, from its gap (exact value of the solver's f64).
 fn regime_of(identifier: &str, gap: f64, base_mu: u32) -> Result<ExactRegime, SecurityError> {
+    let gap = Rational::from_f64(gap).ok_or_else(|| SecurityError::Gap(format!("non-finite gap {gap}")))?;
     match identifier {
         "UDR" => {
             let rho = Rational::pow2(-(base_mu as i64));
-            let alpha = Rational::from_f64(gap) * Rational::int(20) / (Rational::int(1) - rho) - Rational::int(1);
+            let alpha = gap * Rational::int(20) / (Rational::int(1) - rho) - Rational::int(1);
             Ok(ExactRegime::Udr { alpha })
         }
-        "JBR" => Ok(ExactRegime::Jbr { eta: Rational::from_f64(gap) }),
+        "JBR" => Ok(ExactRegime::Jbr { eta: gap }),
         other => Err(SecurityError::Gap(format!("unknown regime {other:?}"))),
     }
 }
@@ -180,37 +193,17 @@ pub fn report_built(
     proximity_gap: f64,
 ) -> Result<SecurityReport, SecurityError> {
     use proofman_common::LowDegreeTest as Built;
-    let (stir, folding, log_degrees, log_domains, queries, grinding, ood) = match &ss.low_degree_test {
-        Built::Fri(f) => (
-            false,
-            &f.folding_factors,
-            &f.log_degrees,
-            &f.log_domain_sizes,
-            vec![f.num_queries],
-            vec![f.grinding_bits_queries as u32],
-            vec![],
-        ),
-        Built::Stir(s) => (
-            true,
-            &s.folding_factors,
-            &s.log_degrees,
-            &s.log_domain_sizes,
-            s.num_queries.clone(),
-            u32s(&s.grinding_bits_queries),
-            vec![1; s.folding_factors.len().saturating_sub(1)],
-        ),
-    };
-    let params = Params {
-        stir,
-        n_bits: ss.n_bits as u32,
-        n_bits_ext: ss.n_bits_ext as u32,
-        folding: u32s(folding),
-        log_degrees: u32s(log_degrees),
-        log_domains: u32s(log_domains),
-        queries,
-        grinding,
-        ood,
-        batch: batch_size,
+    let bits = (ss.n_bits as usize, ss.n_bits_ext as usize);
+    let params = match &ss.low_degree_test {
+        Built::Fri(f) => {
+            let counts = (vec![f.num_queries], vec![f.grinding_bits_queries as u32], vec![]);
+            params((false, bits, [&f.folding_factors[..], &f.log_degrees, &f.log_domain_sizes]), counts, batch_size)
+        }
+        Built::Stir(s) => {
+            let ood = vec![1; s.folding_factors.len().saturating_sub(1)];
+            let counts = (s.num_queries.clone(), u32s(&s.grinding_bits_queries), ood);
+            params((true, bits, [&s.folding_factors[..], &s.log_degrees, &s.log_domain_sizes]), counts, batch_size)
+        }
     };
     schedule::validate(&params).map_err(SecurityError::Schedule)?;
     let regime = regime_of(regime, proximity_gap, params.mu(0))?;
@@ -281,7 +274,7 @@ mod tests {
             initial_folding_factor: Some(3),
             ..Default::default()
         };
-        let ss = generate_stark_struct(&s, 20, "blake3");
+        let ss = generate_stark_struct(&s, 20, proofman_common::hash_family::HashFamily::Blake3);
         let m = match &ss.low_degree_test {
             Ldt::Stir(s) => s.folding_factors.len(),
             _ => unreachable!(),
@@ -300,11 +293,16 @@ mod tests {
     /// A key whose gap is not positive (it would overstate the query bits) or whose regime is unknown is refused.
     #[test]
     fn bad_regime_gap_is_refused() {
-        let ss = generate_stark_struct(&StarkSettings::default(), 20, "blake3");
+        let ss = generate_stark_struct(&StarkSettings::default(), 20, proofman_common::hash_family::HashFamily::Blake3);
         let p = params_of(&ss, vec![60], vec![0], vec![], 1);
-        for regime in [ExactRegime::Jbr { eta: Rational::int(0) }, ExactRegime::Udr { alpha: Rational::int(-2) }] {
-            assert!(matches!(phases(&p, &regime), Err(SecurityError::Gap(_))));
+        let (jbr, udr) = (|eta| ExactRegime::Jbr { eta }, |alpha| ExactRegime::Udr { alpha });
+        for regime in
+            [jbr(Rational::int(0)), jbr(Rational::new(-1, 300)), udr(Rational::int(-1)), udr(Rational::int(-2))]
+        {
+            assert!(matches!(phases(&p, &regime), Err(SecurityError::Gap(_))), "{regime:?}");
         }
+        assert!(jbr(Rational::new(1, 300)).admits(1) && udr(Rational::int(0)).admits(1));
         assert!(matches!(regime_of("XYZ", 0.01, 1), Err(SecurityError::Gap(_))));
+        assert!(matches!(regime_of("JBR", f64::NAN, 1), Err(SecurityError::Gap(_))));
     }
 }

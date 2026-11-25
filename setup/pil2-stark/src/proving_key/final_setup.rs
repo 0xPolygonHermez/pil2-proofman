@@ -109,17 +109,16 @@ pub fn gen_final_setup(config: &FinalSetupConfig<'_>, witness_tracker: &WitnessT
             batch_size: 1,
         },
     });
-    let hash = family.as_str();
     ctx.settings = StarkSettings {
-        initial_blowup_factor: Some(hf::final_blowup_factor(hash)),
+        initial_blowup_factor: Some(hf::final_blowup_factor(family)),
         initial_folding_factor: Some(4),
         // Per family: poseidon's 22 is what its committed verifiers encode, blake3 affords 24.
-        grinding_bits: Some(hf::final_grinding_bits(hash)),
+        grinding_bits: Some(hf::final_grinding_bits(family)),
         // The family's terminal FRI domain (log2) minus the blowup, as a log-degree bound: poseidon's
         // 5 - 4 = 1 is what its committed verifier encodes; a solved schedule takes it as a ceiling.
-        final_degree: Some(hf::fri_terminal_degree(hash) - hf::final_blowup_factor(hash)),
+        final_degree: Some(hf::fri_terminal_degree(family) - hf::final_blowup_factor(family)),
         // Paid by the recursivef that verifies this proof: the family value every recursion layer takes.
-        last_level_verification: hf::recursive_last_level_verification(hash),
+        last_level_verification: hf::recursive_last_level_verification(family),
         ..Default::default()
     };
     ctx.key = crate::pil::stark_setup::KeyIdentity { name: Some("vadcop_final".into()), ..Default::default() };

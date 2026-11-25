@@ -418,17 +418,18 @@ mod tests {
         assert!(ss.low_degree_test.fri().is_none());
     }
 
-    /// A starkinfo without the current `keyVersion` is a stale setup.
+    /// A starkinfo without the current `keyVersion`, or with another, is a stale setup.
     #[test]
-    #[should_panic(expected = "regenerate the setup")]
-    fn old_starkinfo_without_key_version_is_rejected() {
-        StarkInfo::from_json(r#"{"nPublics": 0}"#);
-    }
-
-    #[test]
-    #[should_panic(expected = "regenerate the setup")]
-    fn starkinfo_with_wrong_key_version_is_rejected() {
-        StarkInfo::from_json(r#"{"keyVersion": 1}"#);
+    fn a_starkinfo_of_another_key_version_is_rejected() {
+        let version = |j: &str| match StarkInfo::try_from_json(j) {
+            Err(e @ StarkInfoError::KeyVersion(v)) => {
+                assert!(e.to_string().contains("regenerate the setup"));
+                v
+            }
+            other => panic!("{j}: {other:?}"),
+        };
+        assert_eq!(version(r#"{"nPublics": 0}"#), None);
+        assert_eq!(version(r#"{"keyVersion": 1}"#), Some(1));
     }
 
     /// The C++ prover's constant is the same `KEY_VERSION`.

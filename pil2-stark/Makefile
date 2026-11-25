@@ -398,17 +398,15 @@ $(LIB_DIR_GPU)/$(TARGET_STARKS_LIB_GPU): $(OBJS_STARKS_LIB_GPU)
 # The STIR GPU tests drive the real device primitives (transcript, Merkle, NTT, grinding), so they
 # link the whole GPU archive rather than a subset. gtest_main goes first: the archive also holds a main.
 DEPS_STIR_GPU := $(BUILD_DIR_GPU)/./src/starkpil/stir/tests/test_stir_gpu.cu.d $(BUILD_DIR_GPU)/./src/starkpil/stir/tests/bench_stir_gpu.cu.d
-$(BUILD_DIR_GPU)/$(TARGET_STIR_TEST_GPU): $(BUILD_DIR_GPU)/./src/starkpil/stir/tests/test_stir_gpu.cu.o $(LIB_DIR_GPU)/$(TARGET_STARKS_LIB_GPU)
-	$(NVCC) $(NVCCFLAGS) -o $@ $< -lgtest_main -lgtest -L$(LIB_DIR_GPU) -lstarksgpu -lgomp $(LDFLAGS_GPU) -Lexternal/blst -lblst -L/usr/lib/x86_64-linux-gnu/openmpi/lib -lmpi -lgmpxx -lcrypto -ldl -lrt
-
-$(BUILD_DIR_GPU)/$(TARGET_INTERP_TEST_GPU): $(BUILD_DIR_GPU)/./src/starkpil/expressions/tests/test_interpreter_gpu.cu.o $(LIB_DIR_GPU)/$(TARGET_STARKS_LIB_GPU)
-	$(NVCC) $(NVCCFLAGS) -o $@ $< -lgtest_main -lgtest -L$(LIB_DIR_GPU) -lstarksgpu -lgomp $(LDFLAGS_GPU) -Lexternal/blst -lblst -L/usr/lib/x86_64-linux-gnu/openmpi/lib -lmpi -lgmpxx -lcrypto -ldl -lrt
-
-$(BUILD_DIR_GPU)/$(TARGET_DEEP_TEST_GPU): $(BUILD_DIR_GPU)/./src/starkpil/deep/tests/test_fri_expression_gpu.cu.o $(LIB_DIR_GPU)/$(TARGET_STARKS_LIB_GPU)
-	$(NVCC) $(NVCCFLAGS) -o $@ $< -lgtest_main -lgtest -L$(LIB_DIR_GPU) -lstarksgpu -lgomp $(LDFLAGS_GPU) -Lexternal/blst -lblst -L/usr/lib/x86_64-linux-gnu/openmpi/lib -lmpi -lgmpxx -lcrypto -ldl -lrt
-
-$(BUILD_DIR_GPU)/$(TARGET_STIR_BENCH_GPU): $(BUILD_DIR_GPU)/./src/starkpil/stir/tests/bench_stir_gpu.cu.o $(LIB_DIR_GPU)/$(TARGET_STARKS_LIB_GPU)
-	$(NVCC) $(NVCCFLAGS) -o $@ $< -lgtest_main -lgtest -L$(LIB_DIR_GPU) -lstarksgpu -lgomp $(LDFLAGS_GPU) -Lexternal/blst -lblst -L/usr/lib/x86_64-linux-gnu/openmpi/lib -lmpi -lgmpxx -lcrypto -ldl -lrt
+# GPU gtest binary: $(1) = target, $(2) = its one .cu source.
+define GTEST_GPU
+$$(BUILD_DIR_GPU)/$(1): $$(BUILD_DIR_GPU)/./$(2).o $$(LIB_DIR_GPU)/$$(TARGET_STARKS_LIB_GPU)
+	$$(NVCC) $$(NVCCFLAGS) -o $$@ $$< -lgtest_main -lgtest -L$$(LIB_DIR_GPU) -lstarksgpu -lgomp $$(LDFLAGS_GPU) -Lexternal/blst -lblst -L/usr/lib/x86_64-linux-gnu/openmpi/lib -lmpi -lgmpxx -lcrypto -ldl -lrt
+endef
+$(eval $(call GTEST_GPU,$(TARGET_STIR_TEST_GPU),src/starkpil/stir/tests/test_stir_gpu.cu))
+$(eval $(call GTEST_GPU,$(TARGET_INTERP_TEST_GPU),src/starkpil/expressions/tests/test_interpreter_gpu.cu))
+$(eval $(call GTEST_GPU,$(TARGET_DEEP_TEST_GPU),src/starkpil/deep/tests/test_fri_expression_gpu.cu))
+$(eval $(call GTEST_GPU,$(TARGET_STIR_BENCH_GPU),src/starkpil/stir/tests/bench_stir_gpu.cu))
 
 $(BUILD_DIR)/$(TARGET_BCT): $(OBJS_BCT)
 	$(CXX) $(OBJS_BCT) $(CXXFLAGS) -o $@ $(LDFLAGS) $(CFLAGS) $(CPPFLAGS)

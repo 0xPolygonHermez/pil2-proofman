@@ -22,14 +22,6 @@ impl ExprChild {
             ExprChild::Inline(expr) => expr,
         }
     }
-
-    /// Return the arena index if this is an `Id` variant, else `None`.
-    pub fn as_id(&self) -> Option<ExprId> {
-        match self {
-            ExprChild::Id(id) => Some(*id),
-            ExprChild::Inline(_) => None,
-        }
-    }
 }
 
 /// A single expression node in the arena.

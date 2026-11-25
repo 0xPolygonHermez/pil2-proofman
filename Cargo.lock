@@ -1069,7 +1069,6 @@ dependencies = [
  "indexmap",
  "num-bigint",
  "pil2-pilout",
- "proofman-util",
  "serde",
  "serde_json",
  "thiserror",

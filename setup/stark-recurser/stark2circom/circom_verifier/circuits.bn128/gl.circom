@@ -1,7 +1,7 @@
 pragma circom 2.1.0;
 
-include "bitifyT.circom";
-include "lessthangl.circom";
+// The Goldilocks ops of both field families: the includer brings its family's lessthangl.circom
+// (LessThanGoldilocks, LessThan64Bits and the range check GLRangeBits).
 include "utils.circom";
 
 // Given an integer a, computes a % GL
@@ -16,7 +16,7 @@ template GLNorm() {
 
     var maxQuotientBits = log2((in.maxNum - 1) \ p) + 1;
 
-    _ <== Num2BitsT(maxQuotientBits)(k);
+    GLRangeBits(maxQuotientBits)(k);
     out <== LessThanGoldilocks()(value);
 }
 
@@ -72,7 +72,7 @@ template GLMul() {
     var maxQuotientBits = log2((ina.maxNum * inb.maxNum - 1) \ p) + 1;
 
 
-    _ <== Num2BitsT(maxQuotientBits)(k);
+    GLRangeBits(maxQuotientBits)(k);
     out <== LessThan64Bits()(mul);
 
 }
@@ -170,7 +170,7 @@ template GLCMulAdd() {
     out.maxNum = 0xFFFFFFFFFFFFFFFF;
 
     for (var i = 0; i<3; i++) {
-        _ <== Num2BitsT(maxQuotientBits)(k[i]);
+        GLRangeBits(maxQuotientBits)(k[i]);
         out[i] <== LessThan64Bits()(muladd[i]);
     }
 }

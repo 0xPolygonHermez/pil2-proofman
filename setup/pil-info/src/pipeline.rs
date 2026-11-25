@@ -19,7 +19,6 @@ pub struct CorePass {
     pub lay: Layout,
     pub exprs: ProverExprs,
     pub ops: Openings,
-    pub air_name: String,
 }
 
 /// The system of air (`airgroup_id`, `air_id`) and its im choice, checked against `cfg`'s degree bound.
@@ -51,17 +50,16 @@ pub fn run(
     im_pols_stages: bool,
 ) -> Result<CorePass> {
     let (cs, im, chk) = search(pilout, airgroup_id, air_id, cfg)?;
-    let air_name = pilout.air_groups[airgroup_id].airs[air_id].name.clone().unwrap_or_default();
     let params = LayoutParams {
         im_pols_stages,
         deep_challenges: cfg.opening == Opening::Deep,
         q_deg: chk.q_deg,
-        air_name: air_name.clone(),
+        air_name: cs.name.clone(),
     };
     let lay = layout(&cs, &im, &params).map_err(|e| failed("layout", &e))?;
     let exprs = to_arena(&cs, &im, &lay)?;
     let ops = openings(&cs, &im, &lay).map_err(|e| failed("openings", &e))?;
-    Ok(CorePass { cs, im, chk, lay, exprs, ops, air_name })
+    Ok(CorePass { cs, im, chk, lay, exprs, ops })
 }
 
 fn failed(step: &str, e: &dyn std::fmt::Debug) -> PilInfoError {

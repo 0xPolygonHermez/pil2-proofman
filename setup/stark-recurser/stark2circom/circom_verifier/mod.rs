@@ -19,9 +19,11 @@ pub(crate) mod lib_params;
 pub(crate) mod constraint_roots;
 pub(crate) mod lib_gl;
 
-use anyhow::{anyhow, bail, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use pil_info::core::dag::format::ConstraintDag;
-use pil_info::core::dag::lower_code::{LowerCtx, LowerTables};
+use pil_info::core::dag::lower_code::{ev_col_ref, LowerCtx, LowerTables};
+use proofman_common::hash_family::HashFamily;
+use proofman_common::{EvMapEType, PolMap, StarkInfo};
 use pil_info::FieldCfg;
 use serde_json::Value;
 
@@ -35,7 +37,7 @@ pub struct Pil2CircomOptions {
     pub enable_input: bool,
     pub input_challenges: bool,
     pub fri_queries_batch_size: Option<usize>,
-    pub hash: String,
+    pub hash: HashFamily,
 }
 
 impl Default for Pil2CircomOptions {
@@ -45,7 +47,7 @@ impl Default for Pil2CircomOptions {
             enable_input: false,
             input_challenges: false,
             fri_queries_batch_size: None,
-            hash: proofman_common::hash_family::DEFAULT_HASH_ID.to_string(),
+            hash: HashFamily::DEFAULT,
         }
     }
 }
@@ -60,8 +62,8 @@ pub fn gen_stark_verifier(
     verifier_info: &Value,
     opts: &Pil2CircomOptions,
 ) -> Result<String> {
-    let hash_type = stark_info["starkStruct"]["verificationHashType"].as_str().unwrap_or("GL");
-    match hash_type {
+    let hash_type = stark_info["starkStruct"]["verificationHashType"].as_str();
+    match hash_type.context("starkStruct.verificationHashType missing")? {
         "GL" => gen_stark_verifier_gl(const_root, stark_info, verifier_info, opts),
         "BN128" => gen_stark_verifier_bn128(const_root, stark_info, verifier_info, opts),
         other => bail!("gen_stark_verifier: unsupported hash type '{other}'"),
@@ -100,48 +102,31 @@ template ConstraintRootsAt(k) {
 }
 
 /// The validated constraint DAG of `vi` and the resolver of `si`.
-pub(crate) fn dag_and_ctx(si: &Value, vi: &Value) -> Result<(ConstraintDag, LowerCtx)> {
+pub(crate) fn dag_and_ctx(si: &StarkInfo, vi: &Value) -> Result<(ConstraintDag, LowerCtx)> {
     let dag = ConstraintDag::from_verifierinfo(vi, &FieldCfg::goldilocks()).map_err(|e| anyhow!("{e:?}"))?;
-    let ctx = LowerTables::from_starkinfo(si).and_then(LowerCtx::new).map_err(|e| anyhow!("{e:?}"))?;
+    let ctx = LowerCtx::new(lower_tables(si)?).map_err(|e| anyhow!("{e:?}"))?;
     Ok((dag, ctx))
 }
 
-#[cfg(test)]
-mod render_reference {
-    /// The final circuit of a recursivef and its BN128 verifier:
-    ///   BN_SI=<starkinfo> BN_VI=<verifierinfo> BN_VK=<verkey.json> BN_HASH=<family> BN_PUB=<publics_info.json> BN_OUT=<dir>
-    #[test]
-    #[ignore]
-    fn render_bn128_final() {
-        use crate::stark2circom::circuit_templates::templates::gen_recursion_final;
-        let env = |k: &str| std::env::var(k).unwrap_or_else(|_| panic!("{k} not set"));
-        let read = |k: &str| std::fs::read_to_string(env(k)).unwrap_or_else(|e| panic!("{k}: {e}"));
-        let si: serde_json::Value = serde_json::from_str(&read("BN_SI")).unwrap();
-        let vi: serde_json::Value = serde_json::from_str(&read("BN_VI")).unwrap();
-        let vk: serde_json::Value = serde_json::from_str(&read("BN_VK")).unwrap();
-        let w = |v: &serde_json::Value| {
-            v.as_u64().map(|x| x.to_string()).unwrap_or_else(|| v.as_str().unwrap().to_string())
-        };
-        let root: [String; 4] = match vk.as_array() {
-            Some(a) => [w(&a[0]), w(&a[1]), w(&a[2]), w(&a[3])],
-            None => [w(&vk), "0".into(), "0".into(), "0".into()],
-        };
-        let hash = env("BN_HASH");
-        let opts = super::Pil2CircomOptions { hash: hash.clone(), ..Default::default() };
-        let v = if hash == "blake3" {
-            super::gen_stark_verifier_bn128_blake3(Some(&root), &si, &vi, &opts)
-        } else {
-            super::gen_stark_verifier(Some(&root), &si, &vi, &opts)
-        }
-        .unwrap();
-        let f = gen_recursion_final(
-            &si,
-            &["recursivef.verifier.circom".to_string()],
-            Some(&serde_json::from_str(&read("BN_PUB")).unwrap()),
-        )
-        .unwrap();
-        let dir = std::path::PathBuf::from(env("BN_OUT"));
-        std::fs::write(dir.join("recursivef.verifier.circom"), v).unwrap();
-        std::fs::write(dir.join("final.circom"), f).unwrap();
-    }
+/// The constraint DAG's resolver tables of a Goldilocks starkinfo.
+pub fn lower_tables(si: &StarkInfo) -> Result<LowerTables> {
+    let small = |x: u64| u32::try_from(x).with_context(|| format!("starkinfo value {x} past u32"));
+    let ev_map = (si.ev_map.iter())
+        .map(|e| {
+            let ty = match e.type_ {
+                EvMapEType::Cm => "cm",
+                EvMapEType::Const => "const",
+                EvMapEType::Custom => "custom",
+            };
+            let offset = *si.opening_points.get(e.opening_pos).context("evMap openingPos past openingPoints")?;
+            ev_col_ref(ty, Some(small(e.commit_id)?), small(e.id)?, offset).context("evMap entry")
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let challenges = (si.challenges_map.iter().flatten())
+        .map(|c| Ok((small(c.stage)?, small(c.stage_id)?, c.name.as_str())))
+        .collect::<Result<Vec<_>>>()?;
+    let stages = |m: &Option<Vec<PolMap>>| m.iter().flatten().map(|p| small(p.stage)).collect::<Result<Vec<u32>>>();
+    let value_stages = [stages(&si.airvalues_map)?, stages(&si.proofvalues_map)?, stages(&si.airgroupvalues_map)?];
+    LowerTables::new(ev_map, &challenges, small(si.n_publics)?, value_stages, &FieldCfg::goldilocks())
+        .map_err(|e| anyhow!("{e:?}"))
 }

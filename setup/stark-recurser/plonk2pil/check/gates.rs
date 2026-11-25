@@ -7,9 +7,9 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use super::fixed::{wrap, Classes, Columns};
 use super::pil::{fixed_id, Atom, PilAir};
 use super::poly::ONE;
-use super::r1cs_plonk::Vars;
+use super::r1cs_plonk::{Vars, FREE};
 use super::{CheckError, Template};
-use crate::plonk2pil::consts::{ROUNDS, ROUND_CONSTANTS, WIDTH};
+use crate::plonk2pil::consts::{lift, ROUNDS, ROUND_CONSTANTS, WIDTH};
 use crate::plonk2pil::field::PlonkField;
 use crate::plonk2pil::r1cs::types::{CustomGateUse, R1csFile};
 use pil_info::core::ir::ConstraintSystem;
@@ -42,11 +42,13 @@ pub struct Gate {
     pub name: &'static str,
     pub n_signals: usize,
     pub anchor: &'static str,
-    /// Placements; a use matches one. Entries past a use's signal count are skipped.
+    /// Placements; a use matches one. Entries past a Num2Bytes use's signal count are skipped.
     pub shapes: Vec<Vec<Cell>>,
     /// Rows a band occupies (no two bands overlap), and its selectors' exact pattern.
     pub band_rows: usize,
     pub band: Vec<(&'static str, Vec<i64>)>,
+    /// Rows shared with other bands (the blake3 wrap packs range checks inside its blocks).
+    pub shares_rows: bool,
     pub param: Param,
     pub fill: Fill,
 }
@@ -72,6 +74,7 @@ fn plain(name: &'static str, n: usize, anchor: &'static str) -> Gate {
         shapes: vec![ident(n)],
         band_rows: 0,
         band: vec![],
+        shares_rows: false,
         param: Param::None,
         fill: Fill::None,
     }
@@ -108,6 +111,16 @@ fn poseidon(
     let mut band = band;
     band.insert(0, (anchor, vec![0]));
     Gate { shapes: vec![c], band_rows: rows, band, n_signals: out + 16, ..plain(name, 0, anchor) }
+}
+
+/// A range-check row: `RANGE_CHECK` is the lookup's selector, so it is exactly 1 on located rows, 0 elsewhere.
+fn num2bytes(n: usize) -> Gate {
+    Gate {
+        band_rows: 1,
+        band: vec![("RANGE_CHECK", vec![0])],
+        shares_rows: true,
+        ..plain("Num2Bytes", n, "RANGE_CHECK")
+    }
 }
 
 const CLOCKS: i64 = 56;
@@ -172,6 +185,7 @@ pub fn gates_of(t: &Template) -> Result<Vec<Gate>, CheckError> {
                 shapes: lane_shapes(n_in, n_out),
                 band_rows: CLOCKS as usize,
                 band: vec![("CLK_0", vec![0]), (kind, (0..CLOCKS).collect())],
+                shares_rows: false,
                 param: Param::Flags((0..CLOCKS).collect()),
                 fill: Fill::None,
             };
@@ -208,10 +222,11 @@ pub fn gates_of(t: &Template) -> Result<Vec<Gate>, CheckError> {
                         ("POSEIDON_FULL_ROUND", full),
                         ("POSEIDON_PARTIAL_ROUND", (4..64).collect()),
                     ],
+                    shares_rows: false,
                     param: Param::Width(W as u64),
                     fill: Fill::PoseidonK,
                 },
-                Gate { shapes: vec![rc], param: Param::Weights("K"), ..plain("Num2Bytes", 1 + W, "RANGE_CHECK") },
+                Gate { shapes: vec![rc], param: Param::Weights("K"), ..num2bytes(1 + W) },
             ]
         }
         "blake3_bn128/wrap" => {
@@ -254,6 +269,7 @@ pub fn gates_of(t: &Template) -> Result<Vec<Gate>, CheckError> {
                     shapes: vec![shape],
                     band_rows: 64,
                     band,
+                    shares_rows: false,
                     param: Param::Flags(vec![0]),
                     fill: Fill::Blake3Wrap,
                 }
@@ -280,7 +296,7 @@ pub fn gates_of(t: &Template) -> Result<Vec<Gate>, CheckError> {
                     8,
                     vec![("BLOCKLEN_ROW", vec![2])],
                 ),
-                Gate { shapes: slots, param: Param::Weights("C"), ..plain("Num2Bytes", 6, "RANGE_CHECK") },
+                Gate { shapes: slots, param: Param::Weights("C"), ..num2bytes(6) },
             ]
         }
         other => return Err(CheckError::Artefact(format!("no gate table for template {other}"))),
@@ -367,12 +383,18 @@ pub fn check<F: PlonkField>(
     let mut rep = TierGates::default();
     let mut bases: BTreeMap<&str, BTreeSet<usize>> = BTreeMap::new();
     let mut referenced: HashSet<&str> = HashSet::new();
+    let mut unbound: HashSet<u32> = HashSet::new();
     for (ui, u) in r1cs.custom_gates_uses.iter().enumerate() {
         let key = key_of(r1cs, u)?;
         let g = specs
             .get(key.as_str())
             .ok_or_else(|| CheckError::GateParam { gate: u.id, why: format!("{key} has no place in {}", t.file) })?;
-        if u.signals.len() > g.n_signals {
+        // every signal bound or free; Num2Bytes's count follows nBits, checked against its chunks below
+        let fits = match g.param {
+            Param::Weights(_) => u.signals.len() <= g.n_signals,
+            _ => u.signals.len() == g.n_signals,
+        };
+        if !fits {
             return Err(CheckError::GateParam { gate: u.id, why: format!("{key} has {} signals", u.signals.len()) });
         }
         let anchor = id(g.anchor, None)?;
@@ -397,7 +419,7 @@ pub fn check<F: PlonkField>(
             .iter()
             .map(|&s| if s < r1cs.header.n_vars as u64 { vars.of(s as u32) } else { u32::MAX })
             .collect();
-        let free = |v: u32| v != ONE && v & (1 << 31) != 0;
+        let free = |v: u32| v != ONE && v & FREE != 0;
         let mut found = None;
         'shapes: for shape in &g.shapes {
             let shape: Vec<&Cell> = shape.iter().filter(|c| c.sig < u.signals.len()).collect();
@@ -427,16 +449,20 @@ pub fn check<F: PlonkField>(
                 if shape.iter().all(|c| cls.class(a_cols[c.col as usize], wrap(base, c.off, n)) == sv[c.sig])
                     && !cols.get(anchor)?[base].is_zero()
                 {
-                    found = Some(base);
+                    found = Some((base, bound));
                     break 'shapes;
                 }
             }
         }
-        let base = found.ok_or_else(|| CheckError::GateNotFound {
+        let (base, bound) = found.ok_or_else(|| CheckError::GateNotFound {
             gate: ui as u32,
             name: key.clone(),
             why: "no placement of its signals' classes".into(),
         })?;
+        // an unbound signal is the gate's own output: no two uses may share it
+        if let Some(k) = (0..sv.len()).find(|k| !bound.contains(k) && !unbound.insert(sv[*k])) {
+            return Err(CheckError::GateParam { gate: ui as u32, why: format!("{key}: unbound signal {k} is shared") });
+        }
         let bad = |why: String| CheckError::GateParam { gate: ui as u32, why: format!("{key} at row {base}: {why}") };
         match &g.param {
             Param::None => {}
@@ -498,8 +524,9 @@ pub fn check<F: PlonkField>(
     for (name, bs) in &bases {
         let g = &specs[name];
         for &b in bs {
-            if let Some(r) = (0..g.band_rows).map(|k| (b + k) % n).find(|&r| std::mem::replace(&mut taken[r], true)) {
-                return Err(CheckError::SelectorPattern {
+            let mut rows = (0..g.band_rows).map(|k| (b + k) % n);
+            if let Some(r) = rows.find(|&r| !g.shares_rows && std::mem::replace(&mut taken[r], true)) {
+                return Err(CheckError::FixedPattern {
                     column: "band".into(),
                     row: r,
                     why: "two bands overlap".into(),
@@ -516,7 +543,7 @@ pub fn check<F: PlonkField>(
         let Some(fid) = col_id(cs, c) else { return Err(CheckError::Artefact(format!("pilout: no fixed column {c}"))) };
         let col = cols.get(fid)?;
         match (0..n).find(|&r| col[r] != want(r)) {
-            Some(r) => Err(CheckError::SelectorPattern {
+            Some(r) => Err(CheckError::FixedPattern {
                 column: c.to_string(),
                 row: r,
                 why: format!("{} where the bands want {}", col[r], want(r)),
@@ -583,7 +610,7 @@ pub fn fill_values<F: PlonkField>(g: &Gate, b: usize) -> Result<Vec<(String, Vec
         Fill::PoseidonK => {
             let rc: Vec<F> = ROUND_CONSTANTS
                 .iter()
-                .map(|x| F::from_canonical_le(&x.to_le_bytes()))
+                .map(lift)
                 .collect::<Option<_>>()
                 .ok_or_else(|| CheckError::Artefact("PoseidonT's constants are not in this field".into()))?;
             for j in 0..WIDTH {
@@ -626,7 +653,7 @@ fn check_fill<F: PlonkField>(
         let fid = col_id(cs, &c).ok_or_else(|| CheckError::Artefact(format!("pilout: no fixed column {c}")))?;
         let col = cols.get(fid)?;
         if let Some(k) = (0..vals.len()).find(|&k| col[(b + k) % n] != vals[k]) {
-            return Err(CheckError::SelectorPattern {
+            return Err(CheckError::FixedPattern {
                 column: c,
                 row: (b + k) % n,
                 why: format!("{} where {} at band row {k} wants {}", col[(b + k) % n], g.name, vals[k]),

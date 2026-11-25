@@ -17,12 +17,12 @@ fn stir_entry() -> StarkSettings {
 
 fn solved_stir(template: RecursiveTemplate, n_bits: usize) -> (Vec<usize>, Vec<u64>) {
     let settings = recursive_stark_settings(template, HashFamily::Poseidon2, &stir_entry());
-    let stark_struct = generate_stark_struct(&settings, n_bits, "Poseidon2");
+    let stark_struct = generate_stark_struct(&settings, n_bits, HashFamily::Poseidon2);
     let LowDegreeTest::Stir(stir) = &stark_struct.low_degree_test else {
         panic!("{template:?} must select STIR, got {:?}", stark_struct.low_degree_test.kind());
     };
     // A recursion circuit's DEEP batch is ~130 evaluations; the count only moves tᵢ slightly.
-    let Solved::Stir(solved) = solve_low_degree_test(&stark_struct, 135) else { unreachable!() };
+    let Solved::Stir(solved) = solve_low_degree_test(&stark_struct, 135).unwrap() else { unreachable!() };
     (stir.log_domain_sizes.clone(), solved.security_params().num_queries.clone())
 }
 
@@ -62,7 +62,7 @@ fn the_recursion_entry_switches_the_tree_s_low_degree_test() {
     // The fold that fits: STIR defaults to 4 where FRI keeps 3.
     assert_eq!(stir.initial_folding_factor, Some(4));
     assert_eq!(dflt.initial_folding_factor, Some(3));
-    let ss = generate_stark_struct(&stir, 19, "blake3");
+    let ss = generate_stark_struct(&stir, 19, HashFamily::Blake3);
     let LowDegreeTest::Stir(s) = &ss.low_degree_test else { panic!("STIR") };
     assert_eq!(s.folding_factors, vec![4, 4, 4]);
     assert_eq!(s.log_degrees, vec![19, 15, 11, 7]);
@@ -78,7 +78,7 @@ fn the_recursion_entry_switches_the_tree_s_low_degree_test() {
     assert_eq!(fri.grinding_bits, stir.grinding_bits);
     assert_eq!(fri.final_degree, Some(5));
     assert_eq!(fri.last_level_verification, stir.last_level_verification);
-    let ss = generate_stark_struct(&fri, 19, "blake3");
+    let ss = generate_stark_struct(&fri, 19, HashFamily::Blake3);
     assert_eq!(ss.low_degree_test.kind(), LowDegreeTestKind::Fri);
     assert_eq!(ss.n_bits_ext, 21);
     // The measured optimum the blake3 recursion was sized on: 21 > 17 > 13 > 10 > 7, a 2^7
@@ -91,13 +91,13 @@ fn the_recursion_entry_switches_the_tree_s_low_degree_test() {
     // The compressor folds the same terminal domain at the recursion's blowup 2 (7 − 2 = 5).
     let comp = recursive_stark_settings(RecursiveTemplate::Compressor, HashFamily::Blake3, &user);
     assert_eq!(comp.final_degree, Some(5));
-    let comp_ss = generate_stark_struct(&comp, 19, "blake3");
+    let comp_ss = generate_stark_struct(&comp, 19, HashFamily::Blake3);
     assert_eq!(*comp_ss.low_degree_test.expect_fri("test").log_domain_sizes.last().unwrap(), 7);
 
     // Poseidon: a 2^5 terminal domain at blowup 3 is a degree bound of 2.
     let pos = recursive_stark_settings(RecursiveTemplate::Recursive2, HashFamily::Poseidon2, &user);
     assert_eq!(pos.final_degree, Some(2));
-    let pos_ss = generate_stark_struct(&pos, 17, "Poseidon2");
+    let pos_ss = generate_stark_struct(&pos, 17, HashFamily::Poseidon2);
     assert_eq!(*pos_ss.low_degree_test.expect_fri("test").log_domain_sizes.last().unwrap(), 5);
 
     // The STIR-only knobs ride along when asked for.
@@ -108,7 +108,7 @@ fn the_recursion_entry_switches_the_tree_s_low_degree_test() {
     let tuned =
         recursive_stark_settings(RecursiveTemplate::Recursive2, HashFamily::Blake3, &cfg.recursion_settings().unwrap());
     assert_eq!(tuned.initial_folding_factor, Some(2));
-    let ss = generate_stark_struct(&tuned, 19, "blake3");
+    let ss = generate_stark_struct(&tuned, 19, HashFamily::Blake3);
     let LowDegreeTest::Stir(s) = &ss.low_degree_test else { panic!("still STIR") };
     assert_eq!(s.grinding_bits_queries, vec![28, 26, 24, 22, 20, 18]);
 }

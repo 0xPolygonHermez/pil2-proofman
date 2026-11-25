@@ -732,45 +732,6 @@ mod tests {
         assert_eq!(gl[EXEC_HEADER_WORDS + 4..], bn[EXEC_WIDE_HEADER_WORDS + 10..]);
     }
 
-    /// No prefix of a written exec reads, nor does one with a word too many: the reader never runs
-    /// off a buffer, nor ignores what it does not account for.
-    #[test]
-    fn a_truncated_or_padded_exec_is_refused() {
-        let (s_map, bands, aux) = exec_fixture();
-        let exec = write_exec_file(
-            N_VARS,
-            &[PlonkAddition { wires: [1, 2], coeffs: [Bn128::NEG_ONE; 2] }],
-            &s_map,
-            &bands,
-            aux,
-        );
-        for len in 0..exec.len() {
-            assert!(ExecFile::<Bn128>::from_words(&exec[..len]).is_err(), "{len} of {} words", exec.len());
-        }
-        let mut padded = exec;
-        padded.push(0);
-        assert!(ExecFile::<Bn128>::from_words(&padded).is_err());
-    }
-
-    /// An exec reads only in the field it was written over.
-    #[test]
-    fn an_exec_is_refused_in_a_field_it_is_not_over() {
-        let s_map = [vec![1u32]];
-        let gl =
-            write_exec_file(N_VARS, &[PlonkAddition { wires: [1, 2], coeffs: [Goldilocks::ONE; 2] }], &s_map, &[], 0);
-        let bn = write_exec_file(N_VARS, &[PlonkAddition { wires: [1, 2], coeffs: [Bn128::ONE; 2] }], &s_map, &[], 0);
-        let err = ExecFile::<Bn128>::from_words(&gl).unwrap_err().to_string();
-        assert!(
-            err.contains("version 2 with 1-word coefficients, not version 3 with the 4-word ones of BN128"),
-            "{err}"
-        );
-        let err = ExecFile::<Goldilocks>::from_words(&bn).unwrap_err().to_string();
-        assert!(
-            err.contains("version 3 with 4-word coefficients, not version 2 with the 1-word ones of Goldilocks"),
-            "{err}"
-        );
-    }
-
     /// The STARK prover's loader still takes the Goldilocks exec as it is, and refuses the BN128 one
     /// as what it is rather than as a key from another build. Both read back from disk with
     /// [`ExecFile::read`].

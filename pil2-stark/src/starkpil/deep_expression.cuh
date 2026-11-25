@@ -3,7 +3,7 @@
 
 // The DEEP polynomial evaluated over the extended domain:
 //
-//   fri[r] = SUM_o vf1^(O-1-o) / (x[r] - xi_o) * SUM_{c in o} vf2^c * (p_c[r] - e_(o,c))
+//   fri[r] = SUM_o vf1^e_o / (x[r] - xi_o) * SUM_{c in o} vf2^c * (p_c[r] - e_(o,c))
 //
 // With xi_o = xi w^o, x[r] = s wExt^r and w = wExt^B (B the blowup), 1 / (x[r] - xi_o) = w^-o D[r - o B] for
 // D[q] = 1 / (x[q] - xi). Grouping the polynomials G by the set of openings they are in:

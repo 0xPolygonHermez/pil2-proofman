@@ -17,7 +17,7 @@ use super::PipelineCtx;
 use crate::io::fixed_cols;
 use crate::output::json::to_json_string;
 use crate::proving_key::util::{exact_log2, require_const_file};
-use crate::proving_key::{bctree, recursive::compile_pil};
+use crate::proving_key::bctree;
 use crate::types::stark_info::{ExpressionsInfo, StarkInfo, VerifierInfo};
 
 /// circom optimisation level, a per-kind builder parameter.
@@ -164,21 +164,10 @@ impl Step {
                 write_basic_const(ctx, fixed)
             }
             Step::CompilePil => {
-                let build = ctx.build_dir.join("build");
                 let pil = ctx.build_dir.join("pil").join(format!("{}.pil", ctx.circuit));
-                let pilout = build.join(format!("{}.pilout", ctx.circuit));
-                compile_pil(
-                    path_str(&pil)?,
-                    path_str(&pilout)?,
-                    &ctx.tools.std_pil_path,
-                    &ctx.tools.recurser_pil_path,
-                )?;
-                let proxy = PilOutProxy::new(path_str(&pilout)?)
-                    .map_err(|e| anyhow::anyhow!("Failed to load pilout {}: {e}", pilout.display()))?;
-                if proxy.pilout.air_groups.is_empty() || proxy.pilout.air_groups[0].airs.is_empty() {
-                    bail!("{} pilout has no AIR groups: {}", ctx.circuit, pilout.display());
-                }
-                ctx.pilout = Some(Arc::new(proxy.pilout));
+                let pilout = ctx.build_dir.join("build").join(format!("{}.pilout", ctx.circuit));
+                let includes = [ctx.tools.std_pil_path.clone(), ctx.tools.recurser_pil_path.clone()];
+                ctx.pilout = Some(Arc::new(compile_plonk_pil(&ctx.circuit, &pil, &pilout, &includes, None)?));
                 ctx.air = (0, 0);
                 Ok(())
             }
@@ -190,7 +179,7 @@ impl Step {
                     path_str(&ctx.file("verifier.rs"))?,
                     &StarkInfo::from_json(si)?,
                     &VerifierInfo::from_json(vi)?,
-                    ctx.hash(),
+                    ctx.family,
                 )
             }
             Step::WitnessWait => ctx.witness.as_ref().map_or(Ok(()), |w| w.await_all()),
@@ -285,10 +274,42 @@ fn circom_prologue(
 fn check_plonk(ctx: &mut PipelineCtx) -> Result<()> {
     let stem = ctx.compiled.as_deref().context("check_plonk before the circom compile")?;
     let r1cs = fs::read(ctx.build_dir.join("build").join(format!("{stem}.r1cs")))?;
-    // checks ctx.plonk in memory: WriteFixed and the .const writer are trusted
-    let report = plonk2pil::check::load::check_result(&r1cs, ctx.plonk()?, ctx.pilout()?.as_ref())
-        .with_context(|| format!("{}: the plonk layout does not implement its r1cs", ctx.circuit))?;
-    tracing::info!("{} plonk check OK: {report}", ctx.circuit);
+    check_plonk_result(&ctx.circuit, &r1cs, ctx.plonk()?, ctx.pilout()?.as_ref())
+}
+
+/// pil2com over `field` (Goldilocks if `None`) of plonk2pil's PIL `pil` into `pilout`, loaded.
+pub(crate) fn compile_plonk_pil(
+    circuit: &str,
+    pil: &Path,
+    pilout: &Path,
+    includes: &[String],
+    field: Option<&str>,
+) -> Result<pil2_pilout::pilout::PilOut> {
+    crate::commands::compile_pil::run_compile_pil(&crate::commands::compile_pil::CompilePilOptions {
+        pil_path: path_str(pil)?.to_string(),
+        output_path: path_str(pilout)?.to_string(),
+        include_paths: includes.to_vec(),
+        field: field.map(str::to_string),
+        ..Default::default()
+    })?;
+    let proxy = PilOutProxy::new(path_str(pilout)?)
+        .map_err(|e| anyhow::anyhow!("Failed to load pilout {}: {e}", pilout.display()))?;
+    if proxy.pilout.air_groups.first().is_none_or(|g| g.airs.is_empty()) {
+        bail!("{circuit} pilout has no AIR groups: {}", pilout.display());
+    }
+    Ok(proxy.pilout)
+}
+
+/// The trusted checker over plonk2pil's in-memory result (`WriteFixed` and the `.const` writer are trusted).
+pub(crate) fn check_plonk_result<V: plonk2pil::FixedValue>(
+    circuit: &str,
+    r1cs: &[u8],
+    res: &plonk2pil::PlonkResult<V>,
+    pilout: &pil2_pilout::pilout::PilOut,
+) -> Result<()> {
+    let report = plonk2pil::check::load::check_result(r1cs, res, pilout)
+        .with_context(|| format!("{circuit}: the plonk layout does not implement its r1cs"))?;
+    tracing::info!("{circuit} plonk check OK: {report}");
     Ok(())
 }
 
@@ -409,7 +430,7 @@ fn stark_tail(ctx: &mut PipelineCtx, reuse: bool, starkinfo_only: bool) -> Resul
                 } else {
                     ctx.plonk()?.n_bits
                 };
-                crate::types::stark_struct::generate_stark_struct(&ctx.settings, n_bits, ctx.hash())
+                crate::types::stark_struct::generate_stark_struct(&ctx.settings, n_bits, ctx.family)
             }
         };
         let r = crate::pil::stark_setup::stark_setup(&pilout, ag, ai, &stark_struct, &ctx.prepare, &ctx.key)?;

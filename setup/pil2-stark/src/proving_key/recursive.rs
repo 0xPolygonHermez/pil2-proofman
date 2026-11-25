@@ -49,7 +49,7 @@ fn recursion_batch_fit(hash: HashFamily, n_bits: usize, lanes: usize, inner_si: 
         return None;
     }
     let geom = crate::verifier_hashes::geometry_from_starkinfo(inner_si).ok()?;
-    let per_proof = crate::verifier_hashes::verifier_hashes(&geom, hash.as_str()).total();
+    let per_proof = crate::verifier_hashes::verifier_hashes(&geom, hash).total();
     if per_proof == 0 {
         return None;
     }
@@ -70,7 +70,7 @@ fn recursion_batch_fit(hash: HashFamily, n_bits: usize, lanes: usize, inner_si: 
 pub fn recursive_last_level_verification(template: RecursiveTemplate, hash: HashFamily) -> Option<usize> {
     match template {
         RecursiveTemplate::Compressor if hash.is_blake3() => Some(6),
-        _ => proofman_common::hash_family::recursive_last_level_verification(hash.as_str()),
+        _ => proofman_common::hash_family::recursive_last_level_verification(hash),
     }
 }
 
@@ -78,7 +78,7 @@ pub fn recursive_last_level_verification(template: RecursiveTemplate, hash: Hash
 pub fn recursive_grinding_bits(template: RecursiveTemplate, hash: HashFamily) -> usize {
     match template {
         RecursiveTemplate::Compressor if hash.is_blake3() => 27,
-        _ => proofman_common::hash_family::recursive_grinding_bits(hash.as_str()),
+        _ => proofman_common::hash_family::recursive_grinding_bits(hash),
     }
 }
 
@@ -158,7 +158,7 @@ pub fn recursive_stark_settings(
     // recursion circuit takes — a smaller bound breaks whenever the schedule needs a shortened
     // last fold (e.g. a compressor at 2^19). 32 coefficients in the clear cost nothing.
     let default_final_degree = || {
-        let terminal = proofman_common::hash_family::fri_terminal_degree(hash.as_str());
+        let terminal = proofman_common::hash_family::fri_terminal_degree(hash);
         match low_degree_test {
             crate::types::stark_struct::LowDegreeTestKind::Fri => terminal.saturating_sub(blowup),
             crate::types::stark_struct::LowDegreeTestKind::Stir => terminal,
@@ -291,9 +291,7 @@ pub fn gen_recursive_setup(
         reuse: config.reuse.is_some(),
         has_compressor: config.has_compressor,
         multi_air: multi_air(config.global_info),
-        domain_bits: config
-            .recursive_n_bits
-            .unwrap_or(proofman_common::hash_family::recursive_bits_threshold(family.as_str())),
+        domain_bits: config.recursive_n_bits.unwrap_or(proofman_common::hash_family::recursive_bits_threshold(family)),
         agg_arity: config.agg_arity,
         airgroup_name: config.airgroup_name.to_string(),
         air_name: config.air_name.to_string(),
@@ -479,18 +477,6 @@ fn multi_air(global_info: &Value) -> bool {
 /// Extract the global name from vadcopInfo.
 fn get_global_name(global_info: &Value) -> String {
     global_info.get("name").and_then(|v| v.as_str()).unwrap_or("pilout").to_string()
-}
-
-/// Compile PIL source with `pil2com` ([`crate::commands::compile_pil::run_compile_pil`]).
-pub fn compile_pil(pil_path: &str, output_path: &str, std_pil_path: &str, recurser_pil_path: &str) -> Result<()> {
-    use crate::commands::compile_pil::{run_compile_pil, CompilePilOptions};
-    let opts = CompilePilOptions {
-        pil_path: pil_path.to_string(),
-        output_path: output_path.to_string(),
-        include_paths: vec![std_pil_path.to_string(), recurser_pil_path.to_string()],
-        ..Default::default()
-    };
-    run_compile_pil(&opts)
 }
 
 #[cfg(test)]
