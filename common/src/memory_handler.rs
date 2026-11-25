@@ -637,11 +637,20 @@ where
     F: Send + Sync + 'static,
 {
     fn take_buffer(&self) -> Vec<F>;
+
+    /// Gives back a buffer taken with [`take_buffer`](Self::take_buffer) that will not become a
+    /// trace. A witness computation that fails must return its buffer this way: the pool never
+    /// replaces one it lost, and its next reset reports every job after that as short of a buffer.
+    fn release_buffer(&self, buffer: Vec<F>) -> ProofmanResult<()>;
 }
 
 impl<F: PrimeField64 + Send + Sync + 'static> BufferPool<F> for MemoryHandler<F> {
     fn take_buffer(&self) -> Vec<F> {
         self.take_buffer()
+    }
+
+    fn release_buffer(&self, buffer: Vec<F>) -> ProofmanResult<()> {
+        MemoryHandler::release_buffer(self, buffer)
     }
 }
 
