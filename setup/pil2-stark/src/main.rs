@@ -536,7 +536,13 @@ fn main() -> anyhow::Result<()> {
                 exps_stark_src: args.exps_stark_src,
             };
 
-            let result = setup::run_setup(&opts);
+            // Each airgroup's first recursive1 runs on this thread; at LANES 5 it overflows 8 MB.
+            let result = std::thread::Builder::new()
+                .stack_size(64 * 1024 * 1024)
+                .spawn(move || setup::run_setup(&opts))
+                .expect("failed to spawn setup thread")
+                .join()
+                .expect("setup thread panicked");
 
             // Log peak memory at exit for measurement validation
             if let Ok(status) = std::fs::read_to_string("/proc/self/status") {
@@ -709,7 +715,13 @@ fn main() -> anyhow::Result<()> {
                 blowup: args.blowup,
                 min_n_bits: args.min_n_bits,
             };
-            recursive_test_cmd::run_setup_recursive_test(&opts)?;
+            // The im-pol selection runs on this thread; at --blowup 1 it overflows 8 MB.
+            std::thread::Builder::new()
+                .stack_size(64 * 1024 * 1024)
+                .spawn(move || recursive_test_cmd::run_setup_recursive_test(&opts))
+                .expect("failed to spawn setup-recursive-test thread")
+                .join()
+                .expect("setup-recursive-test thread panicked")?;
 
             // Optionally generate the per-AIR Q-expression CUDA kernels for the
             // provingKey just produced. No-op when nvcc is absent.
