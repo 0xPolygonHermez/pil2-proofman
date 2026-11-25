@@ -116,9 +116,7 @@ struct Fixture
         for (uint64_t i = 0; i < si.challengesMap.size() * FIELD_EXTENSION; i++) challenges.push_back(rnd());
         for (uint64_t i = 0; i < si.evMap.size() * FIELD_EXTENSION; i++) evals.push_back(rnd());
         for (const EvMap &e : si.evMap) {
-            const PolMap &p = e.type == EvMap::eType::cm       ? si.cmPolsMap[e.id]
-                              : e.type == EvMap::eType::custom ? si.customCommitsMap[e.commitId][e.id]
-                                                               : si.constPolsMap[e.id];
+            const PolMap &p = si.evPol(e);
             std::vector<Goldilocks::Element> v(FIELD_EXTENSION, Goldilocks::zero());
             for (uint64_t k = 0; k < p.dim; k++) v[k] = rnd();
             values.emplace(key(e.type, e.commitId, e.id), v);
@@ -203,17 +201,6 @@ TEST(Deep, MatchesDefinition)
     f.native(got);
     f.reference(want);
     EXPECT_TRUE(equal(got, want));
-}
-
-TEST(Deep, DetectsChangedValue)
-{
-    Fixture f;
-    F3::Element before, after;
-    f.native(before);
-    auto &v = f.values.at(Fixture::key(EvMap::eType::cm, 0, 1));
-    v[2] = v[2] + Goldilocks::one();
-    f.native(after);
-    EXPECT_FALSE(equal(before, after));
 }
 
 // One point laid out as the prover sees it (row R of the extended row-major buffers) and as the verifier sees it

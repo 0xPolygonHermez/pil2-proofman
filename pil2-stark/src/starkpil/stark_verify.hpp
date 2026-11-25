@@ -1,4 +1,3 @@
-#include "expressions_ctx.hpp"
 #include "stir/stir.hpp"
 #include "stark_info.hpp"
 #include "constraint_dag.hpp"
@@ -95,11 +94,12 @@ StirProof<ElementType> stirProofFromJson(json &jproof, const StirParams &params,
 }
 
 template <typename ElementType>
-bool starkVerify(json jproof, StarkInfo& starkInfo, ConstraintDag& dag, string verkeyFile, Goldilocks::Element *publics, Goldilocks::Element *proofValues, bool challengesVadcop, Goldilocks::Element* globalChallenge) {
+bool starkVerify(json jproof, StarkInfo& starkInfo, const ConstraintDag& dag, string verkeyFile, Goldilocks::Element *publics, Goldilocks::Element *proofValues, bool challengesVadcop, Goldilocks::Element* globalChallenge) {
 
-    std::string dagErr;
-    if(!checkConstraintDag(dag, starkInfo, dagErr)) {
-        zklog.error("starkVerify: " + dagErr + "; regenerate the setup");
+    // verify.rs passes null for an absent publics/proofValues: refuse wherever one would be read.
+    bool readsPublics = (starkInfo.nPublics > 0 && !challengesVadcop) || !starkInfo.customCommits.empty() || dagReads(dag, DagSrc::Public);
+    if ((publics == nullptr && readsPublics) || (proofValues == nullptr && dagReads(dag, DagSrc::ProofValue))) {
+        zklog.error("starkVerify: publics or proof values missing");
         return false;
     }
 

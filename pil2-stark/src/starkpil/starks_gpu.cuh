@@ -81,7 +81,7 @@ void extendAndMerkelizeSection(uint64_t nCols, uint64_t nBits, uint64_t nBitsExt
 void extendAndMerkelizeFixed(SetupCtx&, Goldilocks::Element *d_fixedPols, Goldilocks::Element *d_fixedPolsExtended, bool preserve_src, TimerGPU &timer, cudaStream_t stream);
 void computeQ_MerkleTree_inplace(uint64_t step, SetupCtx& setupCtx, MerkleTreeGL **treesGL, gl64_t *d_aux_trace, TranscriptGL_GPU *d_transcript, TimerGPU &timer, cudaStream_t stream, uint32_t qStepLg = 0);
 
-void computeZerofier(Goldilocks::Element *d_zi, uint64_t nBits, uint64_t nBitsExt, const vector<Boundary> &boundaries, cudaStream_t stream);
+void computeZerofier(Goldilocks::Element *d_zi, uint64_t nBits, uint64_t nBitsExt, cudaStream_t stream);
 
 void evmap_inplace(SetupCtx &setupCtx, StepsParams &h_params, AirInstanceInfo *air_instance_info, Goldilocks::Element *d_LEv, TimerGPU &timer, cudaStream_t stream);
 

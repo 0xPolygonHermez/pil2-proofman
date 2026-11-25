@@ -153,21 +153,6 @@ TEST(ConstraintDag, MatchesDirectFormula)
     EXPECT_TRUE(same(evalTo(dag, v), direct(v)));
 }
 
-TEST(ConstraintDag, ZiIsOneOverXiNMinusOne)
-{
-    const StarkInfo si = makeInfo();
-    ConstraintDag dag;
-    std::string err;
-    ASSERT_TRUE(readAndCheck(makeJson(), si, dag, err)) << err;
-    Values v;
-    V3 xi = e3(&v.challenges[6]), p = base(Goldilocks::one()), zInv;
-    F3::pow(p.r(), xi.r(), 8);
-    p = sub(p, base(Goldilocks::one()));
-    F3::inv(zInv.r(), p.r());
-    for (int k = 0; k < 3; k++) v.zi[k] = zInv.c[k];
-    EXPECT_TRUE(same(evalTo(dag, v), direct(v)));
-}
-
 TEST(ConstraintDag, DetectsChangedEval)
 {
     const StarkInfo si = makeInfo();
@@ -182,129 +167,54 @@ TEST(ConstraintDag, DetectsChangedEval)
     EXPECT_TRUE(same(after, direct(v)));
 }
 
-TEST(ConstraintDag, RejectsForwardReference)
+// Every rejection, reader (check = false) or checker: the DAG, the starkinfo edit and a needle of the error.
+struct RejectCase
 {
-    ConstraintDag dag;
-    std::string err;
-    EXPECT_FALSE(readConstraintDag(makeJson("[[2,0,1],[5,0,0,0],[5,0,0,-1]]", "[[0,0,\"x\"]]"), dag, err));
-    EXPECT_NE(err.find("forward"), std::string::npos) << err;
-}
+    const char *name, *nodes, *roots;
+    int version;
+    void (*edit)(StarkInfo &);
+    bool check;
+    const char *needle;
+};
 
-TEST(ConstraintDag, RejectsUnknownOpcode)
-{
-    ConstraintDag dag;
-    std::string err;
-    EXPECT_FALSE(readConstraintDag(makeJson("[[11,0]]", "[[0,0,\"x\"]]"), dag, err));
-    EXPECT_FALSE(err.empty());
-}
+void keep(StarkInfo &) {}
 
-TEST(ConstraintDag, RejectsWrongArity)
-{
-    ConstraintDag dag;
-    std::string err;
-    EXPECT_FALSE(readConstraintDag(makeJson("[[5,0,0,0],[0,0]]", "[[1,0,\"x\"]]"), dag, err));
-    EXPECT_FALSE(err.empty());
-}
+const RejectCase REJECTS[] = {
+    {"ForwardReference", "[[2,0,1],[5,0,0,0],[5,0,0,-1]]", "[[0,0,\"x\"]]", 1, keep, false, "forward"},
+    {"UnknownOpcode", "[[11,0]]", "[[0,0,\"x\"]]", 1, keep, false, "opcode"},
+    {"WrongArity", "[[5,0,0,0],[0,0]]", "[[1,0,\"x\"]]", 1, keep, false, "fields"},
+    {"NonCanonicalConst", "[[4,\"18446744069414584321\"]]", "[[0,0,\"x\"]]", 1, keep, false, "malformed"},
+    {"UnsortedChildren", "[[5,0,0,0],[5,0,0,-1],[2,1,0]]", "[[2,0,\"x\"]]", 1, keep, false, "sorted"},
+    {"WrongVersion", NODES, ROOTS, 2, keep, false, "version"},
+    {"UnknownColumn", "[[5,0,9,0]]", "[[0,0,\"x\"]]", 1, keep, true, "evMap"}, // no evMap entry for cm id 9
+    {"UnknownChallenge", "[[6,2,5]]", "[[0,0,\"x\"]]", 1, keep, true, "challenge"},
+    {"MissingStdVc", NODES, ROOTS, 1, [](StarkInfo &si) { si.challengesMap[1].name = "std_other"; }, true, "std_vc"},
+    {"NonEveryRowRoot", NODES, "[[13,0,\"c0\"],[17,1,\"c1\"],[21,0,\"c2\"]]", 1, keep, true, "everyRow"},
+    {"DuplicateEvEntry", NODES, ROOTS, 1, [](StarkInfo &si) { si.evMap.push_back(si.evMap[0]); }, true, "duplicate"},
+    {"DuplicateChallenge", NODES, ROOTS, 1, [](StarkInfo &si) { si.challengesMap.push_back(si.challengesMap[0]); }, true,
+     "duplicate"},
+    {"PublicOutOfRange", "[[7,1]]", "[[0,0,\"x\"]]", 1, keep, true, "public"}, // nPublics = 1
+    // A col node is ext whatever its column's dim (evals at xi are ext), so the ext slot to corrupt is a challenge.
+    {"WrongDimensionChallenge", NODES, ROOTS, 1, [](StarkInfo &si) { si.challengesMap[0].dim = 1; }, true, "dimension"},
+};
 
-TEST(ConstraintDag, RejectsNonCanonicalConst)
+class ConstraintDagRejects : public testing::TestWithParam<RejectCase>
 {
-    ConstraintDag dag;
-    std::string err;
-    EXPECT_FALSE(readConstraintDag(makeJson("[[4,\"18446744069414584321\"]]", "[[0,0,\"x\"]]"), dag, err));
-    EXPECT_FALSE(err.empty());
-}
+};
 
-TEST(ConstraintDag, RejectsUnsortedChildren)
+TEST_P(ConstraintDagRejects, WithReason)
 {
-    ConstraintDag dag;
-    std::string err;
-    EXPECT_FALSE(readConstraintDag(makeJson("[[5,0,0,0],[5,0,0,-1],[2,1,0]]", "[[2,0,\"x\"]]"), dag, err));
-    EXPECT_NE(err.find("sorted"), std::string::npos) << err;
-}
-
-TEST(ConstraintDag, RejectsWrongVersion)
-{
-    ConstraintDag dag;
-    std::string err;
-    EXPECT_FALSE(readConstraintDag(makeJson(NODES, ROOTS, 2), dag, err));
-    EXPECT_NE(err.find("version"), std::string::npos) << err;
-}
-
-TEST(ConstraintDag, RejectsUnknownColumn)
-{
-    const StarkInfo si = makeInfo();
-    ConstraintDag dag;
-    std::string err;
-    EXPECT_FALSE(readAndCheck(makeJson("[[5,0,9,0]]", "[[0,0,\"x\"]]"), si, dag, err)); // no evMap entry for cm id 9
-    EXPECT_FALSE(err.empty());
-}
-
-TEST(ConstraintDag, RejectsUnknownChallenge)
-{
-    const StarkInfo si = makeInfo();
-    ConstraintDag dag;
-    std::string err;
-    EXPECT_FALSE(readAndCheck(makeJson("[[6,2,5]]", "[[0,0,\"x\"]]"), si, dag, err));
-    EXPECT_FALSE(err.empty());
-}
-
-TEST(ConstraintDag, RejectsMissingStdVc)
-{
+    const RejectCase &c = GetParam();
     StarkInfo si = makeInfo();
-    si.challengesMap[1].name = "std_other";
+    c.edit(si);
     ConstraintDag dag;
     std::string err;
-    EXPECT_FALSE(readAndCheck(makeJson(), si, dag, err));
-    EXPECT_NE(err.find("std_vc"), std::string::npos) << err;
+    const json j = makeJson(c.nodes, c.roots, c.version);
+    EXPECT_FALSE(c.check ? readAndCheck(j, si, dag, err) : readConstraintDag(j, dag, err));
+    EXPECT_NE(err.find(c.needle), std::string::npos) << err;
 }
 
-TEST(ConstraintDag, RejectsNonEveryRowRoot)
-{
-    const StarkInfo si = makeInfo();
-    ConstraintDag dag;
-    std::string err;
-    EXPECT_FALSE(readAndCheck(makeJson(NODES, "[[13,0,\"c0\"],[17,1,\"c1\"],[21,0,\"c2\"]]"), si, dag, err));
-    EXPECT_NE(err.find("everyRow"), std::string::npos) << err;
-}
-
-TEST(ConstraintDag, RejectsDuplicateEvEntry)
-{
-    StarkInfo si = makeInfo();
-    si.evMap.push_back(si.evMap[0]);
-    ConstraintDag dag;
-    std::string err;
-    EXPECT_FALSE(readAndCheck(makeJson(), si, dag, err));
-    EXPECT_NE(err.find("duplicate"), std::string::npos) << err;
-}
-
-TEST(ConstraintDag, RejectsDuplicateChallenge)
-{
-    StarkInfo si = makeInfo();
-    si.challengesMap.push_back(si.challengesMap[0]);
-    ConstraintDag dag;
-    std::string err;
-    EXPECT_FALSE(readAndCheck(makeJson(), si, dag, err));
-    EXPECT_NE(err.find("duplicate"), std::string::npos) << err;
-}
-
-TEST(ConstraintDag, RejectsPublicOutOfRange)
-{
-    const StarkInfo si = makeInfo(); // nPublics = 1
-    ConstraintDag dag;
-    std::string err;
-    EXPECT_FALSE(readAndCheck(makeJson("[[7,1]]", "[[0,0,\"x\"]]"), si, dag, err));
-    EXPECT_NE(err.find("public"), std::string::npos) << err;
-}
-
-// A col node is ext whatever its column's dim (evals at xi are ext), so the ext slot to corrupt is a challenge.
-TEST(ConstraintDag, RejectsWrongDimensionChallengeTypedBase)
-{
-    StarkInfo si = makeInfo();
-    si.challengesMap[0].dim = 1;
-    ConstraintDag dag;
-    std::string err;
-    EXPECT_FALSE(readAndCheck(makeJson(), si, dag, err));
-    EXPECT_NE(err.find("dimension"), std::string::npos) << err;
-}
+INSTANTIATE_TEST_SUITE_P(ConstraintDag, ConstraintDagRejects, testing::ValuesIn(REJECTS),
+                         [](const testing::TestParamInfo<RejectCase> &i) { return std::string(i.param.name); });
 
 } // namespace

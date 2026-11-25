@@ -172,6 +172,22 @@ public:
     // Elements of an air/airgroup/proof value: 1 at stage 1, else FIELD_EXTENSION (3, not defined here).
     static uint64_t valueDim(const PolMap &m) { return m.stage == 1 ? 1 : 3; }
 
+    // The polynomial an evMap entry opens.
+    const PolMap &evPol(const EvMap &ev) const
+    {
+        return ev.type == EvMap::eType::cm       ? cmPolsMap[ev.id]
+               : ev.type == EvMap::eType::custom ? customCommitsMap[ev.commitId][ev.id]
+                                                 : constPolsMap[ev.id];
+    }
+
+    // mapOffsets/mapSectionsN key of a column: cm<stage>, <custom name>0 or const.
+    std::string sectionName(EvMap::eType type, uint64_t stage, uint64_t commitId) const
+    {
+        return type == EvMap::eType::cm       ? "cm" + std::to_string(stage)
+               : type == EvMap::eType::custom ? customCommits[commitId].name + "0"
+                                              : "const";
+    }
+
     // Read from starkInfo file
     StarkStruct starkStruct;
 

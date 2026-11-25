@@ -468,15 +468,15 @@ void *expressions_bin_new(char* filename, bool global)
     return expressionsBin;
 };
 
-// <air>.verifierinfo.json's constraintDag, for stark_verify*.
-void *constraint_dag_new(char *filename)
+// <air>.verifierinfo.json's constraintDag, read and checked against the starkinfo once, for stark_verify*.
+void *constraint_dag_new(char *filename, void *pStarkInfo)
 {
     json j;
     std::string err = "no constraintDag key";
     auto dag = new ConstraintDag();
     if(!fileExists(filename)) err = "missing";
     else file2json(filename, j);
-    if(!j.contains("constraintDag") || !readConstraintDag(j["constraintDag"], *dag, err)) {
+    if(!j.contains("constraintDag") || !readConstraintDag(j["constraintDag"], *dag, err) || !checkConstraintDag(*dag, *(StarkInfo *)pStarkInfo, err)) {
         zklog.error(std::string(filename) + ": " + err + "; regenerate the setup");
         exitProcess();
     }

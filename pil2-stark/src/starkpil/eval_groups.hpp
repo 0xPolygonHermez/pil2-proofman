@@ -33,9 +33,7 @@ struct DeviceColumn {
 inline DeviceColumn deviceColumn(StarkInfo &si, EvMap::eType type, uint64_t commitId, uint64_t stage, uint64_t stagePos)
 {
     const uint16_t src = type == EvMap::eType::cm ? 0 : type == EvMap::eType::custom ? 1 : 2;
-    const std::string section = src == 0 ? "cm" + std::to_string(stage)
-                              : src == 1 ? si.customCommits[commitId].name + "0"
-                                         : "const";
+    const std::string section = si.sectionName(type, stage, commitId);
     const Layout layout = src == 0 ? resolveLayout(si.starkStruct.nBits, si.mapSectionsN[section]) : fixedLayout();
     if (layout != Layout::ColMajor) throw std::runtime_error("deviceColumn: sections must be ColMajor");
     const uint64_t NExt = 1ULL << si.starkStruct.nBitsExt;
@@ -53,9 +51,7 @@ inline EvalSlots buildEvalSlots(StarkInfo &starkInfo)
     std::map<std::tuple<uint32_t, uint32_t, uint64_t>, std::vector<std::pair<int64_t, uint32_t>>> byPol;
     for (uint64_t k = 0; k < starkInfo.evMap.size(); k++) {
         const EvMap &ev = starkInfo.evMap[k];
-        const PolMap &pol = ev.type == EvMap::eType::cm       ? starkInfo.cmPolsMap[ev.id]
-                          : ev.type == EvMap::eType::custom ? starkInfo.customCommitsMap[ev.commitId][ev.id]
-                                                            : starkInfo.constPolsMap[ev.id];
+        const PolMap &pol = starkInfo.evPol(ev);
         const DeviceColumn dc = deviceColumn(starkInfo, ev.type, ev.commitId, pol.stage, pol.stagePos);
         byPol[{(uint32_t)pol.dim, (uint32_t)dc.src, dc.col}].push_back({starkInfo.openingPoints[ev.openingPos], (uint32_t)k});
     }

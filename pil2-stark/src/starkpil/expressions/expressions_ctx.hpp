@@ -180,8 +180,8 @@ public:
         maxRowExtended = NExtended;
 
         for(uint64_t i = 0; i < setupCtx.starkInfo.openingPoints.size(); ++i) {
-            nextStrides[i] = setupCtx.starkInfo.verify ? 0 : setupCtx.starkInfo.openingPoints[i];
-            nextStridesExtended[i] = setupCtx.starkInfo.verify ? 0 : setupCtx.starkInfo.openingPoints[i] * extend;
+            nextStrides[i] = setupCtx.starkInfo.openingPoints[i];
+            nextStridesExtended[i] = setupCtx.starkInfo.openingPoints[i] * extend;
             if(setupCtx.starkInfo.openingPoints[i] < 0) {
                 minRow = std::max(minRow, uint64_t(std::abs(nextStrides[i])));
                 minRowExtended = std::max(minRowExtended, uint64_t(std::abs(nextStridesExtended[i])));

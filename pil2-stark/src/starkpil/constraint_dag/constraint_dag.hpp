@@ -276,6 +276,14 @@ inline bool checkConstraintDag(ConstraintDag &dag, const StarkInfo &si, std::str
     return true;
 }
 
+// Does any leaf of a checked DAG read `src`?
+inline bool dagReads(const ConstraintDag &dag, DagSrc src)
+{
+    for (const DagLeaf &l : dag.leaves)
+        if (l.src == src && l.dim > 0) return true;
+    return false;
+}
+
 // evals/challenges: 3 elements per evMap/challengesMap entry; publics: 1 per entry; proofValues/airValues/airgroupValues:
 // consecutive, each map entry taking 1 element if its stage is 1, else 3.
 struct DagInputs

@@ -64,9 +64,7 @@ inline DeepTables buildDeepTables(const StarkInfo &si)
         const uint64_t commitKey = ev.type == EvMap::eType::custom ? ev.commitId : 0;
         const uint32_t vf2Exp =
             polIndex.emplace(std::make_tuple((int)ev.type, commitKey, ev.id), (uint32_t)polIndex.size()).first->second;
-        const PolMap &pol = ev.type == EvMap::eType::cm       ? si.cmPolsMap[ev.id]
-                            : ev.type == EvMap::eType::custom ? si.customCommitsMap[ev.commitId][ev.id]
-                                                              : si.constPolsMap[ev.id];
+        const PolMap &pol = si.evPol(ev);
         byOpening[ev.openingPos].push_back(
             DeepTerm{(uint32_t)i, vf2Exp, ev.type, ev.id, ev.commitId, pol.stage, pol.stagePos, pol.dim});
     }
@@ -199,20 +197,17 @@ inline DeepSource deepSource(const StarkInfo &si, const DeepTables &t, bool exte
     for (uint64_t j = 0; j < t.terms.size(); j++) {
         const DeepTerm &term = t.terms[j];
         s.dim[j] = term.dim;
-        if (term.type == EvMap::eType::cm) {
-            const std::string section = "cm" + std::to_string(term.stage);
-            // Offset first: GCC 13 miscompiles a temporary key inside (c ? p : q)[...] (built in one arm only).
-            const uint64_t offset = si.mapOffsets.at(std::make_pair(section, extended));
-            s.base[j] = (term.stage == 1 ? cm1 : aux) + offset + term.stagePos;
-            s.stride[j] = si.mapSectionsN.at(section);
-        } else if (term.type == EvMap::eType::custom) {
-            const std::string section = si.customCommits[term.commitId].name + "0";
-            s.base[j] = custom + si.mapOffsets.at(std::make_pair(section, extended)) + term.stagePos;
-            s.stride[j] = si.mapSectionsN.at(section);
-        } else {
+        if (term.type == EvMap::eType::_const) {
             s.base[j] = &consts[term.stagePos];
             s.stride[j] = si.nConstants;
+            continue;
         }
+        const std::string section = si.sectionName(term.type, term.stage, term.commitId);
+        // Offset first: GCC 13 miscompiles a temporary key inside (c ? p : q)[...] (built in one arm only).
+        const uint64_t offset = si.mapOffsets.at(std::make_pair(section, extended));
+        const Goldilocks::Element *buf = term.type == EvMap::eType::custom ? custom : term.stage == 1 ? cm1 : aux;
+        s.base[j] = buf + offset + term.stagePos;
+        s.stride[j] = si.mapSectionsN.at(section);
     }
     return s;
 }

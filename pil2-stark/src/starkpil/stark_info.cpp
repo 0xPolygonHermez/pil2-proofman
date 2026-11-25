@@ -151,6 +151,10 @@ void StarkInfo::load(json j)
         }
         boundaries.push_back(b);
     }
+    if (boundaries.size() != 1 || boundaries[0].name != "everyRow") {
+        zklog.error("StarkInfo::load() a STARK key has the everyRow boundary only: regenerate the setup");
+        exitProcess();
+    }
 
     for (uint64_t i = 0; i < j["challengesMap"].size(); i++) 
     {

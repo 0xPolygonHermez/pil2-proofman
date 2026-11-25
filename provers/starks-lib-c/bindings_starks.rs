@@ -156,7 +156,10 @@ extern "C" {
     // ========================================================================================
     pub fn expressions_bin_new(filename: *mut ::std::os::raw::c_char, global: bool) -> *mut ::std::os::raw::c_void;
 
-    pub fn constraint_dag_new(filename: *mut ::std::os::raw::c_char) -> *mut ::std::os::raw::c_void;
+    pub fn constraint_dag_new(
+        filename: *mut ::std::os::raw::c_char,
+        pStarkInfo: *mut ::std::os::raw::c_void,
+    ) -> *mut ::std::os::raw::c_void;
 
     pub fn constraint_dag_free(pConstraintDag: *mut ::std::os::raw::c_void);
     

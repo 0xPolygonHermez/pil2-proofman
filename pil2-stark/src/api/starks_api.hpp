@@ -111,7 +111,7 @@ extern "C" {
     // Expressions Bin
     // ========================================================================================
     void *expressions_bin_new(char *filename, bool global);
-    void *constraint_dag_new(char *filename);
+    void *constraint_dag_new(char *filename, void *pStarkInfo);
     void constraint_dag_free(void *pConstraintDag);
     uint64_t get_max_n_tmp1(void *pExpressionsBin);
     uint64_t get_max_n_tmp3(void *pExpressionsBin);

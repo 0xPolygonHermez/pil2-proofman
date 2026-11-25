@@ -17,15 +17,11 @@ class ProverHelpers {
         uint64_t nBits = starkInfo.starkStruct.nBits;
         uint64_t nBitsExt = starkInfo.starkStruct.nBitsExt;
         computeX(nBits, nBitsExt, pil1);
-        computeZerofier(nBits, nBitsExt, starkInfo.boundaries);
+        computeZerofier(nBits, nBitsExt);
     }
 
-    // A STARK key has the everyRow boundary only (the setup refuses any other).
-    void computeZerofier(uint64_t nBits, uint64_t nBitsExt, const vector<Boundary> &boundaries) {
-        if(boundaries.size() != 1 || boundaries[0].name != "everyRow") {
-            zklog.error("ProverHelpers: a STARK key has the everyRow boundary only; regenerate the setup");
-            exitProcess();
-        }
+    // everyRow only: StarkInfo::load refuses any other boundary.
+    void computeZerofier(uint64_t nBits, uint64_t nBitsExt) {
         zi = new Goldilocks::Element[1 << nBitsExt];
         buildZHInv(nBits, nBitsExt);
     }

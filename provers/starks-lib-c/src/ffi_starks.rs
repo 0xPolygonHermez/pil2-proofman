@@ -386,9 +386,9 @@ pub fn expressions_bin_new_c(filename: &str, global: bool) -> *mut c_void {
     }
 }
 
-pub fn constraint_dag_new_c(filename: &str) -> *mut c_void {
+pub fn constraint_dag_new_c(filename: &str, p_stark_info: *mut c_void) -> *mut c_void {
     let filename = CString::new(filename).unwrap();
-    unsafe { constraint_dag_new(filename.as_ptr() as *mut std::os::raw::c_char) }
+    unsafe { constraint_dag_new(filename.as_ptr() as *mut std::os::raw::c_char, p_stark_info) }
 }
 
 pub fn constraint_dag_free_c(p_constraint_dag: *mut c_void) {

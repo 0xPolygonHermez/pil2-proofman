@@ -203,11 +203,8 @@ void unpack_trace(
     CHECKCUDAERR(cudaGetLastError());
 }
 
-void computeZerofier(Goldilocks::Element *d_zi, uint64_t nBits, uint64_t nBitsExt, const vector<Boundary> &boundaries, cudaStream_t stream) {
-    if(boundaries.size() != 1 || boundaries[0].name != "everyRow") {
-        zklog.error("computeZerofier: a STARK key has the everyRow boundary only; regenerate the setup");
-        exitProcess();
-    }
+// everyRow only: StarkInfo::load refuses any other boundary.
+void computeZerofier(Goldilocks::Element *d_zi, uint64_t nBits, uint64_t nBitsExt, cudaStream_t stream) {
     uint64_t NExtended = 1 << nBitsExt;
     uint64_t extendBits = nBitsExt - nBits;
     uint64_t extend = (1 << extendBits);
