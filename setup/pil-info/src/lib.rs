@@ -10,9 +10,10 @@ pub mod expr;
 pub mod io;
 pub mod output;
 pub mod pil;
+pub mod pipeline;
 pub mod search;
 pub mod types;
 
 pub use cfg::{DegreePolicy, FieldCfg, Opening, PilInfoCfg, PrepareOptions, DEFAULT_MAX_CONSTRAINT_DEGREE};
 pub use error::{BinFileError, PilInfoError};
-pub use pil::shplonk::{shplonk_info, PilInfoResult};
+pub use pil::shplonk::{shplonk_info, ShplonkResult};

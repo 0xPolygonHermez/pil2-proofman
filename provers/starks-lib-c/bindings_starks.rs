@@ -583,16 +583,6 @@ extern "C" {
         pPublics: *mut ::std::os::raw::c_void,
     ) -> bool;
     
-    pub fn stark_verify_from_file(
-        proof: *mut ::std::os::raw::c_char,
-        pStarkInfo: *mut ::std::os::raw::c_void,
-        pConstraintDag: *mut ::std::os::raw::c_void,
-        verkey: *mut ::std::os::raw::c_char,
-        pPublics: *mut ::std::os::raw::c_void,
-        pProofValues: *mut ::std::os::raw::c_void,
-        challenges: *mut ::std::os::raw::c_void,
-    ) -> bool;
-
     // Fixed Columns
     // ========================================================================================
     pub fn write_fixed_cols_bin(

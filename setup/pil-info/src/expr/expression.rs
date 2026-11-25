@@ -86,38 +86,3 @@ impl Default for Expression {
         }
     }
 }
-
-/// Arena-based expression storage.
-/// Expressions reference each other by ExprId (index).
-#[derive(Debug, Default)]
-pub struct ExpressionArena {
-    pub exprs: Vec<Expression>,
-}
-
-impl ExpressionArena {
-    pub fn new() -> Self {
-        Self { exprs: Vec::new() }
-    }
-
-    pub fn push(&mut self, expr: Expression) -> ExprId {
-        let id = self.exprs.len();
-        self.exprs.push(expr);
-        id
-    }
-
-    pub fn get(&self, id: ExprId) -> &Expression {
-        &self.exprs[id]
-    }
-
-    pub fn get_mut(&mut self, id: ExprId) -> &mut Expression {
-        &mut self.exprs[id]
-    }
-
-    pub fn len(&self) -> usize {
-        self.exprs.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.exprs.is_empty()
-    }
-}

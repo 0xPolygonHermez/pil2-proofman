@@ -64,10 +64,6 @@ fn stark_struct_output(stark_struct: &StarkStruct, ldt: &LowDegreeTest) -> Stark
     }
 }
 
-pub fn compute_log_folding_factors(stark_struct: &StarkStruct) -> Vec<u32> {
-    stark_struct.low_degree_test.log_folding_factors()
-}
-
 /// Solve the security parameters (query counts, grinding) of the low-degree
 /// test the stark struct selects, for a DEEP polynomial batching `batch_size`
 /// openings. The 128-bit JBR target and the geometry (rate, tree arity, pow
@@ -85,7 +81,7 @@ pub fn solve_low_degree_test(stark_struct: &StarkStruct, batch_size: u64) -> Low
 fn solve_low_degree_test_unchecked(stark_struct: &StarkStruct, batch_size: u64) -> LowDegreeTest {
     let field_size = security::goldilocks_safe_extension_field_size();
     let rate = 1.0 / (1u64 << (stark_struct.n_bits_ext - stark_struct.n_bits)) as f64;
-    let log_folding_factors = compute_log_folding_factors(stark_struct);
+    let log_folding_factors = stark_struct.low_degree_test.log_folding_factors();
     match &stark_struct.low_degree_test {
         crate::types::stark_struct::LowDegreeTest::Fri(fri) => {
             LowDegreeTest::Fri(security::pcs::Fri::new(security::pcs::FriConfig {

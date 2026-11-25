@@ -304,14 +304,14 @@ pub fn generate_pil_code(
     params: &CodeGenParams,
     symbols: &[SymbolInfo],
     constraints: &[ConstraintInfo],
-    expressions: &mut Vec<Expression>,
+    expressions: &mut [Expression],
     hints: &[HintInfo],
     print_ctx: Option<&PrintCtx>,
 ) -> Result<PilCodeResult> {
     // Pre-compute witness symbol index for O(1) lookups in fix_commit_pol
     let witness_index = build_witness_index(symbols, params.air_id, params.airgroup_id);
 
-    let hints_info = add_hints_info(params, expressions, hints, false, print_ctx)?;
+    let hints_info = add_hints_info(&params.opening_points, expressions, hints, print_ctx)?;
 
     let expressions_code = generate_expressions_code(params, symbols, expressions, &witness_index)?;
 
@@ -486,12 +486,11 @@ fn generate_constraints_debug_code(
 
 /// Process hints into flat hint field values.
 ///
-/// Mirrors JS `addHintsInfo(res, expressions, hints, global)`.
-fn add_hints_info(
-    params: &CodeGenParams,
-    expressions: &mut Vec<Expression>,
+/// Mirrors JS `addHintsInfo(res, expressions, hints, global)`; the global hints open at no point.
+pub(crate) fn add_hints_info(
+    opening_points: &[i64],
+    expressions: &mut [Expression],
     hints: &[HintInfo],
-    _global: bool,
     print_ctx: Option<&PrintCtx>,
 ) -> Result<Vec<ProcessedHint>> {
     let mut result = Vec::new();
@@ -500,7 +499,7 @@ fn add_hints_info(
         let mut processed_fields = Vec::new();
 
         for field in &hint.fields {
-            let flat_values = process_hint_field_values(&field.values, params, expressions, &[], print_ctx)?;
+            let flat_values = process_hint_field_values(&field.values, opening_points, expressions, &[], print_ctx)?;
 
             let mut entry = ProcessedHintFieldEntry { name: field.name.clone(), values: flat_values };
 
@@ -523,8 +522,8 @@ fn add_hints_info(
 /// Recursively flatten hint field values.
 fn process_hint_field_values(
     values: &[HintFieldValue],
-    params: &CodeGenParams,
-    expressions: &mut Vec<Expression>,
+    opening_points: &[i64],
+    expressions: &mut [Expression],
     pos: &[usize],
     print_ctx: Option<&PrintCtx>,
 ) -> Result<Vec<ProcessedHintField>> {
@@ -536,11 +535,11 @@ fn process_hint_field_values(
 
         match field {
             HintFieldValue::Array(arr) => {
-                let inner = process_hint_field_values(arr, params, expressions, &current_pos, print_ctx)?;
+                let inner = process_hint_field_values(arr, opening_points, expressions, &current_pos, print_ctx)?;
                 result.extend(inner);
             }
             HintFieldValue::Single(expr) => {
-                let processed = process_single_hint_field(expr, params, expressions, &current_pos, print_ctx)?;
+                let processed = process_single_hint_field(expr, opening_points, expressions, &current_pos, print_ctx)?;
                 result.push(processed);
             }
         }
@@ -552,7 +551,7 @@ fn process_hint_field_values(
 /// Process a single (leaf) hint field expression.
 fn process_single_hint_field(
     expr: &Expression,
-    params: &CodeGenParams,
+    opening_points: &[i64],
     expressions: &mut [Expression],
     pos: &[usize],
     print_ctx: Option<&PrintCtx>,
@@ -586,8 +585,7 @@ fn process_single_hint_field(
         }
         "cm" | "custom" | "const" => {
             let row_offset = expr.row_offset.unwrap_or(0);
-            let prime_index =
-                params.opening_points.iter().position(|&p| p == row_offset).map(|p| p as isize).unwrap_or(-1);
+            let prime_index = opening_points.iter().position(|&p| p == row_offset).map(|p| p as isize).unwrap_or(-1);
             ProcessedHintField {
                 op: expr.op.clone(),
                 id: expr.id,
@@ -711,7 +709,7 @@ mod tests {
             }],
         }];
 
-        let result = add_hints_info(&params, &mut expressions, &hints, false, None).unwrap();
+        let result = add_hints_info(&params.opening_points, &mut expressions, &hints, None).unwrap();
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].name, "test_hint");
         assert_eq!(result[0].fields.len(), 1);
@@ -771,7 +769,7 @@ mod tests {
             })),
         ]))];
 
-        let result = process_hint_field_values(&values, &params, &mut expressions, &[], None).unwrap();
+        let result = process_hint_field_values(&values, &params.opening_points, &mut expressions, &[], None).unwrap();
         // Should flatten to 2 entries
         assert_eq!(result.len(), 2);
         assert_eq!(result[0].pos, vec![0, 0]);
@@ -782,7 +780,7 @@ mod tests {
     #[test]
     fn a_hint_field_of_an_unknown_op_is_an_error() {
         let zi = Expression { op: "Zi".to_string(), ..Default::default() };
-        let err = process_single_hint_field(&zi, &make_params(), &mut [], &[0], None).unwrap_err();
+        let err = process_single_hint_field(&zi, &make_params().opening_points, &mut [], &[0], None).unwrap_err();
         assert!(matches!(&err, PilInfoError::UnknownHintOp(op) if op == "Zi"), "{err}");
     }
 }

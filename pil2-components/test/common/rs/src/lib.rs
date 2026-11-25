@@ -56,7 +56,7 @@ pub fn setup(pilout: &Path, build: &Path) -> Result<(), String> {
         recursive_jobs: 1,
         setup_jobs: 1,
         stats_output_path: None,
-        hash: proofman_common::hash_family::DEFAULT_HASH_ID.to_string(),
+        hash: proofman_common::hash_family::DEFAULT_HASH_ID.parse()?,
         // Inert for a non-recursive setup -- there are no recursive airs to size or a final to
         // compress -- but derived from the family rather than hardcoded, so this cannot drift if
         // the default hash ever changes.

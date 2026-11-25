@@ -44,7 +44,15 @@ pub fn fri_ev_groups(si: &StarkInfo) -> Vec<FriEvalGroup> {
             assert_eq!(i, next_eval, "evMap is not ordered by opening point");
             next_eval += 1;
             let col = pol_index[&pol_key(ev)];
-            refs.push(FriEvalRef::new(bucket as u16, offset as u16, dim as u8, col as u16));
+            let narrow =
+                |v: u64, what: &str| u16::try_from(v).unwrap_or_else(|_| panic!("evMap {i}: {what} {v} past u16"));
+            let dim = u8::try_from(dim).unwrap_or_else(|_| panic!("evMap {i}: dim {dim} past u8"));
+            refs.push(FriEvalRef::new(
+                narrow(bucket, "bucket"),
+                narrow(offset, "offset"),
+                dim,
+                narrow(col as u64, "column"),
+            ));
         }
         // Opening points from hint expressions have no evaluations.
         if !refs.is_empty() {
@@ -81,7 +89,7 @@ mod tests {
     use crate::stark_info::{EvMap, PolMap};
 
     fn ev(t: EvMapEType, id: u64, pos: usize, commit_id: u64) -> EvMap {
-        EvMap { type_: t, id, prime: pos != 0, opening_pos: pos, commit_id }
+        EvMap { type_: t, id, opening_pos: pos, commit_id }
     }
 
     fn si() -> StarkInfo {

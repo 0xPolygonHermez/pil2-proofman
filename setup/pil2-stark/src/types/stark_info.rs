@@ -24,10 +24,10 @@ pub struct PolMap {
     pub pols_map_id: u64,
 }
 
-/// Evaluation map entry.
+/// Evaluation map entry; `prime` is its opening point.
 #[derive(Debug, Clone)]
 pub struct EvMap {
-    pub ev_type: String,
+    pub ev_type: proofman_common::EvMapEType,
     pub id: u64,
     pub prime: i64,
     pub commit_id: u64,
@@ -66,8 +66,8 @@ pub struct StarkInfo {
     pub map_sections_n: HashMap<String, u64>,
     /// The proof travels as a Merkle multiproof.
     pub multiproof: bool,
-    /// The same json as `proofman_common::StarkInfo`, or why it does not parse.
-    pub common: Option<std::result::Result<proofman_common::StarkInfo, String>>,
+    /// The same json as `proofman_common::StarkInfo`, the one typed starkinfo reader.
+    pub common: proofman_common::StarkInfo,
     /// The constraint DAG's resolver tables (`LowerTables::from_starkinfo`).
     pub lower_tables: LowerTables,
 }
@@ -215,74 +215,44 @@ fn parse_pol_map_array(v: &Value, key: &str) -> Vec<PolMap> {
 impl StarkInfo {
     /// Parse a StarkInfo from a serde_json::Value (the parsed starkinfo.json).
     pub fn from_json(j: &Value) -> Result<Self> {
-        let version = j.get("keyVersion").and_then(Value::as_u64);
-        if version != Some(u64::from(pil_info::core::project::KEY_VERSION)) {
-            anyhow::bail!(
-                "starkinfo keyVersion {version:?}, this setup reads {}: regenerate it",
-                pil_info::core::project::KEY_VERSION
-            );
-        }
+        // the keyVersion gate and the typed parse are proofman_common's; the rest is setup-only
+        let common = proofman_common::StarkInfo::try_from_value(j).map_err(|e| anyhow!("{e}"))?;
         let ss = j.get("starkStruct").unwrap_or(&Value::Null);
         let low_degree_test: LowDegreeTest = serde_json::from_value(ss.clone())
             .map_err(|e| anyhow::anyhow!("starkinfo starkStruct: cannot parse the low-degree test schedule: {e}"))?;
-
+        let cs = &common.stark_struct;
         let stark_struct = StarkStruct {
-            n_bits: get_u64(ss, "nBits") as usize,
-            n_bits_ext: get_u64(ss, "nBitsExt") as usize,
-            hash_commits: get_bool(ss, "hashCommits"),
-            last_level_verification: get_u64(ss, "lastLevelVerification") as usize,
-            merkle_tree_arity: get_u64(ss, "merkleTreeArity") as usize,
-            transcript_arity: get_u64(ss, "transcriptArity") as usize,
-            merkle_tree_custom: get_bool(ss, "merkleTreeCustom"),
-            verification_hash_type: get_str(ss, "verificationHashType").to_string(),
+            n_bits: cs.n_bits as usize,
+            n_bits_ext: cs.n_bits_ext as usize,
+            hash_commits: cs.hash_commits,
+            last_level_verification: cs.last_level_verification as usize,
+            merkle_tree_arity: cs.merkle_tree_arity as usize,
+            transcript_arity: cs.transcript_arity as usize,
+            merkle_tree_custom: cs.merkle_tree_custom,
+            verification_hash_type: cs.verification_hash_type.clone(),
             low_degree_test,
         };
-
-        let custom_commits: Vec<CustomCommit> = j
-            .get("customCommits")
-            .and_then(|a| a.as_array())
-            .map(|arr| arr.iter().map(|c| CustomCommit { name: get_str(c, "name").to_string() }).collect())
-            .unwrap_or_default();
-
-        let ev_map: Vec<EvMap> = j
-            .get("evMap")
-            .and_then(|a| a.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .map(|e| EvMap {
-                        ev_type: get_str(e, "type").to_string(),
-                        id: get_u64(e, "id"),
-                        prime: get_i64(e, "prime"),
-                        commit_id: get_u64(e, "commitId"),
-                        opening_pos: get_u64(e, "openingPos"),
-                    })
-                    .collect()
+        let ev_map = (common.ev_map.iter().enumerate())
+            .map(|(i, e)| {
+                let prime = *common
+                    .opening_points
+                    .get(e.opening_pos)
+                    .ok_or_else(|| anyhow!("evMap {i}: openingPos past openingPoints"))?;
+                Ok(EvMap {
+                    ev_type: e.type_,
+                    id: e.id,
+                    prime,
+                    commit_id: e.commit_id,
+                    opening_pos: e.opening_pos as u64,
+                })
             })
-            .unwrap_or_default();
-
-        let opening_points: Vec<i64> = j
-            .get("openingPoints")
-            .and_then(|a| a.as_array())
-            .map(|arr| arr.iter().map(|v| v.as_i64().unwrap_or(0)).collect())
-            .unwrap_or_default();
-
-        let mut map_sections_n: HashMap<String, u64> = HashMap::new();
-        if let Some(msn) = j.get("mapSectionsN").and_then(|v| v.as_object()) {
-            for (k, v) in msn {
-                if let Some(val) = v.as_u64() {
-                    map_sections_n.insert(k.clone(), val);
-                }
-            }
-        }
-
-        let common = serde_json::from_value::<proofman_common::StarkInfo>(j.clone()).map_err(|e| e.to_string());
-
+            .collect::<Result<Vec<_>>>()?;
         Ok(StarkInfo {
             stark_struct,
-            n_stages: get_u64(j, "nStages"),
-            n_constants: get_u64(j, "nConstants"),
-            n_publics: get_u64(j, "nPublics"),
-            custom_commits,
+            n_stages: u64::from(common.n_stages),
+            n_constants: common.n_constants,
+            n_publics: common.n_publics,
+            custom_commits: common.custom_commits.iter().map(|c| CustomCommit { name: c.name.clone() }).collect(),
             cm_pols_map: parse_pol_map_array(j, "cmPolsMap"),
             const_pols_map: parse_pol_map_array(j, "constPolsMap"),
             challenges_map: parse_pol_map_array(j, "challengesMap"),
@@ -290,14 +260,14 @@ impl StarkInfo {
             air_values_map: parse_pol_map_array(j, "airValuesMap"),
             proof_values_map: parse_pol_map_array(j, "proofValuesMap"),
             ev_map,
-            opening_points,
-            q_deg: get_u64(j, "qDeg"),
-            q_dim: get_u64(j, "qDim"),
-            c_exp_id: get_u64(j, "cExpId"),
-            map_sections_n,
-            multiproof: get_bool(j, "multiproof"),
-            common: Some(common),
+            opening_points: common.opening_points.clone(),
+            q_deg: common.q_deg,
+            q_dim: common.q_dim,
+            c_exp_id: common.c_exp_id,
+            map_sections_n: common.map_sections_n.clone(),
+            multiproof: common.multiproof,
             lower_tables: LowerTables::from_starkinfo(j).map_err(|e| anyhow!("starkinfo: {e:?}"))?,
+            common,
         })
     }
 }

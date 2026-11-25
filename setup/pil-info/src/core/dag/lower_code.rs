@@ -7,7 +7,8 @@ use serde_json::Value;
 
 use crate::core::dag::format::{ConstraintDag, DagBoundary, DagError, DagNode};
 use crate::core::fold::fold_roots;
-use crate::core::ir::{ColRef, ColType};
+use crate::cfg::FieldCfg;
+use crate::core::ir::{value_dim, ColRef, ColType};
 
 /// What a DAG's references resolve against; `ev_map[k]` is evaluation `k`, `challenges[k]` is `(stage, stage_id)`.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -98,7 +99,7 @@ fn std_vc_index<'a>(names: impl IntoIterator<Item = &'a str>) -> Result<Option<u
 }
 
 impl LowerTables {
-    /// The tables of a starkinfo JSON: evMap by `prime`, `std_vc` by name (past the end when absent), value stages.
+    /// The tables of a (Goldilocks) starkinfo JSON: evMap by `prime`, `std_vc` by name (past the end when absent), value stages.
     pub fn from_starkinfo(si: &Value) -> Result<Self, DagError> {
         let bad = |what: String| DagError::Unresolved { node: 0, what: format!("starkinfo {what}") };
         let num = |v: &Value, k: &str| v.get(k).and_then(Value::as_u64).and_then(|x| u32::try_from(x).ok());
@@ -130,7 +131,7 @@ impl LowerTables {
             air_values_stage: stages("airValuesMap")?,
             proof_values_stage: stages("proofValuesMap")?,
             airgroup_values_stage: stages("airgroupValuesMap")?,
-            ext_dim: 3,
+            ext_dim: FieldCfg::goldilocks().ext_dim(),
         })
     }
 }
@@ -148,7 +149,6 @@ impl VerifierCode {
                 return Err(bad(format!("{:?} takes {n_src} operands, got {}", ins.op, ins.src.len())));
             }
             for s in &ins.src {
-                let by_stage = |stage: u32| if stage == 1 { 1 } else { ext_dim };
                 let d = match s.operand {
                     Operand::Tmp(k) => {
                         *defs.get(&k).ok_or_else(|| bad(format!("reads tmp {k} before it is written")))?
@@ -157,7 +157,7 @@ impl VerifierCode {
                     Operand::Number(_) | Operand::Public(_) => 1,
                     Operand::ProofValue { stage, .. }
                     | Operand::AirValue { stage, .. }
-                    | Operand::AirgroupValue { stage, .. } => by_stage(stage),
+                    | Operand::AirgroupValue { stage, .. } => value_dim(stage, ext_dim),
                 };
                 if s.dim != d {
                     return Err(bad(format!("operand {:?} typed dim {} but has dim {d}", s.operand, s.dim)));
@@ -208,8 +208,7 @@ impl LowerCtx {
     pub fn dim(&self, i: u32, n: &DagNode) -> Result<usize, DagError> {
         let t = &self.t;
         let by_stage = |s: &[u32], id: &u32, what: &str| match s.get(*id as usize) {
-            Some(1) => Ok(1),
-            Some(_) => Ok(t.ext_dim),
+            Some(&stage) => Ok(value_dim(stage, t.ext_dim)),
             None => Err(DagError::Unresolved { node: i, what: format!("{what} {id}") }),
         };
         match n {

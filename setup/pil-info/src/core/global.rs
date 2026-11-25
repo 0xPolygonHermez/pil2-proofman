@@ -1,13 +1,13 @@
-//! Global constraints.
-//! TODO: `output::global_constraints` still formats globalConstraints.json from `pb` (format_global_*); moving it
-//! here needs the global hints typed (not in `GlobalSystem`) and the JSON kept byte-identical. Tests call this only.
+//! Global constraints and hints: `PiloutCore`'s global tables lowered to the typed `Expr`.
 
-use pil2_pilout::pilout::{self as pb, global_expression as gx, global_operand as go};
+use pil2_pilout::pilout as pb;
 
 use super::from_pilout::{
-    bad, check_challenge, check_proof_value, check_public, check_refs, const_of, lower_op, Op, PiloutError,
+    bad, check_challenge, check_proof_value, check_public, check_refs, global, lower_op, named, proof_value_stage, Op,
+    PiloutError,
 };
-use super::ir::Expr;
+use super::ir::{Expr, Hint, HintField, HintValue};
+use super::pilout_core::{self as pc, GlobalExpression, GlobalOperand, PiloutCore, SymbolKind};
 use crate::cfg::FieldCfg;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -16,71 +16,141 @@ pub struct GlobalConstraint {
     pub label: String,
 }
 
-/// Global expressions and constraints in the same typed `Expr`.
+/// Global expressions (pilout order), constraints and hints in the same typed `Expr`, with the tables they read.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct GlobalSystem {
     pub field: FieldCfg,
     pub exprs: Vec<Expr>,
     pub constraints: Vec<GlobalConstraint>,
+    /// The global hints (no airgroup, no air); an airgroup value without airgroup is a hint's.
+    pub hints: Vec<Hint>,
+    pub num_challenges: Vec<u32>,
+    /// Stage of each airgroup's values.
+    pub airgroup_value_stages: Vec<Vec<u32>>,
+    /// Stage of each proof value, by id.
+    pub proof_value_stages: Vec<u32>,
 }
 
-fn lower_operand(o: &Option<pb::GlobalOperand>, parent: usize, p: &pb::PilOut) -> Result<Expr, PiloutError> {
-    let inner = o.as_ref().and_then(|o| o.operand.as_ref()).ok_or_else(|| bad(parent, "missing operand"))?;
-    let public = |idx: u32| check_public(p.num_public_values, idx, parent).map(|()| Expr::Public(idx));
-    Ok(match inner {
-        go::Operand::Expression(r) => Expr::Ref(r.idx),
-        go::Operand::Constant(c) => const_of(&c.value),
-        go::Operand::PublicValue(v) => public(v.idx)?,
-        go::Operand::PublicTableAggregatedValue(v) => public(v.idx)?,
-        go::Operand::PublicTableColumn(v) => public(v.idx)?,
-        go::Operand::AirGroupValue(a) => {
-            let g = p.air_groups.get(a.air_group_id as usize).ok_or_else(|| bad(parent, "unknown airgroup"))?;
+fn lower_operand(o: &GlobalOperand, parent: usize, core: &PiloutCore) -> Result<Expr, PiloutError> {
+    Ok(match o {
+        GlobalOperand::Expression(r) => Expr::Ref(*r),
+        GlobalOperand::Constant(c) => Expr::Const(c.clone()),
+        GlobalOperand::PublicValue(idx) => {
+            check_public(core.num_public_values, *idx, parent)?;
+            Expr::Public(*idx)
+        }
+        GlobalOperand::AirGroupValue(a) => {
+            let g = core.air_groups.get(a.air_group_id as usize).ok_or_else(|| bad(parent, "unknown airgroup"))?;
             if a.idx as usize >= g.air_group_values.len() {
                 return Err(bad(parent, "airgroup value out of range"));
             }
             Expr::AirgroupValue { airgroup: Some(a.air_group_id), id: a.idx }
         }
-        go::Operand::Challenge(c) => {
-            check_challenge(&p.num_challenges, c.stage, c.idx, parent)?;
+        GlobalOperand::Challenge(c) => {
+            check_challenge(&core.num_challenges, c.stage, c.idx, parent)?;
             Expr::Challenge { stage: c.stage, stage_id: c.idx }
         }
-        go::Operand::ProofValue(v) => {
-            check_proof_value(&p.num_proof_values, v.idx, parent)?;
+        GlobalOperand::ProofValue(v) => {
+            check_proof_value(&core.num_proof_values, v.idx, parent)?;
             Expr::ProofValue(v.idx)
         }
     })
 }
 
-fn lower_expression(e: &pb::GlobalExpression, i: usize, p: &pb::PilOut) -> Result<Expr, PiloutError> {
-    let op = match e.operation.as_ref().ok_or_else(|| bad(i, "expression without an operation"))? {
-        gx::Operation::Add(a) => Op::Add(&a.lhs, &a.rhs),
-        gx::Operation::Sub(a) => Op::Sub(&a.lhs, &a.rhs),
-        gx::Operation::Mul(a) => Op::Mul(&a.lhs, &a.rhs),
-        gx::Operation::Neg(a) => Op::Neg(&a.value),
+fn lower_expression(e: &GlobalExpression, i: usize, core: &PiloutCore) -> Result<Expr, PiloutError> {
+    let op = match e {
+        GlobalExpression::Add([a, b]) => Op::Add(a, b),
+        GlobalExpression::Sub([a, b]) => Op::Sub(a, b),
+        GlobalExpression::Mul([a, b]) => Op::Mul(a, b),
+        GlobalExpression::Neg(a) => Op::Neg(a),
     };
-    lower_op(op, |o| lower_operand(o, i, p))
+    lower_op(op, |o| lower_operand(o, i, core))
 }
 
-/// Same strict rules as `from_pilout`: a constraint without an expression, an out-of-range operand, or any dangling or cyclic reference is an error.
-pub fn global_from_pilout(pilout: &pb::PilOut, field: &FieldCfg) -> Result<GlobalSystem, PiloutError> {
-    let exprs = pilout
+/// A global hint operand: an air operand read globally (`Expression` is a global expression); columns are refused.
+fn lower_hint_operand(o: &pc::Operand, hint: &str, core: &PiloutCore) -> Result<Expr, PiloutError> {
+    let refuse = |why| PiloutError::BadHint { hint: hint.to_string(), why };
+    let at = |r: Result<(), PiloutError>| r.map_err(|_| refuse("operand out of range"));
+    Ok(match o {
+        pc::Operand::Expression(idx) if (*idx as usize) < core.expressions.len() => Expr::Ref(*idx),
+        pc::Operand::Expression(_) => return Err(refuse("a global expression the pilout does not have")),
+        pc::Operand::Constant(c) => Expr::Const(c.clone()),
+        pc::Operand::PublicValue(idx) => {
+            at(check_public(core.num_public_values, *idx, 0))?;
+            Expr::Public(*idx)
+        }
+        pc::Operand::AirGroupValue(idx) => Expr::AirgroupValue { airgroup: None, id: *idx },
+        pc::Operand::AirValue(idx) => Expr::AirValue(*idx),
+        pc::Operand::Challenge(c) => {
+            at(check_challenge(&core.num_challenges, c.stage, c.idx, 0))?;
+            Expr::Challenge { stage: c.stage, stage_id: c.idx }
+        }
+        pc::Operand::ProofValue(v) => {
+            at(check_proof_value(&core.num_proof_values, v.idx, 0))?;
+            Expr::ProofValue(v.idx)
+        }
+        pc::Operand::WitnessCol(_)
+        | pc::Operand::CustomCol(_)
+        | pc::Operand::FixedCol(_)
+        | pc::Operand::PeriodicCol(_) => return Err(refuse("a column operand in a global hint")),
+    })
+}
+
+fn lower_hint_field(f: &pc::HintField, hint: &str, core: &PiloutCore) -> Result<HintField, PiloutError> {
+    let value = match &f.value {
+        pc::HintValue::String(s) => HintValue::Str(s.clone()),
+        pc::HintValue::Operand(o) => HintValue::Expr(lower_hint_operand(o, hint, core)?),
+        pc::HintValue::Array(a) => {
+            HintValue::Array(a.iter().map(|f| lower_hint_field(f, hint, core)).collect::<Result<_, _>>()?)
+        }
+    };
+    Ok(HintField { name: f.name.clone(), value })
+}
+
+/// Same strict rules as `from_pilout`: an out-of-range operand, or any dangling or cyclic reference is an error.
+pub fn global_from_core(core: &PiloutCore, field: &FieldCfg) -> Result<GlobalSystem, PiloutError> {
+    let exprs = core
         .expressions
         .iter()
         .enumerate()
-        .map(|(i, e)| lower_expression(e, i, pilout))
+        .map(|(i, e)| lower_expression(e, i, core))
         .collect::<Result<Vec<_>, _>>()?;
     check_refs(&exprs)?;
-    let constraints = pilout
-        .constraints
-        .iter()
-        .enumerate()
-        .map(|(k, c)| {
-            let idx = c.expression_idx.as_ref().ok_or(PiloutError::MissingExpressionIdx { constraint: k })?.idx;
-            if idx as usize >= exprs.len() {
-                return Err(bad(idx as usize, "constraint expression out of range"));
+    let constraints = (core.constraints.iter())
+        .map(|c| {
+            if c.expression_idx as usize >= exprs.len() {
+                return Err(bad(c.expression_idx as usize, "constraint expression out of range"));
             }
-            Ok(GlobalConstraint { e: Expr::Ref(idx), label: c.debug_line.clone().unwrap_or_default() })
+            Ok(GlobalConstraint { e: Expr::Ref(c.expression_idx), label: c.debug_line.clone().unwrap_or_default() })
         })
         .collect::<Result<Vec<_>, _>>()?;
-    Ok(GlobalSystem { field: field.clone(), exprs, constraints })
+    let hints = (core.hints.iter().filter(|h| h.air_group_id.is_none() && h.air_id.is_none()))
+        .map(|h| {
+            let fields = h.fields.iter().map(|f| lower_hint_field(f, &h.name, core)).collect::<Result<_, _>>()?;
+            Ok(Hint { name: h.name.clone(), fields })
+        })
+        .collect::<Result<Vec<_>, PiloutError>>()?;
+    let proof_value_stages = named(global(core, SymbolKind::ProofValue), |s, _| Ok(proof_value_stage(s)))?;
+    Ok(GlobalSystem {
+        field: field.clone(),
+        exprs,
+        constraints,
+        hints,
+        num_challenges: core.num_challenges.clone(),
+        airgroup_value_stages: core
+            .air_groups
+            .iter()
+            .map(|g| g.air_group_values.iter().map(|v| v.stage).collect())
+            .collect(),
+        proof_value_stages,
+    })
+}
+
+/// `global_from_core` over the pilout's global tables.
+pub fn global_from_pilout(pilout: &pb::PilOut, field: &FieldCfg) -> Result<GlobalSystem, PiloutError> {
+    let mut core = PiloutCore::globals_of(pilout)?;
+    core.air_groups = (pilout.air_groups.iter())
+        .map(|g| Ok(pc::AirGroup { air_group_values: pc::air_group_values(g)?, airs: Vec::new() }))
+        .collect::<Result<_, PiloutError>>()?;
+    global_from_core(&core, field)
 }

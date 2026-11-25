@@ -26,19 +26,14 @@ mod eval {
         pub zi: E3,
     }
 
-    /// splitmix64.
-    struct Rng(u64);
-    impl Rng {
-        fn gl(&mut self) -> Goldilocks {
-            self.0 = self.0.wrapping_add(0x9E37_79B9_7F4A_7C15);
-            let mut z = self.0;
-            z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
-            z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
-            Goldilocks::new((z ^ (z >> 31)) % GOLDILOCKS_MODULUS)
-        }
-        fn e3(&mut self) -> E3 {
-            E3::from_array(&[self.gl(), self.gl(), self.gl()])
-        }
+    use crate::output::test_support::common::Rng;
+
+    fn gl(r: &mut Rng) -> Goldilocks {
+        Goldilocks::new(r.next() % GOLDILOCKS_MODULUS)
+    }
+
+    fn e3(r: &mut Rng) -> E3 {
+        E3::from_array(&[gl(r), gl(r), gl(r)])
     }
 
     /// Flat length of a value map: 1 per stage-1 entry, 3 per other.
@@ -49,19 +44,19 @@ mod eval {
     /// Seeded inputs sized by `t`.
     pub fn random_inputs(t: &LowerTables, seed: u64) -> GlInputs {
         let mut r = Rng(seed);
-        let mut base = |n: usize| (0..n).map(|_| r.gl()).collect::<Vec<_>>();
+        let mut base = |n: usize| (0..n).map(|_| gl(&mut r)).collect::<Vec<_>>();
         let publics = base(t.n_publics as usize);
         let proof_values = base(flat_len(&t.proof_values_stage));
         let air_values = base(flat_len(&t.air_values_stage));
         let airgroup_values = base(flat_len(&t.airgroup_values_stage));
         GlInputs {
-            evals: (0..t.ev_map.len()).map(|_| r.e3()).collect(),
-            challenges: (0..t.challenges.len()).map(|_| r.e3()).collect(),
+            evals: (0..t.ev_map.len()).map(|_| e3(&mut r)).collect(),
+            challenges: (0..t.challenges.len()).map(|_| e3(&mut r)).collect(),
             publics,
             proof_values,
             air_values,
             airgroup_values,
-            zi: r.e3(),
+            zi: e3(&mut r),
         }
     }
 
@@ -294,9 +289,11 @@ mod tests {
             inp.zi = base(&fe(inp.zi[0]));
             let mut env = Env::default();
             let ev_of = |id: u64, prime: i64| {
-                si.ev_map.iter().position(|e| e.ev_type == "cm" && e.id == id && e.prime == prime)
+                si.ev_map
+                    .iter()
+                    .position(|e| e.ev_type == proofman_common::EvMapEType::Cm && e.id == id && e.prime == prime)
             };
-            for (j, ev) in si.ev_map.iter().enumerate().filter(|(_, e)| e.ev_type == "cm") {
+            for (j, ev) in si.ev_map.iter().enumerate().filter(|(_, e)| e.ev_type == proofman_common::EvMapEType::Cm) {
                 if (ev.id as usize) < cs.witness.len() {
                     let k = ColRef { col: ColType::Witness, commit_id: None, id: ev.id as u32, offset: ev.prime };
                     env.cols.insert(k, fe(inp.evals[j][0]));

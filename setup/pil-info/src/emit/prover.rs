@@ -2,22 +2,20 @@
 
 use std::cell::RefCell;
 
-use pil2_pilout::pilout::{self as pb, expression as px, global_operand, hint_field, operand as po};
-
 use crate::cfg::{FieldCfg, Opening};
 use crate::core::fold::fold_roots;
-use crate::core::from_pilout::stage_base;
 use crate::core::im::{im_column_id, ImChoice};
-use crate::core::ir::{Boundary, ColType, ConstraintSystem, Expr, HintField, HintValue, NamedValue};
+use crate::core::ir::{value_dim, Boundary, ConstraintSystem, Expr, NamedValue};
 use crate::core::layout::{Layout, PolMap};
 use crate::core::openings::Openings;
 use crate::error::{PilInfoError, Result};
 use crate::expr::expression::{ExprChild, Expression};
 use crate::expr::helpers::{add_info_expression_inline, add_info_expressions, get_exp_dim};
+use crate::emit::arena;
 use crate::emit::verifier::shplonk_q_verifier;
 use crate::expr::print::{print_bounded, PrintCtx};
 use crate::pil::gen_code::{generate_pil_code, CodeGenParams, ExpressionCodeEntry, PilCodeResult};
-use crate::types::pilout_info::{format_expressions, format_hints, ConstraintInfo, HintInfo, SymbolInfo};
+use crate::types::pilout_info::{ConstraintInfo, HintInfo, SymbolInfo};
 
 /// Arena ids with a fixed meaning.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -101,35 +99,12 @@ pub fn emit_prover(
 
 type Formatted = (Vec<Expression>, Vec<HintInfo>, Vec<ConstraintInfo>);
 
-/// The pilout expressions and hints through the old formatters, then the info passes.
+/// The arena and hints from the IR, then the info passes.
 fn formatted(cs: &ConstraintSystem) -> Result<Formatted> {
     let field = &cs.field;
-    let t = Tables::of(cs)?;
-    let mut arena = format_expressions(
-        &t.exprs,
-        &t.stage_widths,
-        &t.num_challenges,
-        &t.air_values,
-        &t.airgroup_values,
-        &t.custom_commits,
-        field,
-    )?;
-    let raw = (cs.hints.iter())
-        .map(|h| {
-            Ok(pb::Hint { name: h.name.clone(), hint_fields: t.hint_fields(cs, &h.fields)?, ..Default::default() })
-        })
-        .collect::<Result<Vec<_>>>()?;
-    let hints = format_hints(
-        &raw,
-        &t.exprs,
-        &t.stage_widths,
-        &t.num_challenges,
-        &t.air_values,
-        &t.airgroup_values,
-        &t.custom_commits,
-        &mut arena,
-        field,
-    )?;
+    let leaf = arena::air_leaf(cs);
+    let mut arena = arena::from_ir(&cs.exprs, &leaf)?;
+    let hints = arena::hints(&cs.hints, &cs.exprs, &leaf, &mut arena)?;
 
     // stage 1, info on the constraints, then on every expression
     arena.iter_mut().for_each(|e| e.stage = 1);
@@ -354,132 +329,6 @@ fn fold_bug() -> PilInfoError {
     PilInfoError::InvalidPilout("the quotient fold met an unexpected operand".into())
 }
 
-/// The old formatter's inputs, rebuilt from the typed IR. TODO: build the arena and hints straight from the IR
-/// (expressionsinfo/.bin byte-identical), then drop this and pilout_info's format_expressions/format_hints.
-struct Tables {
-    exprs: Vec<pb::Expression>,
-    stage_widths: Vec<u32>,
-    num_challenges: Vec<u32>,
-    air_values: Vec<pb::AirValue>,
-    airgroup_values: Vec<pb::AirGroupValue>,
-    custom_commits: Vec<pb::CustomCommit>,
-    /// Stage of each witness column, by id.
-    witness_stage: Vec<Option<u32>>,
-}
-
-impl Tables {
-    fn of(cs: &ConstraintSystem) -> Result<Self> {
-        let per_stage = |stages: &mut dyn Iterator<Item = u32>| {
-            let mut v = vec![0u32; cs.n_stages as usize];
-            stages.for_each(|s| {
-                if let Some(w) = (s as usize).checked_sub(1).and_then(|i| v.get_mut(i)) {
-                    *w += 1;
-                }
-            });
-            v
-        };
-        if cs.airgroup_values.len() != cs.airgroup_agg_types.len() {
-            return Err(PilInfoError::InvalidPilout("airgroup values and their aggTypes differ in number".into()));
-        }
-        let mut witness_stage = vec![None; cs.witness.len()];
-        for c in &cs.witness {
-            *witness_stage.get_mut(c.id as usize).ok_or_else(not_pilout)? = Some(c.stage);
-        }
-        let mut t = Tables {
-            exprs: Vec::with_capacity(cs.exprs.len()),
-            stage_widths: per_stage(&mut cs.witness.iter().map(|c| c.stage)),
-            num_challenges: per_stage(&mut cs.challenges.iter().map(|c| c.0)),
-            air_values: cs.air_values.iter().map(|v| pb::AirValue { stage: v.stage }).collect(),
-            airgroup_values: cs
-                .airgroup_values
-                .iter()
-                .zip(&cs.airgroup_agg_types)
-                .map(|(v, a)| pb::AirGroupValue { agg_type: *a, stage: v.stage })
-                .collect(),
-            custom_commits: cs
-                .custom_commits
-                .iter()
-                .map(|c| pb::CustomCommit {
-                    name: Some(c.name.clone()),
-                    public_values: c.public_values.iter().map(|&idx| global_operand::PublicValue { idx }).collect(),
-                    stage_widths: c.stage_widths.clone(),
-                })
-                .collect(),
-            witness_stage,
-        };
-        for e in &cs.exprs {
-            let ex = t.expression(cs, e)?;
-            t.exprs.push(ex);
-        }
-        Ok(t)
-    }
-
-    /// The typed hint fields back in the pilout form the old formatter reads (see the TODO on `Tables`).
-    fn hint_fields(&self, cs: &ConstraintSystem, fields: &[HintField]) -> Result<Vec<pb::HintField>> {
-        let field = |f: &HintField| {
-            let value = match &f.value {
-                HintValue::Str(s) => hint_field::Value::StringValue(s.clone()),
-                HintValue::Expr(e) => hint_field::Value::Operand(pb::Operand { operand: Some(self.operand(cs, e)?) }),
-                HintValue::Array(a) => {
-                    hint_field::Value::HintFieldArray(pb::HintFieldArray { hint_fields: self.hint_fields(cs, a)? })
-                }
-            };
-            Ok(pb::HintField { name: f.name.clone(), value: Some(value) })
-        };
-        fields.iter().map(field).collect()
-    }
-
-    fn expression(&self, cs: &ConstraintSystem, e: &Expr) -> Result<pb::Expression> {
-        let o = |x: &Expr| self.operand(cs, x).map(|o| Some(pb::Operand { operand: Some(o) }));
-        let op = match e {
-            Expr::Add(a, b) => px::Operation::Add(px::Add { lhs: o(a)?, rhs: o(b)? }),
-            Expr::Sub(a, b) => px::Operation::Sub(px::Sub { lhs: o(a)?, rhs: o(b)? }),
-            Expr::Mul(a, b) => px::Operation::Mul(px::Mul { lhs: o(a)?, rhs: o(b)? }),
-            Expr::Neg(a) => px::Operation::Neg(px::Neg { value: o(a)? }),
-            _ => return Err(not_pilout()),
-        };
-        Ok(pb::Expression { operation: Some(op) })
-    }
-
-    fn operand(&self, cs: &ConstraintSystem, e: &Expr) -> Result<po::Operand> {
-        Ok(match e {
-            Expr::Ref(idx) => po::Operand::Expression(po::Expression { idx: *idx }),
-            Expr::Const(c) => po::Operand::Constant(po::Constant { value: c.to_bytes_be() }),
-            Expr::Col { col: ColType::Witness, id, offset, .. } => {
-                let stage = self.witness_stage.get(*id as usize).copied().flatten().ok_or_else(not_pilout)?;
-                let base =
-                    stage_base(&self.stage_widths, stage).map_err(|e| PilInfoError::InvalidPilout(e.to_string()))?;
-                let col_idx = id.checked_sub(base).ok_or_else(not_pilout)?;
-                po::Operand::WitnessCol(po::WitnessCol { stage, col_idx, row_offset: *offset as i32 })
-            }
-            Expr::Col { col: ColType::Fixed, id, offset, .. } => {
-                po::Operand::FixedCol(po::FixedCol { idx: *id, row_offset: *offset as i32 })
-            }
-            Expr::Col { col: ColType::Custom, commit_id, id, offset } => po::Operand::CustomCol(po::CustomCol {
-                commit_id: commit_id.ok_or_else(not_pilout)?,
-                stage: 0,
-                col_idx: *id,
-                row_offset: *offset as i32,
-            }),
-            Expr::Challenge { stage, stage_id } => {
-                po::Operand::Challenge(po::Challenge { stage: *stage, idx: *stage_id })
-            }
-            Expr::Public(idx) => po::Operand::PublicValue(po::PublicValue { idx: *idx }),
-            Expr::ProofValue(idx) => {
-                let stage = cs.proof_values.get(*idx as usize).ok_or_else(not_pilout)?.stage;
-                po::Operand::ProofValue(po::ProofValue { stage, idx: *idx })
-            }
-            Expr::AirValue(idx) => po::Operand::AirValue(po::AirValue { idx: *idx }),
-            Expr::AirgroupValue { airgroup: None, id } => po::Operand::AirGroupValue(po::AirGroupValue { idx: *id }),
-            _ => return Err(not_pilout()),
-        })
-    }
-}
-
-fn not_pilout() -> PilInfoError {
-    PilInfoError::InvalidPilout("an expression the pilout format cannot hold".into())
-}
-
 /// The generator's symbol maps, projected from the layout.
 pub struct Maps {
     pub cm: Vec<SymbolInfo>,
@@ -517,7 +366,7 @@ impl Maps {
             name: v.name.clone(),
             sym_type: kind.into(),
             stage: Some(v.stage as usize),
-            dim: if v.stage == 1 { 1 } else { ext },
+            dim: value_dim(v.stage, ext),
             id: Some(i),
             pol_id: None,
             stage_id: None,

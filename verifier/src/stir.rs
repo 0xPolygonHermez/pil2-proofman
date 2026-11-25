@@ -126,7 +126,8 @@ pub struct StirVerifierInfo {
     pub n_bits: u64,
     pub n_bits_ext: u64,
     pub n_challenges: u64,
-    /// `challengesMap` positions of vf1 and vf2 (the DEEP batching challenges).
+    /// `challengesMap` positions of xi (the DEEP point) and of vf1, vf2 (the DEEP batching challenges).
+    pub xi_idx: u64,
     pub vf1_idx: u64,
     pub vf2_idx: u64,
     pub n_challenges_total: u64,
@@ -1071,7 +1072,7 @@ where
     }
 
     // ---- Shared machinery at the round-1 query set: kept in sync with `stark_verify` ----------
-    let xi_challenge = challenges[verifier_info.n_challenges as usize - 3];
+    let xi_challenge = challenges[verifier_info.xi_idx as usize];
 
     let Some(xdivxsub) = deep_denominators_inv(
         &queries_l0,

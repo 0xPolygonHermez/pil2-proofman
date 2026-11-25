@@ -198,6 +198,24 @@ impl ConstraintSystem {
     }
 }
 
+/// Dimension of a column of `stage`: base field in stages 0 and 1, else the extension.
+pub fn col_dim(stage: u32, ext: usize) -> usize {
+    if stage <= 1 {
+        1
+    } else {
+        ext
+    }
+}
+
+/// Dimension of an air, airgroup or proof value of `stage`: base field in stage 1 only.
+pub fn value_dim(stage: u32, ext: usize) -> usize {
+    if stage == 1 {
+        1
+    } else {
+        ext
+    }
+}
+
 /// Values for `eval_expr`; a missing entry reads as 0.
 #[derive(Clone, Debug, Default)]
 pub struct Env {
@@ -296,7 +314,7 @@ pub fn degree(cs: &ConstraintSystem, e: &Expr) -> Result<u32, Unresolved> {
 fn dim_of(cs: &ConstraintSystem, witness: &[Option<u32>], e: &Expr, t: &[u32]) -> Result<u32, Unresolved> {
     let ext = cs.field.ext_dim() as u32;
     let by_stage = |v: &[NamedValue], i: u32, what: &str| match v.get(i as usize) {
-        Some(v) => Ok(if v.stage == 1 { 1 } else { ext }),
+        Some(v) => Ok(value_dim(v.stage, ext as usize) as u32),
         None => Err(Unresolved(format!("{what} {i}"))),
     };
     let leaf = |e: &Expr| match e {

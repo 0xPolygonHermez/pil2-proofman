@@ -34,20 +34,21 @@ fn prepare_expressions_bin(
 
     let n = 1u64 << stark_info.stark_struct.n_bits;
 
-    let mut max_tmp1: u64 = 0;
-    let mut max_tmp3: u64 = 0;
-    let mut max_args: u64 = 0;
-    let mut max_ops: u64 = 0;
+    let (mut max_tmp1, mut max_tmp3, mut max_args, mut max_ops) = (0u64, 0u64, 0u64, 0u64);
+    let mut bump = |i: &ExpsInfo| {
+        max_tmp1 = max_tmp1.max(i.n_temp1);
+        max_tmp3 = max_tmp3.max(i.n_temp3);
+        max_args = max_args.max(i.args.len() as u64);
+        max_ops = max_ops.max(i.ops.len() as u64);
+    };
 
     // Process constraints
     for constraint_code in &expressions_info.constraints {
-        let (first_row, last_row) = match constraint_code.boundary.as_str() {
-            "everyRow" => (0, n),
-            "firstRow" | "finalProof" => (0, 1),
-            "lastRow" => (n - 1, n),
-            "everyFrame" => (constraint_code.offset_min, n - constraint_code.offset_max),
-            other => anyhow::bail!("Invalid boundary: {}", other),
-        };
+        // the STARK refuses every other boundary at ingestion
+        if constraint_code.boundary != "everyRow" {
+            anyhow::bail!("constraint boundary {}, and the STARK takes only everyRow", constraint_code.boundary);
+        }
+        let (first_row, last_row) = (0, n);
 
         let mut info = get_parser_args(stark_info, &constraint_code.code, &mut numbers_constraints, false, None)?;
         info.stage = constraint_code.stage;
@@ -56,18 +57,7 @@ fn prepare_expressions_bin(
         info.line = constraint_code.line.clone();
         info.im_pol = constraint_code.im_pol;
 
-        if info.n_temp1 > max_tmp1 {
-            max_tmp1 = info.n_temp1;
-        }
-        if info.n_temp3 > max_tmp3 {
-            max_tmp3 = info.n_temp3;
-        }
-        if info.args.len() as u64 > max_args {
-            max_args = info.args.len() as u64;
-        }
-        if info.ops.len() as u64 > max_ops {
-            max_ops = info.ops.len() as u64;
-        }
+        bump(&info);
 
         constraints_info.push(info);
     }
@@ -93,18 +83,7 @@ fn prepare_expressions_bin(
         info.stage = exp_code.stage;
         info.line = exp_code.line.clone();
 
-        if info.n_temp1 > max_tmp1 {
-            max_tmp1 = info.n_temp1;
-        }
-        if info.n_temp3 > max_tmp3 {
-            max_tmp3 = info.n_temp3;
-        }
-        if info.args.len() as u64 > max_args {
-            max_args = info.args.len() as u64;
-        }
-        if info.ops.len() as u64 > max_ops {
-            max_ops = info.ops.len() as u64;
-        }
+        bump(&info);
 
         exps_info.push(info);
     }

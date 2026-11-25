@@ -48,6 +48,12 @@ impl HashFamily {
     }
 }
 
+impl std::fmt::Display for HashFamily {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 impl std::str::FromStr for HashFamily {
     type Err = String;
     fn from_str(s: &str) -> Result<Self, String> {
@@ -434,13 +440,6 @@ pub fn transcript_out_size(arity: u64) -> u64 {
     DIGEST_SIZE * arity
 }
 
-/// Families with streaming-commit slot kernels (stream_commit.cu). The C side
-/// re-checks via get_hash_family() and returns -15 on mismatch, so this list
-/// must stay in sync with commit_witness_streaming_gpu's family gate.
-pub fn supports_stream_commit(family: &str) -> bool {
-    matches!(family, "Poseidon1" | "Poseidon2" | "blake3")
-}
-
 /// True when the family's kernels support exactly one tree geometry
 pub fn has_forced_tree_geometry(family: &str) -> bool {
     family == "blake3"
@@ -482,19 +481,6 @@ pub fn lookup_gate(name: &str) -> Option<(GateRole, Option<&'static str>)> {
 
 pub fn is_known_family(id: &str) -> bool {
     FAMILIES.contains(&id)
-}
-
-/// Whether this family can be emitted as a native Rust verifier.
-///
-/// The generated verifier hashes through `proofman_fields::Hash`, which is a fixed-width sponge:
-/// WIDTH / RATE / CAPACITY and an in-place permutation over a `[F; WIDTH]` state. Every Poseidon
-/// variant is that shape. BLAKE3 is not -- it consumes a variable-length run of field elements and
-/// produces four, which is why the C++ side reaches it through `Blake3Goldilocks::linearHash` and
-/// `merkletree` rather than through the permutation interface. Supporting it here means
-/// generalising that trait and the verifier template, not adding an impl, so until then a blake3
-/// proving key is written without this artifact.
-pub fn supports_native_rust_verifier(family: &str) -> bool {
-    is_known_family(family)
 }
 
 pub fn rust_hash_type(family: &str, arity: u64) -> &'static str {
@@ -562,6 +548,15 @@ mod tests {
                 super::recursive_grinding_bits(f) >= super::default_grinding_bits(f),
                 "{f} would grind less in recursion than in its basic airs"
             );
+        }
+    }
+
+    /// Poseidon's compressed-final blowup and grinding are what its keys shipped with: moving them invalidates them.
+    #[test]
+    fn compressed_final_blowup_and_grinding_are_the_shipped_ones() {
+        for f in ["Poseidon1", "Poseidon2"] {
+            assert_eq!(super::compressed_final_blowup_factor(f), 4, "{f} blowup");
+            assert_eq!(super::compressed_final_grinding_bits(f), 22, "{f} grinding");
         }
     }
 
@@ -793,25 +788,13 @@ mod hash_family_enum_tests {
 
     #[test]
     fn parses_exact_names_only() {
-        assert_eq!("Poseidon1".parse::<HashFamily>().unwrap(), HashFamily::Poseidon1);
-        assert_eq!("Poseidon2".parse::<HashFamily>().unwrap(), HashFamily::Poseidon2);
-        assert_eq!("blake3".parse::<HashFamily>().unwrap(), HashFamily::Blake3);
+        for f in HashFamily::ALL {
+            assert_eq!(f.as_str().parse::<HashFamily>().unwrap(), f);
+            assert_eq!(f.is_blake3(), f == HashFamily::Blake3);
+        }
         for bad in ["Blake3", "poseidon1", "POSEIDON2", "", "sha2"] {
             let e = bad.parse::<HashFamily>().unwrap_err();
             assert!(e.contains("Poseidon1") && e.contains("blake3"), "error must list valid names: {e}");
-        }
-    }
-
-    #[test]
-    fn is_blake3() {
-        assert!(HashFamily::Blake3.is_blake3());
-        assert!(!HashFamily::Poseidon1.is_blake3());
-        assert!(!HashFamily::Poseidon2.is_blake3());
-        for (f, n) in
-            [(HashFamily::Poseidon1, "Poseidon1"), (HashFamily::Poseidon2, "Poseidon2"), (HashFamily::Blake3, "blake3")]
-        {
-            assert_eq!(f.as_str(), n);
-            assert_eq!(n.parse::<HashFamily>().unwrap(), f);
         }
     }
 }

@@ -1,7 +1,10 @@
 //! The core's input: the pilout subset it reads (docs/superpowers/specs/2026-11-24-pilout-core-input.md).
 
 use num_bigint::BigUint;
-use pil2_pilout::pilout::{self as pb, constraint, expression as ex, hint_field, operand, SymbolType};
+use pil2_pilout::pilout::{
+    self as pb, constraint, expression as ex, global_expression as gx, global_operand as go, hint_field, operand,
+    SymbolType,
+};
 use serde::{Deserialize, Serialize};
 
 use super::ir::Boundary;
@@ -38,6 +41,8 @@ pub enum PiloutError {
     NoConstraints { airgroup: usize, air: usize },
     #[error("the pilout declares {declared} public values and its symbols name {named}")]
     PublicCount { declared: u32, named: usize },
+    #[error("the pilout declares {what} {declared:?} and its symbols name {named:?}")]
+    SymbolCount { what: &'static str, declared: Vec<u32>, named: Vec<u32> },
     #[error("custom commit `{commit}` binds public {idx}, past the {declared} public values")]
     CommitPublic { commit: String, idx: u32, declared: u32 },
     #[error("{what} does not fit in 32 bits")]
@@ -59,6 +64,11 @@ pub struct PiloutCore {
     pub air_groups: Vec<AirGroup>,
     pub symbols: Vec<Symbol>,
     pub hints: Vec<Hint>,
+    /// The global expressions and constraints.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub expressions: Vec<GlobalExpression>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub constraints: Vec<GlobalConstraint>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -128,6 +138,43 @@ pub enum Operand {
     AirValue(u32),
     Challenge(StagedId),
     ProofValue(StagedId),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum GlobalExpression {
+    Add([GlobalOperand; 2]),
+    Sub([GlobalOperand; 2]),
+    Mul([GlobalOperand; 2]),
+    Neg(GlobalOperand),
+}
+
+/// A global operand; public-table operands are refused at ingestion (no PIL emits them).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum GlobalOperand {
+    Expression(u32),
+    #[serde(with = "decimal")]
+    Constant(BigUint),
+    PublicValue(u32),
+    AirGroupValue(AirGroupValueRef),
+    Challenge(StagedId),
+    ProofValue(StagedId),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AirGroupValueRef {
+    pub air_group_id: u32,
+    pub idx: u32,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct GlobalConstraint {
+    pub expression_idx: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub debug_line: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -262,9 +309,16 @@ impl PiloutCore {
         Ok(PiloutCore { air_groups, ..Self::globals_of(p)? })
     }
 
-    /// `from_pb` without the airgroups: the pilout-wide tables, every symbol and every hint.
+    /// `from_pb` without the airgroups: the pilout-wide tables, every symbol, every hint and the global constraints.
     pub(crate) fn globals_of(p: &pb::PilOut) -> Result<Self, PiloutError> {
+        let expressions = p.expressions.iter().enumerate().map(|(i, e)| global_expression_of(e, i));
+        let constraints = p.constraints.iter().enumerate().map(|(k, c)| {
+            let idx = c.expression_idx.as_ref().ok_or(PiloutError::MissingExpressionIdx { constraint: k })?.idx;
+            Ok(GlobalConstraint { expression_idx: idx, debug_line: c.debug_line.clone() })
+        });
         Ok(PiloutCore {
+            expressions: expressions.collect::<Result<_, _>>()?,
+            constraints: constraints.collect::<Result<_, PiloutError>>()?,
             num_challenges: p.num_challenges.clone(),
             num_proof_values: p.num_proof_values.clone(),
             num_public_values: p.num_public_values,
@@ -327,6 +381,37 @@ fn expression_of(e: &pb::Expression, i: usize) -> Result<Expression, PiloutError
         ex::Operation::Sub(a) => Expression::Sub([o(&a.lhs)?, o(&a.rhs)?]),
         ex::Operation::Mul(a) => Expression::Mul([o(&a.lhs)?, o(&a.rhs)?]),
         ex::Operation::Neg(a) => Expression::Neg(o(&a.value)?),
+    })
+}
+
+fn global_expression_of(e: &pb::GlobalExpression, i: usize) -> Result<GlobalExpression, PiloutError> {
+    let o = |x: &Option<pb::GlobalOperand>| {
+        x.as_ref()
+            .and_then(|o| o.operand.as_ref())
+            .ok_or_else(|| bad(i, "missing operand"))
+            .and_then(|o| global_operand_of(o, i))
+    };
+    Ok(match e.operation.as_ref().ok_or_else(|| bad(i, "expression without an operation"))? {
+        gx::Operation::Add(a) => GlobalExpression::Add([o(&a.lhs)?, o(&a.rhs)?]),
+        gx::Operation::Sub(a) => GlobalExpression::Sub([o(&a.lhs)?, o(&a.rhs)?]),
+        gx::Operation::Mul(a) => GlobalExpression::Mul([o(&a.lhs)?, o(&a.rhs)?]),
+        gx::Operation::Neg(a) => GlobalExpression::Neg(o(&a.value)?),
+    })
+}
+
+fn global_operand_of(o: &go::Operand, i: usize) -> Result<GlobalOperand, PiloutError> {
+    use go::Operand as O;
+    Ok(match o {
+        O::Expression(r) => GlobalOperand::Expression(r.idx),
+        O::Constant(c) => GlobalOperand::Constant(BigUint::from_bytes_be(&c.value)),
+        O::PublicValue(v) => GlobalOperand::PublicValue(v.idx),
+        O::AirGroupValue(v) => {
+            GlobalOperand::AirGroupValue(AirGroupValueRef { air_group_id: v.air_group_id, idx: v.idx })
+        }
+        O::Challenge(c) => GlobalOperand::Challenge(StagedId { stage: c.stage, idx: c.idx }),
+        O::ProofValue(v) => GlobalOperand::ProofValue(StagedId { stage: v.stage, idx: v.idx }),
+        // a table index is not a public index
+        O::PublicTableAggregatedValue(_) | O::PublicTableColumn(_) => return Err(bad(i, "a public-table operand")),
     })
 }
 

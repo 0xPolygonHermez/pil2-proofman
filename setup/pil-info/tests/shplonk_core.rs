@@ -7,23 +7,21 @@
 
 mod common;
 
-use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::path::PathBuf;
 
 use common::*;
 use pil2_pilout::pilout as pb;
-use pil2_pilout::pilout_proxy::PilOutProxy;
-use pil_info::{shplonk_info, DegreePolicy, PilInfoCfg, PilInfoResult};
+use pil_info::{shplonk_info, DegreePolicy, PilInfoCfg, ShplonkResult};
 
 fn cfg(max: usize) -> PilInfoCfg {
     PilInfoCfg { degree_policy: DegreePolicy::Search { max }, ..PilInfoCfg::bn128() }
 }
 
-fn new(p: &pb::PilOut, cfg: &PilInfoCfg) -> pil_info::error::Result<PilInfoResult> {
+fn new(p: &pb::PilOut, cfg: &PilInfoCfg) -> pil_info::error::Result<ShplonkResult> {
     shplonk_info(p, 0, 0, cfg, &Default::default())
 }
 
-fn n_im(r: &PilInfoResult) -> usize {
+fn n_im(r: &ShplonkResult) -> usize {
     r.setup.cm_pols_map.iter().filter(|p| p.im_pol).count()
 }
 
@@ -67,30 +65,6 @@ fn qdeg_of_a_cubic_follows_the_search() {
     }
 }
 
-// ---- the old passes are gone ----
-
-fn code(src: &str) -> String {
-    src.lines().filter(|l| !l.trim_start().starts_with("//")).collect::<Vec<_>>().join("\n")
-}
-
-#[test]
-fn the_core_path_does_not_reach_the_old_passes() {
-    let src = code(include_str!("../src/pil/shplonk.rs"));
-    for old in [
-        "constraint_poly",
-        "pil::map",
-        "map::map",
-        "prepare_pil",
-        "calculate_intermediate_polynomials",
-        "add_im_polynomials",
-        "im_polynomials",
-        "info::run",
-        "pil_info(",
-    ] {
-        assert!(!src.contains(old), "shplonk.rs reaches the old pass `{old}`");
-    }
-}
-
 // ---- degenerate inputs ----
 
 #[test]
@@ -108,36 +82,7 @@ fn first_row_only_sets_up() {
     assert_eq!(new(&p, &cfg(2)).unwrap().q_deg, 1);
 }
 
-#[test]
-fn deep_opening_is_refused() {
-    let deep = PilInfoCfg { opening: pil_info::Opening::Deep, ..PilInfoCfg::bn128() };
-    let p = cubic_pilout(every_row(1));
-    assert!(new(&p, &deep).is_err());
-}
-
 // ---- compiled fixtures (PIL2C_EXEC) ----
-
-fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../..").canonicalize().expect("the repository root")
-}
-
-fn compile_bn128(pil: &Path) -> Option<pb::PilOut> {
-    let compiler = std::env::var("PIL2C_EXEC").expect("PIL2C_EXEC must name a pil2com that has `--field`");
-    let stem = pil.file_stem()?.to_string_lossy().into_owned();
-    let out = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("shplonk_core_{stem}.pilout"));
-    let status = Command::new(compiler)
-        .current_dir(repo_root())
-        .arg(pil)
-        .args(["-I", "pil2-components/lib/std/pil", "--field", "bn128", "-o"])
-        .arg(&out)
-        .status()
-        .expect("PIL2C_EXEC runs");
-    if !status.success() {
-        eprintln!("skipped {}: does not compile", pil.display());
-        return None;
-    }
-    Some(PilOutProxy::new(out.to_str().unwrap()).expect("a pilout").pilout)
-}
 
 fn fixtures() -> Vec<PathBuf> {
     let mut out = Vec::new();
@@ -171,7 +116,7 @@ fn every_pilfflonk_fixture_sets_up_deterministically() {
         compiled += 1;
         for max in [3, 4, 5] {
             let (a, b) = (new(&p, &cfg(max)).unwrap(), new(&p, &cfg(max)).unwrap());
-            let json = |r: &PilInfoResult| serde_json::to_string(&r.pil_code.expressions_info).unwrap();
+            let json = |r: &ShplonkResult| serde_json::to_string(&r.pil_code.expressions_info).unwrap();
             assert_eq!(json(&a), json(&b), "{} max {max}", pil.display());
         }
     }

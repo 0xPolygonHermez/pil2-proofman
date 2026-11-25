@@ -1178,20 +1178,6 @@ bool stark_verify_bn128(void* jProof, void *pStarkInfo, void *pConstraintDag, ch
 
 }
 
-bool stark_verify_from_file(char* proofFile, void *pStarkInfo, void *pConstraintDag, char *verkeyFile, void *pPublics, void *pProofValues, void *pChallenges) {
-    Goldilocks::Element *challenges = (Goldilocks::Element *)pChallenges;
-    bool vadcop = challenges == nullptr ? false : true;
-    StarkInfo starkInfo = *((StarkInfo *)pStarkInfo);
-    json jProof;
-    file2json(proofFile, jProof);
-    if (starkInfo.starkStruct.verificationHashType == "GL") {
-        return starkVerify<Goldilocks::Element>(jProof, *(StarkInfo *)pStarkInfo, *(ConstraintDag *)pConstraintDag, string(verkeyFile), (Goldilocks::Element *)pPublics, (Goldilocks::Element *)pProofValues, vadcop, (Goldilocks::Element *)pChallenges);
-    } else {
-        return starkVerify<RawFr::Element>(jProof, *(StarkInfo *)pStarkInfo, *(ConstraintDag *)pConstraintDag, string(verkeyFile), (Goldilocks::Element *)pPublics, (Goldilocks::Element *)pProofValues, vadcop, (Goldilocks::Element *)pChallenges);
-    }
-}
-
-
 // Fixed cols
 // =================================================================================
 void write_fixed_cols_bin(char* binFile, char* airgroupName, char* airName, uint64_t N, uint64_t nFixedPols, void* fixedPolsInfo) {

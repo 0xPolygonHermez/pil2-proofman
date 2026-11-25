@@ -51,14 +51,15 @@ fn missing_stage_on_a_challenge_symbol_is_an_error() {
     assert!(matches!(lower(&p), Err(PiloutError::MissingStage { .. })));
 }
 
+/// The proto leaves a proof value's stage optional; absent is stage 1, the only stage a proof value has.
 #[test]
-fn missing_stage_on_a_proof_value_symbol_is_an_error() {
+fn a_proof_value_symbol_without_stage_is_stage_1() {
     let mut p = base();
     p.num_proof_values = vec![1];
     let mut s = symbol("pv", SymbolType::ProofValue, 1, 0);
     s.stage = None;
     p.symbols.push(s);
-    assert!(matches!(lower(&p), Err(PiloutError::MissingStage { .. })));
+    assert_eq!(lower(&p).unwrap().proof_values[0].stage, 1);
 }
 
 #[test]

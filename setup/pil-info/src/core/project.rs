@@ -85,15 +85,7 @@ pub fn stark_info(
     if cs.airgroup_agg_types.len() != cs.airgroup_values.len() {
         return Err(ProjectError::Mismatch { what: "airgroup values and their aggTypes".into() });
     }
-    // distinct kinds in first-appearance order over the constraints then the im roots (everyRow), as today
-    let roots = cs.constraints.iter().map(|c| &c.boundary);
-    let im_roots = im.exprs.iter().map(|_| &Boundary::EveryRow);
-    let mut boundaries: Vec<Boundary> = Vec::new();
-    for b in roots.chain(im_roots) {
-        if !boundaries.iter().any(|x| std::mem::discriminant(x) == std::mem::discriminant(b)) {
-            boundaries.push(b.clone());
-        }
-    }
+    let boundaries = cs.boundaries();
     let verifier = VerifierView {
         n_stages: cs.n_stages,
         // counts below the ingestion limit

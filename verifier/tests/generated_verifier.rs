@@ -17,31 +17,19 @@ fn load() -> (VadcopFinalProof, Vec<u64>) {
     (proof, vk)
 }
 
-// PIL2_EXPECT_REJECT=1: the verifier was rendered from a changed DAG (pil2-stark-setup's
-// `writes_a_verifier_from_a_changed_dag`) and must reject the real proof.
-fn expect_reject() -> bool {
-    std::env::var("PIL2_EXPECT_REJECT").is_ok_and(|v| v == "1")
-}
-
+/// The real proof verifies and a tampered one does not; with PIL2_EXPECT_REJECT=1 the verifier was rendered from a
+/// changed DAG (pil2-stark-setup's `render_rust_verifier` with MUTATE_CONST=1) and must reject the real proof.
 #[test]
-fn accepts_real_and_rejects_tampered() {
-    if expect_reject() {
+fn real_tampered_and_changed_dag() {
+    let (mut proof, vk) = load();
+    if std::env::var("PIL2_EXPECT_REJECT").is_ok_and(|v| v == "1") {
+        assert!(!gen::verify(&proof, &vk), "a verifier from a changed DAG must reject the real proof");
         return;
     }
-    let (mut proof, vk) = load();
     assert!(gen::verify(&proof, &vk), "the real proof must verify");
-    // proof.proof = [4*(n_stages+1) roots][evals ...], n_stages = 2: word 12 is the first evals word
+    // the first evals word follows the n_stages + 1 roots; the generator emits nStages = 2 only
     proof.proof[4 * 3] = proof.proof[4 * 3].wrapping_add(1);
     assert!(!gen::verify(&proof, &vk), "a tampered evals word must be rejected");
-}
-
-#[test]
-fn a_changed_dag_rejects_the_real_proof() {
-    if !expect_reject() {
-        return;
-    }
-    let (proof, vk) = load();
-    assert!(!gen::verify(&proof, &vk), "a verifier from a changed DAG must reject the real proof");
 }
 
 #[test]

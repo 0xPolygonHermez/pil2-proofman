@@ -159,13 +159,15 @@ fn struct_counts(ss: &StarkStruct) -> (Vec<u64>, Vec<u32>) {
 }
 
 /// The regime of a solved test, from its gap (exact value of the solver's f64).
-fn regime_of(identifier: &str, gap: f64, base_mu: u32) -> ExactRegime {
-    if identifier == "UDR" {
-        let rho = Rational::pow2(-(base_mu as i64));
-        let alpha = Rational::from_f64(gap) * Rational::int(20) / (Rational::int(1) - rho) - Rational::int(1);
-        ExactRegime::Udr { alpha }
-    } else {
-        ExactRegime::Jbr { eta: Rational::from_f64(gap) }
+fn regime_of(identifier: &str, gap: f64, base_mu: u32) -> Result<ExactRegime, SecurityError> {
+    match identifier {
+        "UDR" => {
+            let rho = Rational::pow2(-(base_mu as i64));
+            let alpha = Rational::from_f64(gap) * Rational::int(20) / (Rational::int(1) - rho) - Rational::int(1);
+            Ok(ExactRegime::Udr { alpha })
+        }
+        "JBR" => Ok(ExactRegime::Jbr { eta: Rational::from_f64(gap) }),
+        other => Err(SecurityError::Gap(format!("unknown regime {other:?}"))),
     }
 }
 
@@ -211,7 +213,7 @@ pub fn report_built(
         batch: batch_size,
     };
     schedule::validate(&params).map_err(SecurityError::Schedule)?;
-    let regime = regime_of(regime, proximity_gap, params.mu(0));
+    let regime = regime_of(regime, proximity_gap, params.mu(0))?;
     report_params(&params, &regime)
 }
 
@@ -242,7 +244,7 @@ pub fn report_low_degree_test(
             params.queries, params.grinding
         )));
     }
-    let regime = regime_of(ldt.regime_identifier(), ldt.proximity_gap(), params.mu(0));
+    let regime = regime_of(ldt.regime_identifier(), ldt.proximity_gap(), params.mu(0))?;
     report_params(&params, &regime)
 }
 
@@ -293,5 +295,16 @@ mod tests {
         // Saturated by the ungrindable terms; crediting g to them too would add 100 more bits.
         let gain = at(200) - at(100);
         assert!(gain < Rational::int(1), "grinding credited {gain} more bits to the shift phase");
+    }
+
+    /// A key whose gap is not positive (it would overstate the query bits) or whose regime is unknown is refused.
+    #[test]
+    fn bad_regime_gap_is_refused() {
+        let ss = generate_stark_struct(&StarkSettings::default(), 20, "blake3");
+        let p = params_of(&ss, vec![60], vec![0], vec![], 1);
+        for regime in [ExactRegime::Jbr { eta: Rational::int(0) }, ExactRegime::Udr { alpha: Rational::int(-2) }] {
+            assert!(matches!(phases(&p, &regime), Err(SecurityError::Gap(_))));
+        }
+        assert!(matches!(regime_of("XYZ", 0.01, 1), Err(SecurityError::Gap(_))));
     }
 }

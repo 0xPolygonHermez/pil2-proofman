@@ -716,7 +716,7 @@ mod tests {
                         rate: 1.0 / (1u64 << blowup) as f64,
                         batching: Batching::Powers,
                         batch_size: 100,
-                        log_folding_factors: crate::output::stark_info::compute_log_folding_factors(&ss),
+                        log_folding_factors: ss.low_degree_test.log_folding_factors(),
                         max_grinding_bits_query: ss.low_degree_test.expect_fri("test").grinding_bits_queries as u64,
                         use_max_grinding_bits_query: true,
                         max_grinding_bits_non_query: 0,

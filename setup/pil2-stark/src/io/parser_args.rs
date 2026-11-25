@@ -18,23 +18,25 @@ fn operation_type_code(op: &str) -> u64 {
     }
 }
 
-/// Maps operand type strings to numeric codes for operation sorting/lookup.
-fn operations_map_value(key: &str) -> u64 {
-    match key {
-        "commit1" | "Zi" | "const" | "custom1" => 0,
-        "tmp1" => 1,
-        "public" => 2,
-        "number" => 3,
-        "airvalue1" => 4,
-        "proofvalue1" => 5,
-        "custom3" | "commit3" => 6,
-        "tmp3" => 7,
-        "airvalue3" => 8,
-        "airgroupvalue" => 9,
-        "proofvalue" | "proofvalue3" => 10,
-        "challenge" => 11,
-        "eval" => 12,
-        _ => panic!("Unknown operations map key: {}", key),
+/// An operand's sort rank: the higher-ranked operand goes first (base before extension).
+fn rank(r: &CodeType) -> u64 {
+    let ext = r.dim == FIELD_EXTENSION;
+    match r.op_type {
+        OpType::Const | OpType::Zi => 0,
+        OpType::Cm | OpType::Custom if !ext => 0,
+        OpType::Tmp if !ext => 1,
+        OpType::Public => 2,
+        OpType::Number => 3,
+        OpType::Airvalue if !ext => 4,
+        OpType::Proofvalue if !ext => 5,
+        OpType::Cm | OpType::Custom => 6,
+        OpType::Tmp => 7,
+        OpType::Airvalue => 8,
+        OpType::Airgroupvalue => 9,
+        OpType::Proofvalue => 10,
+        OpType::Challenge => 11,
+        OpType::Eval => 12,
+        _ => panic!("no rank for operand {:?}", r.op_type),
     }
 }
 
@@ -56,76 +58,27 @@ pub struct ExpsInfo {
     pub im_pol: u64,
 }
 
-/// The three allowed dimension-combination operations.
-struct OperationEntry {
-    dest_type: &'static str,
-    src0_type: &'static str,
-    src1_type: &'static str,
-}
+/// The allowed (dest, src0, src1) dimensions; the index is the op's code.
+const OPERATIONS: [(u64, u64, u64); 3] =
+    [(1, 1, 1), (FIELD_EXTENSION, FIELD_EXTENSION, 1), (FIELD_EXTENSION, FIELD_EXTENSION, FIELD_EXTENSION)];
 
-const OPERATIONS: [OperationEntry; 3] = [
-    OperationEntry { dest_type: "dim1", src0_type: "dim1", src1_type: "dim1" },
-    OperationEntry { dest_type: "dim3", src0_type: "dim3", src1_type: "dim1" },
-    OperationEntry { dest_type: "dim3", src0_type: "dim3", src1_type: "dim3" },
-];
-
-/// Returns the type key string used in the operations map for a given CodeType.
-fn get_type_key(r: &CodeType) -> String {
-    match r.op_type {
-        OpType::Cm => format!("commit{}", r.dim),
-        OpType::Const | OpType::Zi => "commit1".to_string(),
-        OpType::Custom if r.dim == 1 => "custom1".to_string(),
-        OpType::Custom if r.dim == FIELD_EXTENSION => "custom3".to_string(),
-        OpType::Custom => format!("custom{}", r.dim),
-        OpType::Tmp => format!("tmp{}", r.dim),
-        OpType::Airvalue => format!("airvalue{}", r.dim),
-        OpType::Proofvalue => format!("proofvalue{}", r.dim),
-        _ => r.op_type.to_str().to_string(),
-    }
-}
-
-/// Returns the dim-string for the operations table lookup.
-fn dim_str(dim: u64) -> String {
-    format!("dim{}", dim)
-}
-
-/// Sorts sources and determines the operation, potentially swapping to sub_swap.
-fn get_operation(r: &CodeOperation) -> (String, u64, Vec<CodeType>, String, String) {
-    let op = r.op.clone();
-    let _dest_dim = dim_str(r.dest.dim);
-
+/// Sorts the sources (swapping a `sub` to `sub_swap`); a copy reads its one source twice for the lookup.
+fn get_operation(r: &CodeOperation) -> (String, Vec<CodeType>, u64, u64) {
     let mut srcs = r.src.clone();
-
-    // copy operations have only 1 source - use same dim for both lookup keys
     if srcs.len() < 2 {
-        let src0_dim = if !srcs.is_empty() { dim_str(srcs[0].dim) } else { "dim1".to_string() };
-        let src1_dim = src0_dim.clone();
-        return (op, 0, srcs, src0_dim, src1_dim);
+        let d = srcs.first().map_or(1, |s| s.dim);
+        return (r.op.clone(), srcs, d, d);
     }
-
-    let op_a_key = get_type_key(&srcs[0]);
-    let op_b_key = get_type_key(&srcs[1]);
-    let op_a = operations_map_value(&op_a_key);
-    let op_b = operations_map_value(&op_b_key);
-
-    let swap_val = if srcs[0].dim != srcs[1].dim {
-        (srcs[1].dim as i64) - (srcs[0].dim as i64)
-    } else {
-        (op_a as i64) - (op_b as i64)
-    };
-
-    let mut final_op = op;
-    if swap_val > 0 {
+    let swap = if srcs[0].dim != srcs[1].dim { srcs[1].dim > srcs[0].dim } else { rank(&srcs[0]) > rank(&srcs[1]) };
+    let mut op = r.op.clone();
+    if swap {
         srcs.swap(0, 1);
-        if final_op == "sub" {
-            final_op = "sub_swap".to_string();
+        if op == "sub" {
+            op = "sub_swap".to_string();
         }
     }
-
-    let src0_dim = dim_str(srcs[0].dim);
-    let src1_dim = dim_str(srcs[1].dim);
-
-    (final_op, r.dest.dim, srcs, src0_dim, src1_dim)
+    let (d0, d1) = (srcs[0].dim, srcs[1].dim);
+    (op, srcs, d0, d1)
 }
 
 /// Port of getParserArgs from JS. Converts code blocks into flat arrays
@@ -157,12 +110,12 @@ pub fn get_parser_args(
     let (count1d, count3d) = get_id_maps(maxid, &mut id1d, &mut id3d, code_info_code, FIELD_EXTENSION)?;
 
     for r in code_info_code {
-        let (op, _dest_dim_val, mut sorted_src, src0_dim, mut src1_dim) = get_operation(r);
+        let (op, mut sorted_src, src0_dim, mut src1_dim) = get_operation(r);
         // The C++ reads 8 args per op (6 global): a copy is `src + 0`.
         let pads_copy = r.op == "copy";
         if pads_copy {
             sorted_src.push(CodeType { op_type: OpType::Number, dim: 1, ..Default::default() });
-            src1_dim = "dim1".to_string();
+            src1_dim = 1;
         }
         args.push(operation_type_code(&op));
 
@@ -197,13 +150,10 @@ pub fn get_parser_args(
             )?;
         }
 
-        let dest_dim_str = dim_str(r.dest.dim);
-        let ops_index = OPERATIONS.iter().position(|entry| {
-            entry.dest_type == dest_dim_str && entry.src0_type == src0_dim && entry.src1_type == src1_dim
-        });
-        match ops_index {
+        let key = (r.dest.dim, src0_dim, src1_dim);
+        match OPERATIONS.iter().position(|o| *o == key) {
             Some(idx) => ops.push(idx as u64),
-            None => bail!("Operation not considered: dest={} src0={} src1={}", dest_dim_str, src0_dim, src1_dim),
+            None => bail!("Operation not considered: (dest, src0, src1) dims {key:?}"),
         }
     }
 
@@ -217,6 +167,14 @@ pub fn get_parser_args(
     };
 
     Ok(ExpsInfo { n_temp1: count1d, n_temp3: count3d, ops, args, dest_dim, dest_id, ..Default::default() })
+}
+
+/// The position of value `id` after the earlier values (base field 1, extension 3 each).
+fn value_offset(stages: impl ExactSizeIterator<Item = u64>, id: u64) -> Result<u64> {
+    if id as usize >= stages.len() {
+        bail!("value {id} past the {} values", stages.len());
+    }
+    Ok(stages.take(id as usize).map(|s| if s == 1 { 1 } else { FIELD_EXTENSION }).sum())
 }
 
 /// Information about global proof structure needed by pushArgs in global mode.
@@ -361,25 +319,14 @@ fn push_args(
             if global {
                 bail!("evals and airvalues should not appear in a global constraint");
             }
-            args.push(buffer_size + 8);
-            args.push(FIELD_EXTENSION * r.id);
-            if !global {
-                args.push(0);
-            }
+            args.extend([buffer_size + 8, FIELD_EXTENSION * r.id, 0]);
         }
         OpType::Airvalue => {
             if global {
                 bail!("evals and airvalues should not appear in a global constraint");
             }
-            args.push(buffer_size + 4);
-            let mut air_value_pos: u64 = 0;
-            for air_value in &stark_info.air_values_map[..r.id as usize] {
-                air_value_pos += if air_value.stage == 1 { 1 } else { FIELD_EXTENSION };
-            }
-            args.push(air_value_pos);
-            if !global {
-                args.push(0);
-            }
+            let pos = value_offset(stark_info.air_values_map.iter().map(|v| v.stage), r.id)?;
+            args.extend([buffer_size + 4, pos, 0]);
         }
         OpType::Proofvalue => {
             if !global {
@@ -387,14 +334,11 @@ fn push_args(
             } else {
                 args.push(3);
             }
-            let mut proof_value_pos: u64 = 0;
-            for i in 0..r.id as usize {
-                if !global {
-                    proof_value_pos += if stark_info.proof_values_map[i].stage == 1 { 1 } else { FIELD_EXTENSION };
-                } else if let Some(gi) = global_info {
-                    proof_value_pos += if gi.proof_values_map[i].stage == 1 { 1 } else { FIELD_EXTENSION };
-                }
-            }
+            let proof_value_pos = match (global, global_info) {
+                (false, _) => value_offset(stark_info.proof_values_map.iter().map(|v| v.stage), r.id)?,
+                (true, Some(gi)) => value_offset(gi.proof_values_map.iter().map(|v| v.stage), r.id)?,
+                (true, None) => 0,
+            };
             args.push(proof_value_pos);
             if !global {
                 args.push(0);
@@ -418,11 +362,7 @@ fn push_args(
                 args.push(5);
             }
             if !global {
-                let mut airgroup_value_pos: u64 = 0;
-                for airgroup_value in &stark_info.airgroup_values_map[..r.id as usize] {
-                    airgroup_value_pos += if airgroup_value.stage == 1 { 1 } else { FIELD_EXTENSION };
-                }
-                args.push(airgroup_value_pos);
+                args.push(value_offset(stark_info.airgroup_values_map.iter().map(|v| v.stage), r.id)?);
             } else if let Some(gi) = global_info {
                 let mut offset: u64 = 0;
                 for agg_types in &gi.agg_types[..r.airgroup_id as usize] {

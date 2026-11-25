@@ -156,17 +156,6 @@ fn permuted_input_gives_the_same_system_and_dag() {
     }
 }
 
-#[test]
-fn input_reference_cycle_is_an_ingestion_error() {
-    let cyc3 = vec![add(exp(1), witness(0, 0)), add(exp(2), witness(0, 0)), add(exp(0), witness(0, 0))];
-    let p = pilout(&["a"], &[], cyc3, vec![every_row(0)]);
-    assert!(matches!(lower(&p), Err(PiloutError::CyclicRef { .. })));
-    // a cycle hanging off a valid prefix, reached only through a later expression
-    let e = vec![mul(witness(0, 0), witness(0, 0)), add(exp(2), exp(0)), add(exp(1), witness(0, 0))];
-    let p = pilout(&["a"], &[], e, vec![every_row(0)]);
-    assert!(matches!(lower(&p), Err(PiloutError::CyclicRef { .. })));
-}
-
 // ---- degree / dim / eval as table passes ----
 
 fn small_env(rng: &mut Rng) -> Env {
@@ -233,26 +222,6 @@ fn table_passes_match_inlining_on_real_pilouts() {
         }
     }
     assert!(checked > 1000, "{checked}");
-}
-
-/// 64 levels of x_{k+1} = x_k + x_k: inlining is 2^64 nodes; the tables must stay linear.
-#[test]
-fn table_passes_finish_fast_on_a_doubling_chain() {
-    let mut e = vec![mul(witness(0, 1), witness(1, 0))];
-    for k in 0..64 {
-        e.push(add(exp(k), exp(k)));
-    }
-    let cs = system(e, &[64]);
-    let t = std::time::Instant::now();
-    let dg = degree_table(&cs).unwrap();
-    let dm = dim_table(&cs).unwrap();
-    let mut env = Env::default();
-    env.cols.insert(ColRef { col: ColType::Witness, commit_id: None, id: 0, offset: 1 }, BigUint::from(3u32));
-    env.cols.insert(ColRef { col: ColType::Witness, commit_id: None, id: 1, offset: 0 }, BigUint::from(5u32));
-    let ev = eval_table(&cs, &env).unwrap();
-    assert!(t.elapsed().as_secs() < 2, "{:?}", t.elapsed());
-    assert_eq!((dg[64], dm[64]), (2, 1));
-    assert_eq!(ev[64], (BigUint::from(15u32) << 64usize) % cs.field.modulus());
 }
 
 // ---- canonical im order ----

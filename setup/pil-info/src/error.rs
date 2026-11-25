@@ -14,17 +14,6 @@ pub enum PilInfoError {
     #[error("invalid pilout: {0}")]
     InvalidPilout(String),
 
-    /// A hint field with neither an operand, a string nor an array of fields.
-    #[error("invalid pilout: a field of hint `{hint}` has no value")]
-    HintFieldWithoutValue { hint: String },
-
-    /// The columns of a custom commit are of stage 0.
-    #[error(
-        "invalid pilout: symbol `{name}` is a custom column of stage {stage}, and the columns of a custom commit \
-         are of stage 0"
-    )]
-    CustomColumnStage { name: String, stage: usize },
-
     // --- What the constraints need that the passes cannot give --------------------------------
     #[error("no choice of intermediate polynomials brings the constraints down to a degree in 2..={max}")]
     NoFeasibleDegree { max: usize },

@@ -3,12 +3,11 @@
 
 use num_bigint::BigUint;
 use pil_info::core::from_pilout::from_pilout;
-use pil_info::core::im::{check_im, im_order, substitute, Checked, ImChoice};
+use pil_info::core::im::{substitute, Checked, ImChoice};
 use pil_info::core::ir::{degree, ConstraintSystem, Expr};
-use pil_info::core::layout::{layout, quotient_dim, Layout, LayoutParams};
+use pil_info::core::layout::{layout, Layout, LayoutParams};
 use pil_info::core::openings::{openings, Openings};
 use pil_info::emit::prover::{to_arena, ProverExprs};
-use pil_info::search::im::search_im;
 use pil_info::{Opening, PilInfoCfg};
 use pil2_pilout::pilout::{self as pb, constraint, expression, global_expression, global_operand, operand, SymbolType};
 
@@ -338,12 +337,7 @@ pub fn run(p: &pb::PilOut, airgroup: usize, air: usize, blowup_bits: usize) -> O
 
 /// `run`, given `--impols`.
 pub fn run_with(p: &pb::PilOut, airgroup: usize, air: usize, blowup_bits: usize, im_pols_stages: bool) -> Option<Run> {
-    let cfg = PilInfoCfg::goldilocks(blowup_bits);
-    let cs = from_pilout(p, airgroup, air, &gl(), Opening::Deep).ok()?;
-    let none = ImChoice { exprs: Vec::new() };
-    let set = search_im(&cs, &cfg.degree_policy, quotient_dim(&cs, &none).ok()? as usize).ok()?;
-    let im = im_order(&cs, &set).ok()?;
-    let chk = check_im(&cs, &im, cfg.degree_policy.max_constraint_degree() as u32, true).ok()?;
+    let (cs, im, chk) = pil_info::pipeline::search(p, airgroup, air, &PilInfoCfg::goldilocks(blowup_bits)).ok()?;
     let air_name = p.air_groups[airgroup].airs[air].name.clone().unwrap_or_default();
     Some(Run { cs, im, chk, air_name, blowup_bits, im_pols_stages })
 }
@@ -371,4 +365,38 @@ pub fn core_out(run: &Run) -> CoreOut {
     let exprs = to_arena(&run.cs, &run.im, &lay).unwrap();
     let ops = openings(&run.cs, &run.im, &lay).unwrap();
     CoreOut { lay, exprs, ops }
+}
+
+// ---- compiled fixtures (PIL2C_EXEC) ----
+
+pub fn repo_root() -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..").canonicalize().expect("the repository root")
+}
+
+/// `pil` (relative to the repository root) compiled over BN128 by `$PIL2C_EXEC`; None when it does not compile.
+pub fn compile_bn128(pil: &std::path::Path) -> Option<pb::PilOut> {
+    let compiler = std::env::var("PIL2C_EXEC").expect("PIL2C_EXEC must name a pil2com that has `--field`");
+    let stem = pil.file_stem()?.to_string_lossy().into_owned();
+    // common/ is also compiled into pil2-stark's unit tests, which have no CARGO_TARGET_TMPDIR
+    let tmp = option_env!("CARGO_TARGET_TMPDIR").map_or_else(std::env::temp_dir, std::path::PathBuf::from);
+    let out = tmp.join(format!("{stem}.bn128.pilout"));
+    let status = std::process::Command::new(compiler)
+        .current_dir(repo_root())
+        .arg(pil)
+        .args(["-I", "pil2-components/lib/std/pil", "--field", "bn128", "-o"])
+        .arg(&out)
+        .status()
+        .expect("PIL2C_EXEC runs");
+    if !status.success() {
+        eprintln!("skipped {}: does not compile", pil.display());
+        return None;
+    }
+    let pilout = pil2_pilout::pilout_proxy::PilOutProxy::new(out.to_str()?).expect("a pilout").pilout;
+    assert_eq!(
+        pilout.base_field,
+        big_be(R),
+        "{} was not compiled over BN128: does PIL2C_EXEC have `--field`?",
+        pil.display()
+    );
+    Some(pilout)
 }

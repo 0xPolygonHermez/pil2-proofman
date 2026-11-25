@@ -1,21 +1,8 @@
-// use serde_json::Value as JsonValue;
 use std::collections::HashMap;
-use serde::{Deserialize, Deserializer};
+use serde::Deserialize;
 
 pub use proofman_verifier::{LowDegreeLayout, ProofLayout, StirParams};
 
-#[allow(dead_code)]
-#[derive(Deserialize, Debug, Clone)]
-pub struct Boundary {
-    #[serde(rename = "name")]
-    pub name: String,
-    #[serde(rename = "offsetMin")]
-    pub offset_min: Option<u64>,
-    #[serde(rename = "offsetMax")]
-    pub offset_max: Option<u64>,
-}
-
-#[allow(dead_code)]
 #[derive(Default, Deserialize, Debug, Clone)]
 pub struct SecurityInfo {
     #[serde(default, rename = "proximityParameter")]
@@ -25,7 +12,6 @@ pub struct SecurityInfo {
     pub regime: String,
 }
 
-#[allow(dead_code)]
 #[derive(Default, Deserialize, Debug, Clone)]
 pub struct StarkStruct {
     #[serde(rename = "nBits")]
@@ -52,7 +38,6 @@ pub struct StarkStruct {
 
 /// The low-degree test run on the batched DEEP polynomial `f₀`. Untagged: a STIR
 /// object is recognised by its `lowDegreeTest: "STIR"` marker; anything else is FRI.
-#[allow(dead_code)]
 #[derive(Deserialize, Debug, Clone)]
 #[serde(untagged)]
 pub enum LowDegreeTest {
@@ -105,7 +90,6 @@ impl LowDegreeTest {
 /// FRI schedule. FRI keeps the rate
 /// constant: iteration `i` folds both the degree bound and the domain by
 /// `2^{kᵢ}`; the last entries are the final polynomial's, sent in clear.
-#[allow(dead_code)]
 #[derive(Default, Deserialize, Debug, Clone)]
 pub struct FriStruct {
     /// `kᵢ`, in bits (length `M`).
@@ -135,7 +119,6 @@ pub enum StirKind {
 
 /// STIR schedule, in the notation of the paper (Construction 5.2): iteration `i`
 /// folds `fᵢ` by `2^{kᵢ}` and commits `g_{i+1}` on `L_{i+1}`, of half the size.
-#[allow(dead_code)]
 #[derive(Default, Deserialize, Debug, Clone)]
 pub struct StirStruct {
     #[serde(rename = "lowDegreeTest")]
@@ -164,7 +147,6 @@ impl StirStruct {
     }
 }
 
-#[allow(dead_code)]
 #[allow(non_camel_case_types)]
 #[derive(Deserialize)]
 pub enum OpType {
@@ -218,7 +200,6 @@ pub struct PolMap {
     pub lengths: Vec<u64>,
 }
 
-#[allow(dead_code)]
 #[derive(Deserialize, Debug, Clone, Copy)]
 pub struct PublicValues {
     pub idx: u64,
@@ -233,7 +214,6 @@ pub struct CustomCommits {
     pub public_values: Vec<PublicValues>,
 }
 
-#[allow(dead_code)]
 #[derive(Default, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum EvMapEType {
     #[serde(rename = "cm")]
@@ -245,30 +225,18 @@ pub enum EvMapEType {
     Custom,
 }
 
-fn deserialize_bool_from_int<'de, D>(deserializer: D) -> Result<bool, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let value: i32 = Deserialize::deserialize(deserializer)?;
-    Ok(value != 0)
-}
-
-#[allow(dead_code)]
 #[derive(Default, Deserialize, Debug, Clone)]
 pub struct EvMap {
     #[serde(rename = "type")]
     pub type_: EvMapEType,
     pub id: u64,
-    #[serde(deserialize_with = "deserialize_bool_from_int")]
-    pub prime: bool,
-    /// Index into `openingPoints`; `prime` cannot tell -1 from +1.
+    /// Index into `openingPoints`.
     #[serde(rename = "openingPos")]
     pub opening_pos: usize,
     #[serde(default, rename = "commitId")]
     pub commit_id: u64,
 }
 
-#[allow(dead_code)]
 #[derive(Default, Deserialize, Debug, Clone)]
 pub struct StarkInfo {
     #[serde(rename = "starkStruct")]
@@ -320,9 +288,6 @@ pub struct StarkInfo {
     #[serde(rename = "openingPoints")]
     pub opening_points: Vec<i64>,
 
-    #[serde(default)]
-    pub boundaries: Vec<Boundary>,
-
     #[serde(rename = "qDeg")]
     pub q_deg: u64,
     #[serde(rename = "qDim")]
@@ -346,19 +311,38 @@ pub struct StarkInfo {
 /// The starkinfo `keyVersion` this prover reads.
 pub use proofman_util::KEY_VERSION;
 
+#[derive(Debug, thiserror::Error)]
+pub enum StarkInfoError {
+    #[error("starkinfo keyVersion {0:?}, this prover reads {KEY_VERSION}: regenerate the setup")]
+    KeyVersion(Option<u64>),
+    #[error("starkinfo: {0}")]
+    Json(#[from] serde_json::Error),
+}
+
+/// The only `keyVersion` gate of the Rust starkinfo readers.
+pub fn check_key_version(j: &serde_json::Value) -> Result<(), StarkInfoError> {
+    let v = j.get("keyVersion").and_then(serde_json::Value::as_u64);
+    if v == Some(u64::from(KEY_VERSION)) {
+        Ok(())
+    } else {
+        Err(StarkInfoError::KeyVersion(v))
+    }
+}
+
 impl StarkInfo {
-    /// Panics on a key of another `keyVersion` (checked before the full parse) or malformed JSON.
+    /// A key of another `keyVersion` (checked before the full parse) or malformed JSON is an error.
+    pub fn try_from_value(j: &serde_json::Value) -> Result<Self, StarkInfoError> {
+        check_key_version(j)?;
+        Ok(Self::deserialize(j)?)
+    }
+
+    pub fn try_from_json(stark_info_json: &str) -> Result<Self, StarkInfoError> {
+        Self::try_from_value(&serde_json::from_str(stark_info_json)?)
+    }
+
+    /// `try_from_json`, panicking on its error.
     pub fn from_json(stark_info_json: &str) -> Self {
-        #[derive(Deserialize)]
-        struct Version {
-            #[serde(rename = "keyVersion")]
-            key_version: Option<u64>,
-        }
-        let v: Version = serde_json::from_str(stark_info_json).expect("Failed to parse JSON file");
-        if v.key_version != Some(u64::from(KEY_VERSION)) {
-            panic!("starkinfo keyVersion {:?}, this prover reads {KEY_VERSION}: regenerate the setup", v.key_version);
-        }
-        serde_json::from_str(stark_info_json).expect("Failed to parse JSON file")
+        Self::try_from_json(stark_info_json).unwrap_or_else(|e| panic!("{e}"))
     }
 
     /// The flat proof's geometry, shared by the prover, the CLI and the generated verifiers.

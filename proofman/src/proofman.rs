@@ -565,8 +565,7 @@ fn hash_words(h: &mut blake3::Hasher, words: &[u64]) {
 fn stream_commit_eligible<F: PrimeField64>(hash: &str, setup: &Setup<F>) -> bool {
     // witness_calc hints do not disqualify an air: the slot evaluates them (witness_hints_slot.hpp)
     // and refuses, with a reason, only hints it cannot express.
-    proofman_common::hash_family::supports_stream_commit(hash)
-        && setup.stark_info.stark_struct.merkle_tree_arity == proofman_common::hash_family::merkle_tree_arity(hash)
+    setup.stark_info.stark_struct.merkle_tree_arity == proofman_common::hash_family::merkle_tree_arity(hash)
 }
 
 /// This air's slot bytes (the commit lays it out with the same C++ function), or None when no slot
@@ -2251,9 +2250,7 @@ where
                 // the self-contained prover transcript.
                 let valid = verify_proof::<F>(
                     &proof.proof,
-                    setup_path.display().to_string() + ".starkinfo.json",
-                    setup_path.display().to_string() + ".verifierinfo.json",
-                    setup_path.display().to_string() + ".verkey.json",
+                    &setup_path.display().to_string(),
                     Some(self.pctx.get_publics().clone()),
                     Some(self.pctx.get_proof_values().clone()),
                     None,
@@ -4823,15 +4820,7 @@ where
                     } else {
                         &proof.proof
                     };
-                    let valid_proofs = verify_proof::<F>(
-                        body,
-                        base.clone() + ".starkinfo.json",
-                        base.clone() + ".verifierinfo.json",
-                        base + ".verkey.json",
-                        Some(publics),
-                        None,
-                        None,
-                    );
+                    let valid_proofs = verify_proof::<F>(body, &base, Some(publics), None, None);
                     timer_stop_and_log_info!(VERIFYING_VADCOP_FINAL_PROOF);
                     if !valid_proofs {
                         tracing::info!("··· {}", "\u{2717} Vadcop Final proof was not verified".bright_red().bold());

@@ -315,24 +315,6 @@ fn fri_batch_size_formula() {
     assert_eq!(fri_batch_size(&o), 2);
 }
 
-/// 64 levels of `x_{k+1} = x_k + x_k`: inlining would be 2^64 nodes, the memoised walk is linear.
-#[test]
-fn doubling_chain_is_not_inlined() {
-    let mut e = vec![mul(witness(0, 1), witness(1, 0))];
-    for k in 0..64 {
-        e.push(add(exp(k), exp(k)));
-    }
-    e.push(mul(exp(64), exp(0)));
-    let cs = system(e, &[65]);
-    for im in [vec![], vec![32], vec![64]] {
-        let o = ops_of(&cs, &im, 1);
-        assert_eq!(o.opening_points, [0, 1]);
-    }
-    let hint = Expr::Ref(64);
-    let l = lay_of(&cs, &[], 0);
-    assert_eq!(openings(&hinted(&cs, &[hint]), &choice(&[]), &l).unwrap().opening_points, [0, 1]);
-}
-
 // ---- projection ------------------------------------------------------------------------------
 
 fn params() -> StarkParams {
@@ -396,12 +378,12 @@ fn boundaries_are_every_row_only_for_deep() {
     };
     // Deep: always everyRow
     assert_eq!(project(&system(chain(), &[1]), true), [Boundary::EveryRow]);
-    // Shplonk keeps pilfflonk's, distinct in first-appearance order
+    // Shplonk: `ConstraintSystem::boundaries`, everyRow first then the others in first-appearance order
     let e = vec![sub(witness(0, 0), constant("1"))];
     let cons = vec![last_row(0), every_row(0), first_row(0), last_row(0), every_frame(0, 0, 1)];
     let cs = from_pilout(&pilout(&["a", "b", "c", "d"], &[], e, cons), 0, 0, &gl(), Opening::Shplonk).unwrap();
     assert_eq!(
         project(&cs, false),
-        [Boundary::LastRow, Boundary::EveryRow, Boundary::FirstRow, Boundary::EveryFrame { min: 0, max: 1 }]
+        [Boundary::EveryRow, Boundary::LastRow, Boundary::FirstRow, Boundary::EveryFrame { min: 0, max: 1 }]
     );
 }

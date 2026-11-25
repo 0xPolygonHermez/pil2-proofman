@@ -211,7 +211,6 @@ extern "C" {
     // =================================================================================
     bool stark_verify(uint64_t *jProof, void *pStarkInfo, void *pConstraintDag, char *verkey, void *pPublics, void *pProofValues, void *challenges);
     bool stark_verify_bn128(void *jProof, void *pStarkInfo, void *pConstraintDag, char *verkey, void *pPublics);
-    bool stark_verify_from_file(char *proof, void *pStarkInfo, void *pConstraintDag, char *verkey, void *pPublics, void *pProofValues, void *challenges);
 
     // Fixed cols
     // =================================================================================

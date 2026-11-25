@@ -53,16 +53,12 @@ impl VerifyStark {
         // makes `get_hash_family` throw out of the FFI before a single proof is verified. The
         // family the prover used travels with the proof; a wrong one here only costs a failed
         // verification, never a false accept, because it changes the transcript and the roots.
-        if !hash_family::is_known_family(&proof.hash) {
-            return Err(
-                format!("proof declares hash family {:?}; known: {:?}", proof.hash, hash_family::FAMILIES).into()
-            );
-        }
+        proof.hash.parse::<hash_family::HashFamily>().map_err(|e| format!("the proof's {e}"))?;
         proofman_starks_lib_c::set_hash_family_c(&proof.hash);
 
         // The C++ verifier reads the flat proof.
         let stark_info: Option<StarkInfo> = match proof.compressed {
-            true => Some(serde_json::from_str(&std::fs::read_to_string(base.clone() + ".starkinfo.json")?)?),
+            true => Some(StarkInfo::try_from_json(&std::fs::read_to_string(base.clone() + ".starkinfo.json")?)?),
             false => None,
         };
         let expanded;
@@ -77,15 +73,7 @@ impl VerifyStark {
 
         timer_start_info!(VERIFY_STARK);
         let publics: Vec<Goldilocks> = proof.public_values.iter().map(|&x| Goldilocks::from_u64(x)).collect();
-        let valid = verify_proof::<Goldilocks>(
-            body,
-            base.clone() + ".starkinfo.json",
-            base.clone() + ".verifierinfo.json",
-            base + ".verkey.json",
-            Some(publics),
-            None,
-            None,
-        );
+        let valid = verify_proof::<Goldilocks>(body, &base, Some(publics), None, None);
         timer_stop_and_log_info!(VERIFY_STARK);
 
         if !valid {

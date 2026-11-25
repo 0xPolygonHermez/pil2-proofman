@@ -4,10 +4,7 @@ mod common;
 
 use common::*;
 use pil2_pilout::pilout as pb;
-use pil_info::core::im::ImChoice;
-use pil_info::core::layout::{layout, LayoutParams};
-use pil_info::emit::prover::{emit_prover, to_arena, EmitParams, ProverCode};
-use pil_info::expr::expression::{ExprChild, Expression};
+use pil_info::emit::prover::{emit_prover, EmitParams, ProverCode};
 
 /// Every feasible air, random then real.
 fn for_each_run(min: usize, mut f: impl FnMut(&Run, &str)) {
@@ -62,27 +59,4 @@ fn im_columns_are_printed_and_rooted() {
         with_im += (n_im > 0) as usize;
     });
     assert!(with_im > 0, "no air with im columns");
-}
-
-/// 64 levels of `x_{k+1} = x_k + x_k`: inlining would be 2^64 nodes, the memoised arena is linear.
-#[test]
-fn to_arena_doubling_chain_is_linear() {
-    let mut e = vec![mul(witness(0, 1), witness(1, 0))];
-    for k in 0..64 {
-        e.push(add(exp(k), exp(k)));
-    }
-    e.push(mul(exp(64), exp(0)));
-    let cs = system(e, &[65]);
-    for im in [vec![], vec![32], vec![64]] {
-        let im = ImChoice { exprs: im };
-        let params = LayoutParams { im_pols_stages: false, deep_challenges: true, q_deg: 1, air_name: "S".into() };
-        let lay = layout(&cs, &im, &params).unwrap();
-        let t = to_arena(&cs, &im, &lay).unwrap();
-        assert!(t.arena.len() < cs.exprs.len() + 8 * (im.exprs.len() + 2), "arena {} nodes", t.arena.len());
-        fn nodes(e: &Expression) -> usize {
-            1 + e.values.iter().map(|c| if let ExprChild::Inline(x) = c { nodes(x) } else { 1 }).sum::<usize>()
-        }
-        let total: usize = t.arena.iter().map(nodes).sum();
-        assert!(total < 100_000, "{total} nodes");
-    }
 }

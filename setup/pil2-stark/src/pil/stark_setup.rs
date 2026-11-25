@@ -3,13 +3,9 @@
 use anyhow::{anyhow, Context, Result};
 use pil2_pilout::pilout as pb;
 use pil_info::core::dag::build::build_dag;
-use pil_info::core::from_pilout::from_pilout;
-use pil_info::core::im::{check_im, im_order, ImChoice};
-use pil_info::core::layout::{layout, quotient_dim, LayoutParams};
-use pil_info::core::openings::openings;
 use pil_info::core::project::{stark_info, StarkParams};
-use pil_info::emit::prover::{emit_prover, to_arena, EmitParams};
-use pil_info::search::im::search_im;
+use pil_info::emit::prover::{emit_prover, EmitParams};
+use pil_info::pipeline::{self, CorePass};
 use pil_info::PilInfoCfg;
 
 use crate::output::stark_info::{build_starkinfo_output_from_core, solve_low_degree_test};
@@ -43,28 +39,15 @@ pub fn stark_setup(
 ) -> Result<PilInfoResult> {
     let at = || format!("the STARK setup of air {air_id} of airgroup {airgroup_id}");
     let failed = |step: &str, e: &dyn std::fmt::Debug| anyhow!("{}: {step}: {e:?}", at());
-    // The degree bound comes from the blowup: (1 << (nBitsExt - nBits)) + 1.
-    let cfg = PilInfoCfg::goldilocks(stark_struct.n_bits_ext - stark_struct.n_bits);
-    let cs = from_pilout(pilout, airgroup_id, air_id, &cfg.field, cfg.opening).with_context(at)?;
+    let blowup = (stark_struct.n_bits_ext.checked_sub(stark_struct.n_bits)).ok_or_else(|| {
+        anyhow!("{}: nBitsExt {} is below nBits {}", at(), stark_struct.n_bits_ext, stark_struct.n_bits)
+    })?;
+    // the degree bound comes from the blowup: (1 << (nBitsExt - nBits)) + 1
+    let cfg = PilInfoCfg::goldilocks(blowup);
+    let CorePass { cs, im, chk, lay, exprs, ops, air_name } =
+        pipeline::run(pilout, airgroup_id, air_id, &cfg, options.im_pols_stages).with_context(at)?;
     validate_stark_struct(stark_struct, cs.n_rows_bits, airgroup_id, air_id)?;
-    let air_name = pilout.air_groups[airgroup_id].airs[air_id].name.clone().unwrap_or_default();
-
-    let none = ImChoice { exprs: Vec::new() };
-    let q_dim = quotient_dim(&cs, &none).map_err(|e| failed("quotient dim", &e))?;
-    let set = search_im(&cs, &cfg.degree_policy, q_dim as usize).with_context(at)?;
-    let im = im_order(&cs, &set).map_err(|e| failed("im order", &e))?;
-    let max_deg = cfg.degree_policy.max_constraint_degree() as u32;
-    let chk = check_im(&cs, &im, max_deg, true).map_err(|e| failed("im check", &e))?;
     let dag = build_dag(&cs, &im).map_err(|e| failed("constraint DAG", &e))?;
-    let lay_params = LayoutParams {
-        im_pols_stages: options.im_pols_stages,
-        deep_challenges: true,
-        q_deg: chk.q_deg,
-        air_name: air_name.clone(),
-    };
-    let lay = layout(&cs, &im, &lay_params).map_err(|e| failed("layout", &e))?;
-    let exprs = to_arena(&cs, &im, &lay).with_context(at)?;
-    let ops = openings(&cs, &im, &lay).map_err(|e| failed("openings", &e))?;
     let p = StarkParams {
         n_bits: stark_struct.n_bits as u32,
         n_bits_ext: stark_struct.n_bits_ext as u32,

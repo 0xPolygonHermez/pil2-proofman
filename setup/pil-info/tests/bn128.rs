@@ -10,14 +10,12 @@
 //! PIL2C_EXEC=<pil2-compiler>/src/pil.js cargo test -p pil-info --test bn128 -- --ignored
 //! ```
 
-use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::path::Path;
 
 use pil2_pilout::pilout as pb;
-use pil2_pilout::pilout_proxy::PilOutProxy;
 use pil_info::core::ir::ColType;
 use pil_info::types::output::CodeEntry;
-use pil_info::{DegreePolicy, PilInfoCfg, PilInfoResult};
+use pil_info::{DegreePolicy, PilInfoCfg, ShplonkResult};
 
 const R_MINUS_ONE: &str = "21888242871839275222246405745257275088548364400416034343698204186575808495616";
 const R_MINUS_TWO: &str = "21888242871839275222246405745257275088548364400416034343698204186575808495615";
@@ -75,12 +73,12 @@ fn sum_of_quartics_pilout() -> pb::PilOut {
 // What the passes produce
 // ---------------------------------------------------------------------------
 
-fn run(pilout: &pb::PilOut, cfg: &PilInfoCfg) -> PilInfoResult {
+fn run(pilout: &pb::PilOut, cfg: &PilInfoCfg) -> ShplonkResult {
     pil_info::shplonk_info(pilout, 0, 0, cfg, &Default::default()).unwrap()
 }
 
 /// Every code block the passes emit: expressions, constraints and the verifier's.
-fn all_code(result: &PilInfoResult) -> Vec<&CodeEntry> {
+fn all_code(result: &ShplonkResult) -> Vec<&CodeEntry> {
     let info = &result.pil_code.expressions_info;
     let verifier = &result.pil_code.verifier_info;
     info.expressions_code
@@ -92,7 +90,7 @@ fn all_code(result: &PilInfoResult) -> Vec<&CodeEntry> {
 }
 
 /// The values of the `number` operands in the emitted code.
-fn numbers(result: &PilInfoResult) -> Vec<String> {
+fn numbers(result: &ShplonkResult) -> Vec<String> {
     all_code(result)
         .into_iter()
         .flat_map(|c| std::iter::once(&c.dest).chain(&c.src))
@@ -101,44 +99,27 @@ fn numbers(result: &PilInfoResult) -> Vec<String> {
         .collect()
 }
 
-fn number_values_in_arena(result: &PilInfoResult) -> Vec<String> {
-    fn walk(e: &pil_info::expr::expression::Expression, out: &mut Vec<String>) {
-        if e.op == "number" {
-            out.extend(e.value.clone());
-        }
-        for child in &e.values {
-            if let pil_info::expr::expression::ExprChild::Inline(inline) = child {
-                walk(inline, out);
-            }
-        }
-    }
-    let mut out = Vec::new();
-    for e in &result.setup.expressions {
-        walk(e, &mut out);
-    }
-    out
-}
-
-fn im_pols(result: &PilInfoResult) -> usize {
+fn im_pols(result: &ShplonkResult) -> usize {
     result.setup.cm_pols_map.iter().filter(|p| p.im_pol).count()
 }
 
 /// Everything a pilfflonk run must give: dimension 1 everywhere, and no trace of the DEEP opening
 /// (pilfflonk/docs/README.md#setup-pilfflonk).
-fn assert_bn128_shape(result: &PilInfoResult) {
+fn assert_bn128_shape(result: &ShplonkResult) {
     let setup = &result.setup;
     let q_stage = setup.n_stages + 1;
 
-    for s in &setup.symbols {
-        assert_eq!(s.dim, 1, "symbol {} ({})", s.name, s.sym_type);
-    }
-    for (name, map) in [("cmPolsMap", &setup.cm_pols_map), ("challengesMap", &setup.challenges_map)] {
+    let maps = [
+        ("cmPolsMap", &setup.cm_pols_map),
+        ("constPolsMap", &setup.const_pols_map),
+        ("challengesMap", &setup.challenges_map),
+        ("airgroupValuesMap", &setup.airgroup_values_map),
+        ("airValuesMap", &setup.air_values_map),
+    ];
+    for (name, map) in maps {
         for p in map {
             assert_eq!(p.dim, 1, "{name}: {}", p.name);
         }
-    }
-    for e in &setup.expressions {
-        assert!(e.dim <= 1, "expression {} of dim {}", e.op, e.dim);
     }
     for c in all_code(result) {
         for r in std::iter::once(&c.dest).chain(&c.src) {
@@ -149,9 +130,10 @@ fn assert_bn128_shape(result: &PilInfoResult) {
     // No DEEP opening: no FRI challenges, no quotient evaluations.
     let challenges: Vec<&str> = setup.challenges_map.iter().map(|c| c.name.as_str()).collect();
     assert_eq!(challenges, ["std_vc", "std_xi"]);
-    for e in &setup.expressions {
-        assert_ne!(e.op, "eval", "a DEEP polynomial node");
-    }
+    let info = &result.pil_code.expressions_info;
+    let prover =
+        info.expressions_code.iter().flat_map(|e| &e.code).chain(info.constraints.iter().flat_map(|c| &c.code));
+    assert!(prover.flat_map(|c| &c.src).all(|r| r.ref_type != "eval"), "a DEEP polynomial node");
     for ev in &result.ev_map {
         let stage = setup.cm_pols_map.get(ev.pol.id as usize).and_then(|p| p.stage);
         assert!(ev.pol.col != ColType::Witness || stage != Some(q_stage), "quotient piece {} in the evMap", ev.pol.id);
@@ -180,10 +162,6 @@ fn bn128_keeps_wide_constants_and_negates_with_r_minus_one() {
         assert!(in_code.iter().any(|n| n == value), "{value} not in the code: {in_code:?}");
     }
     assert!(!in_code.iter().any(|n| n == GOLDILOCKS_NEG_ONE));
-
-    // Both negations became multiplications by r − 1.
-    let in_arena = number_values_in_arena(&result);
-    assert_eq!(in_arena.iter().filter(|n| *n == R_MINUS_ONE).count(), 2, "{in_arena:?}");
 }
 
 #[test]
@@ -212,32 +190,8 @@ fn bn128_lower_max_constraint_degree_adds_im_pols() {
 // Tests on compiled PIL (need PIL2C_EXEC)
 // ---------------------------------------------------------------------------
 
-fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../..").canonicalize().expect("the repository root")
-}
-
-/// Compile `pil` (relative to the repository root) over BN128 with `PIL2C_EXEC`.
-fn compile_bn128(pil: &str) -> pb::PilOut {
-    let compiler = std::env::var("PIL2C_EXEC")
-        .expect("PIL2C_EXEC must name a pil2com that has `--field` (e.g. <pil2-compiler>/src/pil.js)");
-    let root = repo_root();
-    let stem = Path::new(pil).file_stem().expect("a file name").to_string_lossy().into_owned();
-    let out = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("{stem}.bn128.pilout"));
-    let status = Command::new(compiler)
-        .current_dir(&root)
-        .arg(pil)
-        .arg("-I")
-        .arg("pil2-components/lib/std/pil")
-        .arg("--field")
-        .arg("bn128")
-        .arg("-o")
-        .arg(&out)
-        .status()
-        .expect("PIL2C_EXEC runs");
-    assert!(status.success(), "pil2com failed on {pil}");
-    let pilout = PilOutProxy::new(out.to_str().expect("a UTF-8 path")).expect("a pilout").pilout;
-    assert_eq!(pilout.base_field, big_be(R), "{pil} was not compiled over BN128: does PIL2C_EXEC have `--field`?");
-    pilout
+fn compile(pil: &str) -> pb::PilOut {
+    compile_bn128(Path::new(pil)).unwrap_or_else(|| panic!("pil2com failed on {pil}"))
 }
 
 /// The Fibonacci fixture (5 `everyRow` constraints of degree up to 3, offsets {0, 1}).
@@ -249,7 +203,7 @@ fn compile_bn128(pil: &str) -> pb::PilOut {
 #[test]
 #[ignore = "needs PIL2C_EXEC"]
 fn fibonacci_fixture_over_bn128() {
-    let pilout = compile_bn128("pilfflonk/tests/fixtures/fibonacci/fibonacci.pil");
+    let pilout = compile("pilfflonk/tests/fixtures/fibonacci/fibonacci.pil");
     let result = run(&pilout, &PilInfoCfg::bn128());
 
     assert_bn128_shape(&result);
@@ -285,7 +239,7 @@ fn fibonacci_fixture_over_bn128() {
 #[test]
 #[ignore = "needs PIL2C_EXEC"]
 fn wide_constants_fixture_over_bn128() {
-    let pilout = compile_bn128("setup/pil-info/tests/fixtures/wide_constants.pil");
+    let pilout = compile("setup/pil-info/tests/fixtures/wide_constants.pil");
     let result = run(&pilout, &PilInfoCfg::bn128());
 
     assert_bn128_shape(&result);

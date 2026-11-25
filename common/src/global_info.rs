@@ -168,13 +168,7 @@ impl GlobalInfo {
         let updated_global_info_json = serde_json::to_string(&global_info_value)?;
         // Deserialize into GlobalInfo
         let global_info: GlobalInfo = serde_json::from_str(&updated_global_info_json)?;
-        if !hash_family::is_known_family(&global_info.hash) {
-            return Err(ProofmanError::InvalidConfiguration(format!(
-                "unknown hash family {:?}; known: {:?}",
-                global_info.hash,
-                hash_family::FAMILIES
-            )));
-        }
+        global_info.hash.parse::<hash_family::HashFamily>().map_err(ProofmanError::InvalidConfiguration)?;
 
         // Every proving key loads through here, so this catches an arity this build has no
         // aggregation path for before any consumer chunks proofs or derives MPI tags from it.

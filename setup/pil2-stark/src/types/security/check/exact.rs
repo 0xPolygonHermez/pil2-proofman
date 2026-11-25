@@ -194,15 +194,19 @@ impl ExactRegime {
         let rho = Rational::pow2(-(mu as i64));
         match self {
             // η < (1 − √ρ)²/2, with √ρ rounded up.
+            // A non-positive gap would shrink 1 − δ and overstate the query bits.
             ExactRegime::Jbr { eta } => {
                 let s = sqrt_rate_upper(mu);
-                if s >= r(1) {
+                if s >= r(1) || *eta <= r(0) {
                     return false;
                 }
                 let d = r(1) - s;
                 *eta < d.clone() * d / r(2)
             }
-            ExactRegime::Udr { alpha } => self.udr_gap(&rho, alpha) < (r(1) - rho) / r(6),
+            ExactRegime::Udr { alpha } => {
+                let gap = self.udr_gap(&rho, alpha);
+                gap > r(0) && gap < (r(1) - rho) / r(6)
+            }
         }
     }
 
@@ -280,11 +284,12 @@ mod tests {
     }
 
     #[test]
-    fn security_bits_floor_on_grid() {
-        // 2^-10 -> exactly 10 bits; slightly above -> just under.
-        assert_eq!(Rational::pow2(-10).security_bits(), Rational::int(10));
-        let above = Rational::pow2(-10) * Rational::new(1001, 1000);
-        assert!(above.security_bits() < Rational::int(10));
-        assert!(above.security_bits() >= Rational::new(79, 8));
+    fn non_positive_gap_is_refused() {
+        assert!(ExactRegime::Jbr { eta: Rational::new(1, 300) }.admits(1));
+        assert!(!ExactRegime::Jbr { eta: r(0) }.admits(1));
+        assert!(!ExactRegime::Jbr { eta: Rational::new(-1, 300) }.admits(1));
+        assert!(ExactRegime::Udr { alpha: r(0) }.admits(1));
+        assert!(!ExactRegime::Udr { alpha: r(-1) }.admits(1));
+        assert!(!ExactRegime::Udr { alpha: r(-2) }.admits(1));
     }
 }

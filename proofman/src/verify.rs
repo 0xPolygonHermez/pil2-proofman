@@ -2,7 +2,7 @@ use proofman_fields::PrimeField64;
 
 use proofman_starks_lib_c::{
     constraint_dag_free_c, constraint_dag_new_c, get_n_publics_c, get_proof_size_c, stark_info_free_c,
-    stark_info_new_c, stark_verify_bn128_c, stark_verify_c, stark_verify_from_file_c,
+    stark_info_new_c, stark_verify_bn128_c, stark_verify_c,
 };
 
 use colored::*;
@@ -11,51 +11,7 @@ use proofman_common::{ProofCtx, ProofType, ProofmanResult, Setup};
 
 use std::os::raw::c_void;
 
-pub fn verify_proof_from_file<F: PrimeField64>(
-    proof_file: String,
-    stark_info_path: String,
-    verifier_info_path: String,
-    verkey_path: String,
-    publics: Option<Vec<F>>,
-    proof_values: Option<Vec<F>>,
-    challenges: Option<Vec<F>>,
-) -> bool {
-    let p_stark_info = stark_info_new_c(stark_info_path.as_str(), false, false, false, true, false);
-    let p_constraint_dag = constraint_dag_new_c(verifier_info_path.as_str());
-
-    let proof_challenges_ptr = match challenges {
-        Some(ref challenges) => challenges.as_ptr() as *mut u8,
-        None => std::ptr::null_mut(),
-    };
-
-    let publics_ptr = match publics {
-        Some(ref publics) => publics.as_ptr() as *mut u8,
-        None => std::ptr::null_mut(),
-    };
-
-    let proof_values_ptr = match proof_values {
-        Some(ref proof_values) => proof_values.as_ptr() as *mut u8,
-        None => std::ptr::null_mut(),
-    };
-
-    let result = stark_verify_from_file_c(
-        &verkey_path,
-        &proof_file,
-        p_stark_info,
-        p_constraint_dag,
-        publics_ptr,
-        proof_values_ptr,
-        proof_challenges_ptr,
-    );
-
-    // Clean up allocated resources
-    constraint_dag_free_c(p_constraint_dag);
-    stark_info_free_c(p_stark_info);
-
-    result
-}
-
-/// Verify one proof against the setup files at the given paths.
+/// Verify one proof against the setup `<base>.{starkinfo,verifierinfo,verkey}.json`.
 ///
 /// `proof` is the proof body only (no publics prefix); its length and `publics`' are checked
 /// against the setup before anything is handed to C++. `stark_verify` walks both through raw
@@ -65,15 +21,15 @@ pub fn verify_proof_from_file<F: PrimeField64>(
 /// here or it reads off the end of the allocation.
 pub fn verify_proof<F: PrimeField64>(
     proof: &[u64],
-    stark_info_path: String,
-    verifier_info_path: String,
-    verkey_path: String,
+    base: &str,
     publics: Option<Vec<F>>,
     proof_values: Option<Vec<F>>,
     global_challenge: Option<Vec<F>>,
 ) -> bool {
+    let (stark_info_path, verifier_info_path, verkey_path) =
+        (format!("{base}.starkinfo.json"), format!("{base}.verifierinfo.json"), format!("{base}.verkey.json"));
     let p_stark_info = stark_info_new_c(stark_info_path.as_str(), false, false, false, true, false);
-    let p_constraint_dag = constraint_dag_new_c(verifier_info_path.as_str());
+    let p_constraint_dag = constraint_dag_new_c(verifier_info_path.as_str(), p_stark_info);
 
     let proof_size = get_proof_size_c(p_stark_info) as usize;
     let n_publics = get_n_publics_c(p_stark_info) as usize;
@@ -135,7 +91,7 @@ pub fn verify_proof_bn128<F: PrimeField64>(p_proof: *mut c_void, setup: &Setup<F
     let verkey_path = setup.setup_path.display().to_string() + ".verkey.json";
 
     let p_stark_info = stark_info_new_c(stark_info_path.as_str(), false, false, false, true, false);
-    let p_constraint_dag = constraint_dag_new_c(verifier_info_path.as_str());
+    let p_constraint_dag = constraint_dag_new_c(verifier_info_path.as_str(), p_stark_info);
 
     let publics_ptr = match publics {
         Some(ref publics) => publics.as_ptr() as *mut u8,
@@ -163,9 +119,6 @@ pub fn verify_basic_proof<F: PrimeField64>(
 
     let setup_path = pctx.global_info.get_air_setup_path(airgroup_id, air_id, &ProofType::Basic);
 
-    let stark_info_path = setup_path.display().to_string() + ".starkinfo.json";
-    let verifier_info_path = setup_path.display().to_string() + ".verifierinfo.json";
-    let verkey_path = setup_path.display().to_string() + ".verkey.json";
     let air_name = &pctx.global_info.airs[airgroup_id][air_id].name;
 
     tracing::info!(
@@ -177,9 +130,7 @@ pub fn verify_basic_proof<F: PrimeField64>(
 
     let is_valid_proof = verify_proof(
         proof,
-        stark_info_path,
-        verifier_info_path,
-        verkey_path,
+        &setup_path.display().to_string(),
         Some(pctx.get_publics().clone()),
         Some(pctx.get_proof_values().clone()),
         Some(pctx.get_global_challenge().clone()),

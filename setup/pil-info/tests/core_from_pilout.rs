@@ -149,6 +149,7 @@ fn degree_follows_rules() {
     );
     let mut p = p;
     p.num_challenges = vec![1];
+    p.symbols.push(symbol("alpha", SymbolType::Challenge, 1, 0));
     let cs = from_pilout(&p, 0, 0, &gl(), Opening::Deep).unwrap();
     let mul_e = |a: Expr, b: Expr| Expr::Mul(Box::new(a), Box::new(b));
     let ab = mul_e(col(0, 0), col(1, 0));
@@ -267,4 +268,24 @@ fn publics_are_tied_to_num_public_values() {
     }];
     let err = from_pilout(&p, 0, 0, &gl(), Opening::Deep).unwrap_err();
     assert_eq!(err, PiloutError::CommitPublic { commit: "rom".into(), idx: 2, declared: 2 });
+}
+
+/// Witness, fixed and challenge symbols must name each declared slot once: ids are counted per stage downstream.
+#[test]
+fn rejects_symbol_count_mismatch() {
+    let base = || pilout(&["a", "b"], &["L"], vec![mul(witness(0, 0), witness(1, 0))], vec![every_row(0)]);
+    assert!(from_pilout(&base(), 0, 0, &gl(), Opening::Deep).is_ok());
+    let mut p = base();
+    p.air_groups[0].airs[0].stage_widths = vec![3];
+    let mut q = base();
+    q.air_groups[0].airs[0].fixed_cols.push(pb::FixedCol { values: Vec::new() });
+    let mut r = base();
+    r.num_challenges = vec![1];
+    let mut d = base();
+    d.symbols.push(symbol("dup", SymbolType::WitnessCol, 1, 1));
+    d.air_groups[0].airs[0].stage_widths = vec![3];
+    for p in [p, q, r, d] {
+        let err = from_pilout(&p, 0, 0, &gl(), Opening::Deep).unwrap_err();
+        assert!(matches!(err, PiloutError::SymbolCount { .. }), "{err:?}");
+    }
 }

@@ -1362,34 +1362,6 @@ pub fn stark_verify_bn128_c(
     unsafe { stark_verify_bn128(p_proof, p_stark_info, p_constraint_dag, verkey_file_ptr, p_publics as *mut c_void) }
 }
 
-pub fn stark_verify_from_file_c(
-    verkey: &str,
-    proof: &str,
-    p_stark_info: *mut c_void,
-    p_constraint_dag: *mut c_void,
-    p_publics: *mut u8,
-    p_proof_values: *mut u8,
-    p_challenges: *mut u8,
-) -> bool {
-    let verkey_file = CString::new(verkey).unwrap();
-    let verkey_file_ptr = verkey_file.as_ptr() as *mut std::os::raw::c_char;
-
-    let proof_file = CString::new(proof).unwrap();
-    let proof_file_ptr = proof_file.as_ptr() as *mut std::os::raw::c_char;
-
-    unsafe {
-        stark_verify_from_file(
-            proof_file_ptr,
-            p_stark_info,
-            p_constraint_dag,
-            verkey_file_ptr,
-            p_publics as *mut c_void,
-            p_proof_values as *mut c_void,
-            p_challenges as *mut c_void,
-        )
-    }
-}
-
 pub fn write_fixed_cols_bin_c(
     binfile: &str,
     airgroup: &str,

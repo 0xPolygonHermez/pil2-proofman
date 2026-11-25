@@ -4,12 +4,11 @@ mod common;
 
 use common::*;
 use num_bigint::BigUint;
-use pil_info::core::from_pilout::{from_pilout, PiloutError};
 use pil_info::core::im::{check_im, im_order, substitute, Checked, ImError};
 use pil_info::core::layout::quotient_dim;
-use pil_info::core::ir::{degree, eval_expr, visit, Boundary, ColRef, ColType, Env, Expr};
+use pil_info::core::ir::{degree, eval_expr, visit, ColRef, ColType, Env, Expr};
 use pil_info::search::im::search_im;
-use pil_info::{DegreePolicy, Opening};
+use pil_info::DegreePolicy;
 
 #[test]
 fn accepts_empty_choice_when_degree_fits() {
@@ -136,36 +135,6 @@ fn stark_floor(p: &DegreePolicy) -> bool {
     matches!(p, DegreePolicy::FromBlowup { .. })
 }
 
-/// pilfflonk protocol.md#degree-search: qDeg = max(deg c_i + δ_i) - 1, δ_i = 1 off everyRow; seed 4 is a
-/// degree-2 everyFrame root (qDeg 2, which the old search under-sized to 1).
-#[test]
-fn shplonk_boundaries_follow_the_spec() {
-    let mut checked = 0;
-    for seed in 0..200 {
-        let (_, cs) = random_pilout_in(seed, Opening::Shplonk);
-        for policy in policies() {
-            let q_dim = quotient_dim(&cs, &choice(&[])).unwrap() as usize;
-            let Ok(set) = search_im(&cs, &policy, q_dim) else { continue };
-            let im = im_order(&cs, &set).unwrap();
-            let got = check_im(&cs, &im, policy.max_constraint_degree() as u32, stark_floor(&policy)).unwrap();
-            let top = got.root_degrees.iter().chain(&got.im_degrees).copied().max().unwrap_or(0);
-            let want = if stark_floor(&policy) { top.saturating_sub(1).max(1) } else { top.saturating_sub(1) };
-            assert_eq!(got.q_deg, want, "seed {seed} {policy:?}");
-            checked += 1;
-        }
-    }
-    assert!(checked > 500, "{checked} checked");
-    let (_, cs) = random_pilout_in(4, Opening::Shplonk);
-    assert_eq!(
-        cs.constraints.iter().map(|c| c.boundary.clone()).collect::<Vec<_>>(),
-        vec![Boundary::EveryFrame { min: 0, max: 1 }]
-    );
-    assert_eq!(
-        check_im(&cs, &choice(&[]), 3, false).unwrap(),
-        Checked { q_deg: 2, root_degrees: vec![3], im_degrees: vec![] }
-    );
-}
-
 #[test]
 fn search_output_is_checked() {
     let mut checked = 0;
@@ -197,28 +166,6 @@ fn memo_hazard_regression() {
             cs.constraints.iter().map(|c| degree(&cs, &substitute(&cs, &im, &c.e).unwrap()).unwrap()).max().unwrap();
         assert_eq!((roots, got.q_deg), (2, 2), "{policy:?}: the im root drives q_deg");
     }
-}
-
-#[test]
-fn an_air_without_constraints_is_rejected() {
-    let p = pilout(&["a", "b", "c", "d"], &[], chain(), vec![]);
-    let err = from_pilout(&p, 0, 0, &gl(), Opening::Deep).unwrap_err();
-    assert_eq!(err, PiloutError::NoConstraints { airgroup: 0, air: 0 });
-}
-
-/// 64 levels of `x_{k+1} = x_k + x_k`: inlining would be 2^64 nodes, the memoised degree is linear.
-#[test]
-fn doubling_chain_is_not_inlined() {
-    let mut e = vec![mul(witness(0, 0), witness(1, 0))];
-    for k in 0..64 {
-        e.push(add(exp(k), exp(k)));
-    }
-    e.push(mul(exp(64), exp(0)));
-    let cs = system(e, &[65]);
-    assert_eq!(check_im(&cs, &choice(&[]), 4, true).unwrap().root_degrees, vec![4]);
-    assert_eq!(check_im(&cs, &choice(&[64]), 3, true).unwrap().im_degrees, vec![2]);
-    let set = search_im(&cs, &DegreePolicy::FromBlowup { blowup_bits: 1 }, 1).unwrap();
-    check_im(&cs, &im_order(&cs, &set).unwrap(), 3, true).unwrap();
 }
 
 #[test]

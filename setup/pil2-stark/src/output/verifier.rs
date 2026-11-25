@@ -2,7 +2,7 @@ use anyhow::{anyhow, bail, ensure, Result};
 use std::collections::HashMap;
 use std::fs;
 
-use pil_info::core::dag::lower_code::{lower_to_code, CodeOp, Fold, LowerCtx, Operand, VerifierCode};
+use pil_info::core::dag::lower_code::{lower_to_code, CodeOp, Fold, Instr, LowerCtx, Operand, VerifierCode};
 use proofman_common::{hash_family, LowDegreeLayout};
 use crate::types::goldilocks_u64;
 use crate::types::stark_info::{StarkInfo, VerifierInfo};
@@ -12,18 +12,8 @@ pub fn write_verifier_rust_file(
     path: &str,
     stark_info: &StarkInfo,
     verifier_info: &VerifierInfo,
-    vadcop_final_proof: bool,
     hash_id: &str,
 ) -> Result<()> {
-    if !hash_family::supports_native_rust_verifier(hash_id) {
-        tracing::warn!(
-            "Skipping the native Rust verifier for {path}: the {hash_id} family has no \
-             proofman_fields::Hash implementation, so no verifier can be emitted for it. The proving \
-             key is complete for proving and for C++ verification; only this artifact is absent."
-        );
-        return Ok(());
-    }
-
     // The native verifier parses no custom-commit openings; fail here, not at verification.
     anyhow::ensure!(
         stark_info.custom_commits.is_empty(),
@@ -38,7 +28,7 @@ pub fn write_verifier_rust_file(
 
     println!("> Writing rust verifier file");
 
-    let rust_verifier = prepare_verifier_rust(stark_info, verifier_info, vadcop_final_proof, hash_id)?;
+    let rust_verifier = prepare_verifier_rust(stark_info, verifier_info, hash_id)?;
     fs::write(path, rust_verifier)?;
 
     Ok(())
@@ -46,22 +36,18 @@ pub fn write_verifier_rust_file(
 
 /// `challengesMap` position of vf1 (`stage_id` 0) or vf2 (1): the stage `nStages + 3` challenge with that
 /// `stageId`, the same rule as the C++ `buildDeepTables`.
-fn deep_challenge_idx(stark_info: &StarkInfo, stage_id: u64) -> Result<u64> {
-    let stage = stark_info.n_stages + 3;
+/// The `challengesMap` position of challenge `stage_id` of stage `nStages + after` (xi: 2, vf1/vf2: 3).
+fn deep_challenge_idx(stark_info: &StarkInfo, after: u64, stage_id: u64) -> Result<u64> {
+    let stage = stark_info.n_stages + after;
     stark_info
         .challenges_map
         .iter()
         .position(|c| c.stage == stage && c.stage_id == stage_id)
         .map(|i| i as u64)
-        .ok_or_else(|| anyhow::anyhow!("challengesMap has no vf{} (stage {stage}, stageId {stage_id})", stage_id + 1))
+        .ok_or_else(|| anyhow::anyhow!("challengesMap has no challenge {stage_id} of stage {stage}"))
 }
 
-fn prepare_verifier_rust(
-    stark_info: &StarkInfo,
-    verifier_info: &VerifierInfo,
-    vadcop_final_proof: bool,
-    hash_id: &str,
-) -> Result<String> {
+fn prepare_verifier_rust(stark_info: &StarkInfo, verifier_info: &VerifierInfo, hash_id: &str) -> Result<String> {
     // Leaf + compression hashes follow the Merkle tree arity; the transcript hash
     // follows the (fixed, arity-4) transcript arity; grinding is a fixed-width hash.
     let merkle_arity = stark_info.stark_struct.merkle_tree_arity;
@@ -70,9 +56,7 @@ fn prepare_verifier_rust(
     // The transcript CONSTRUCTION, not a hash to wrap in a sponge: BLAKE3's is not a sponge.
     let transcript_type = hash_family::rust_transcript_type(hash_id, transcript_arity as u64);
     let grinding_type = hash_family::rust_grinding_type(hash_id);
-    let ctx = LowerCtx::new(stark_info.lower_tables.clone()).map_err(|e| anyhow!("{e:?}"))?;
-    let code = lower_to_code(&verifier_info.constraint_dag, &ctx, Fold::Stark).map_err(|e| anyhow!("{e:?}"))?;
-    let q = rust_verify_lines(stark_info, &code, "q_verify", false)?;
+    let q = q_verify_of(stark_info, verifier_info)?;
     let (verify_q_rust, verify_q_helpers) = (q.verify_rust, q.verify_rust_helpers);
 
     let mut lines: Vec<String> = Vec::new();
@@ -97,9 +81,7 @@ fn prepare_verifier_rust(
     } else {
         lines.push("use crate::{stark_verify, FriEvalGroup, FriEvalRef, VerifierInfo};".to_string());
     }
-    if vadcop_final_proof || stark_info.multiproof {
-        lines.push("use crate::VadcopFinalProof;".to_string());
-    }
+    lines.push("use crate::VadcopFinalProof;".to_string());
     lines.push(String::new());
 
     // q_verify helper functions (if chunked)
@@ -124,11 +106,7 @@ fn prepare_verifier_rust(
 
     // The FRI query polynomial is structural, so the verifier evaluates it from
     // the evaluation map instead of an unrolled per-air function.
-    let common = match &stark_info.common {
-        Some(Ok(common)) => common,
-        Some(Err(e)) => anyhow::bail!("starkinfo does not parse as a proofman StarkInfo: {e}"),
-        None => anyhow::bail!("starkinfo has no proofman StarkInfo"),
-    };
+    let common = &stark_info.common;
     let group_strs: Vec<String> = proofman_common::deep::fri_ev_groups(common)
         .iter()
         .map(|g| {
@@ -144,16 +122,19 @@ fn prepare_verifier_rust(
         format!("        fri_ev_groups: vec![\n            {}\n        ],", group_strs.join(",\n            "));
 
     // Find q_index: the evMap index of the cm polynomial at stage nStages+1, stageId 0
-    let q_index = stark_info.cm_pols_map.iter().position(|p| p.stage == stark_info.n_stages + 1 && p.stage_id == 0);
-    let q_ev_index = if let Some(qi) = q_index {
-        stark_info.ev_map.iter().position(|ev| ev.ev_type == "cm" && ev.id == qi as u64).unwrap_or(0)
-    } else {
-        0
-    };
+    let q_index = (stark_info.cm_pols_map.iter().position(|p| p.stage == stark_info.n_stages + 1 && p.stage_id == 0))
+        .ok_or_else(|| anyhow!("no Q column in cmPolsMap"))?;
+    let q_ev_index = (stark_info
+        .ev_map
+        .iter()
+        .position(|ev| ev.ev_type == proofman_common::EvMapEType::Cm && ev.id == q_index as u64))
+    .ok_or_else(|| anyhow!("the Q column is not opened in evMap"))?;
 
     let layout = common.proof_layout();
     let num_vals: Vec<String> = layout.num_vals.iter().map(|v| v.to_string()).collect();
-    let (vf1_idx, vf2_idx) = (deep_challenge_idx(stark_info, 0)?, deep_challenge_idx(stark_info, 1)?);
+    let xi_idx = deep_challenge_idx(stark_info, 2, 0)?;
+    let n_challenges_total = stark_info.challenges_map.len() + common.stark_struct.low_degree_test.num_ldt_challenges();
+    let (vf1_idx, vf2_idx) = (deep_challenge_idx(stark_info, 3, 0)?, deep_challenge_idx(stark_info, 3, 1)?);
     let vec_str = |v: &[u64]| -> String { v.iter().map(|b| b.to_string()).collect::<Vec<String>>().join(", ") };
 
     // verifier_info function
@@ -171,10 +152,10 @@ fn prepare_verifier_rust(
             lines.push(format!("        n_fri_queries: {},", n_queries));
             lines.push(format!("        n_fri_steps: {},", steps.len()));
             lines.push(format!("        n_challenges: {},", stark_info.challenges_map.len()));
+            lines.push(format!("        xi_idx: {xi_idx},"));
             lines.push(format!("        vf1_idx: {vf1_idx},"));
             lines.push(format!("        vf2_idx: {vf2_idx},"));
-            // Stage challenges, one r^fold per fold (M = domains − 1) and the query seed.
-            lines.push(format!("        n_challenges_total: {},", stark_info.challenges_map.len() + steps.len()));
+            lines.push(format!("        n_challenges_total: {n_challenges_total},"));
 
             lines.push(format!("        fri_steps: vec![{}],", vec_str(steps)));
 
@@ -192,7 +173,6 @@ fn prepare_verifier_rust(
             lines.push("}\n".to_string());
         }
         (LowDegreeTest::Stir(_), LowDegreeLayout::Stir(stir)) => {
-            let m = stir.m();
             lines.push("fn verifier_info() -> StirVerifierInfo {".to_string());
             lines.push("    StirVerifierInfo {".to_string());
             lines.push(format!("        n_stages: {},", stark_info.n_stages));
@@ -201,14 +181,10 @@ fn prepare_verifier_rust(
             lines.push(format!("        n_bits: {},", stark_info.stark_struct.n_bits));
             lines.push(format!("        n_bits_ext: {},", layout.n_bits_ext));
             lines.push(format!("        n_challenges: {},", stark_info.challenges_map.len()));
+            lines.push(format!("        xi_idx: {xi_idx},"));
             lines.push(format!("        vf1_idx: {vf1_idx},"));
             lines.push(format!("        vf2_idx: {vf2_idx},"));
-            // r_fold_0, then (r_out, r_fold, r_comb) per iteration 1..M−1, then the M query
-            // challenges — `num_ldt_challenges` in common/src/stark_info.rs.
-            lines.push(format!(
-                "        n_challenges_total: {},",
-                stark_info.challenges_map.len() + 1 + m.saturating_sub(1) * 3 + m
-            ));
+            lines.push(format!("        n_challenges_total: {n_challenges_total},"));
 
             lines.push(format!("        num_vals: vec![{}],", num_vals.join(", ")));
             lines.push(format!("        opening_points: vec![{}],", opening_points_str.join(", ")));
@@ -249,17 +225,13 @@ fn prepare_verifier_rust(
         lines.push("    };".to_string());
         lines.push(format!("    {verify_fn}::<{generics}>(&flat, vk, &info, q_verify)"));
         lines.push("}\n".to_string());
-    } else if vadcop_final_proof {
+    } else {
         lines.push("pub fn verify(proof: &VadcopFinalProof, vk: &[u64]) -> bool {".to_string());
         lines.push(format!(
             "    {verify_fn}::<{generics}>(&proof.proof_with_publics(), vk, &verifier_info(), q_verify)"
         ));
         lines.push("}\n".to_string());
         lines.push("pub fn verify_u64(proof: &[u64], vk: &[u64]) -> bool {".to_string());
-        lines.push(format!("    {verify_fn}::<{generics}>(proof, vk, &verifier_info(), q_verify)"));
-        lines.push("}\n".to_string());
-    } else {
-        lines.push("pub fn verify(proof: &[u64], vk: &[u64]) -> bool {".to_string());
         lines.push(format!("    {verify_fn}::<{generics}>(proof, vk, &verifier_info(), q_verify)"));
         lines.push("}\n".to_string());
     }
@@ -285,22 +257,62 @@ pub struct VerifyRust {
     pub verify_rust: Vec<String>,
 }
 
-/// `q_verify`'s Rust source: one assignment per instruction, chunked; `packed = false` gives temporary `k` its own slot.
-pub fn rust_verify_lines(
-    stark_info: &StarkInfo,
-    code: &VerifierCode,
-    function_name: &str,
-    packed: bool,
-) -> Result<VerifyRust> {
-    // slot reuse would need owner approval (Task D speed rule)
-    ensure!(!packed, "packed verifier temporaries are not implemented");
+/// The DAG lowered (STARK fold) and rendered as `q_verify`.
+fn q_verify_of(stark_info: &StarkInfo, verifier_info: &VerifierInfo) -> Result<VerifyRust> {
+    let ctx = LowerCtx::new(stark_info.lower_tables.clone()).map_err(|e| anyhow!("{e:?}"))?;
+    let code = lower_to_code(&verifier_info.constraint_dag, &ctx, Fold::Stark).map_err(|e| anyhow!("{e:?}"))?;
+    rust_verify_lines(stark_info, &code, "q_verify")
+}
+
+/// `(dim, slot)` of each instruction's destination and the slots per kind (base, ext): a slot is reused after
+/// the last read of its temporary; sources are read before the destination is written.
+fn dest_slots(code: &[Instr], ext: usize) -> (Vec<(usize, usize)>, [usize; 2]) {
+    let mut last_read: HashMap<u32, usize> = HashMap::new();
+    for (i, ins) in code.iter().enumerate() {
+        for s in &ins.src {
+            if let Operand::Tmp(k) = s.operand {
+                last_read.insert(k, i);
+            }
+        }
+    }
+    let mut live: HashMap<u32, (usize, usize)> = HashMap::new();
+    let (mut free, mut count): ([Vec<usize>; 2], [usize; 2]) = Default::default();
+    let mut out = Vec::with_capacity(code.len());
+    for (i, ins) in code.iter().enumerate() {
+        for s in &ins.src {
+            if let Operand::Tmp(k) = s.operand {
+                if last_read[&k] == i {
+                    if let Some((d, slot)) = live.remove(&k) {
+                        free[usize::from(d == ext)].push(slot);
+                    }
+                }
+            }
+        }
+        let kind = usize::from(ins.dim == ext);
+        let slot = free[kind].pop().unwrap_or_else(|| {
+            count[kind] += 1;
+            count[kind] - 1
+        });
+        // a result never read (but the last) frees its slot at once
+        if last_read.contains_key(&ins.dest) || i + 1 == code.len() {
+            live.insert(ins.dest, (ins.dim, slot));
+        } else {
+            free[kind].push(slot);
+        }
+        out.push((ins.dim, slot));
+    }
+    (out, count)
+}
+
+/// `q_verify`'s Rust source: one assignment per instruction, chunked, temporaries packed by `dest_slots`.
+pub fn rust_verify_lines(stark_info: &StarkInfo, code: &VerifierCode, function_name: &str) -> Result<VerifyRust> {
     let ext = crate::types::FIELD_EXTENSION;
     code.check_dims(ext).map_err(|e| anyhow!("{function_name}: {e:?}"))?;
+    let (dests, count) = dest_slots(&code.code, ext);
     let mut slots: HashMap<u32, (usize, usize)> = HashMap::new();
-    let mut count = [0usize; 2];
     let mut lines: Vec<String> = Vec::with_capacity(code.code.len());
     let mut uses: Vec<Uses> = Vec::with_capacity(code.code.len());
-    for ins in &code.code {
+    for (ins, &(dim, slot)) in code.code.iter().zip(&dests) {
         let mut u = Uses::default();
         let mut args: Vec<(String, usize)> = Vec::with_capacity(2);
         for s in &ins.src {
@@ -327,9 +339,6 @@ pub fn rust_verify_lines(
             u.add(&s.operand, s.dim == ext);
             args.push((e, s.dim));
         }
-        let dim = ins.dim;
-        let slot = count[usize::from(dim == ext)];
-        count[usize::from(dim == ext)] += 1;
         slots.insert(ins.dest, (dim, slot));
         u.tmp[usize::from(dim == ext)] = true;
         let dest = format!("tmp_{dim}[{slot}]");
@@ -450,7 +459,6 @@ mod tests {
     use crate::output::test_support::full_random;
     use pil_info::core::dag::format::{DagBoundary, DagNode, DagRoot};
     use pil_info::core::dag::lower_code::{CodeOp, Instr, Operand, Src, VerifierCode};
-    use std::collections::HashSet;
 
     fn tmp_assignments(lines: &[String]) -> Vec<String> {
         let is_tmp = |l: &&String| {
@@ -461,11 +469,6 @@ mod tests {
         lines.iter().filter(is_tmp).map(|l| l.trim_start().split(']').next().unwrap().to_string()).collect()
     }
 
-    fn write(si: &StarkInfo, vi: &VerifierInfo) -> Result<()> {
-        let dir = tempfile::tempdir()?;
-        write_verifier_rust_file(dir.path().join("v.rs").to_str().unwrap(), si, vi, true, "blake3")
-    }
-
     #[test]
     fn q_verify_one_assignment_per_op_node() {
         for f in full_random(3) {
@@ -474,11 +477,23 @@ mod tests {
             let code = lower_to_code(dag, &ctx, Fold::Stark).unwrap();
             // op nodes + fold instructions (copy of leaf roots, mul/add per root, final mul by Zi)
             assert_eq!(code.code.len(), code.tmp_used);
-            let r = rust_verify_lines(&f.si, &code, "q_verify", false).unwrap();
+            let r = rust_verify_lines(&f.si, &code, "q_verify").unwrap();
             let all: Vec<String> = r.verify_rust_helpers.iter().chain(&r.verify_rust).cloned().collect();
-            let slots = tmp_assignments(&all);
-            assert_eq!(slots.len(), code.code.len());
-            assert_eq!(slots.iter().collect::<HashSet<_>>().len(), slots.len(), "a slot is assigned twice");
+            assert_eq!(tmp_assignments(&all).len(), code.code.len());
+            // replay the packing: every read finds its temporary still in its slot
+            let (dests, count) = dest_slots(&code.code, 3);
+            let mut owner: HashMap<(usize, usize), u32> = HashMap::new();
+            let mut at: HashMap<u32, (usize, usize)> = HashMap::new();
+            for (ins, &d) in code.code.iter().zip(&dests) {
+                for s in &ins.src {
+                    if let Operand::Tmp(k) = s.operand {
+                        assert_eq!(owner[&at[&k]], k, "tmp {k} overwritten before its read by {}", ins.dest);
+                    }
+                }
+                owner.insert(d, ins.dest);
+                at.insert(ins.dest, d);
+            }
+            assert!(count[0] + count[1] < code.code.len(), "no slot was reused");
         }
     }
 
@@ -494,32 +509,16 @@ mod tests {
             .collect();
         let vc = VerifierCode { tmp_used: n as usize, code };
         let si = StarkInfo { n_stages: 2, ..Default::default() };
-        let r = rust_verify_lines(&si, &vc, "q_verify", false).unwrap();
+        let r = rust_verify_lines(&si, &vc, "q_verify").unwrap();
         assert_eq!(r.verify_rust_helpers.iter().filter(|l| l.contains("fn q_verify_chunk_")).count(), 3);
         assert_eq!(tmp_assignments(&r.verify_rust_helpers).len(), n as usize);
     }
 
-    // The shared key (examples/fibonacci-square/build-dag); None (skip, with a message) while it is absent.
-    fn shared_key() -> Option<(StarkInfo, VerifierInfo)> {
-        let d = concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../examples/fibonacci-square/build-dag/provingKey/build/vadcop_final"
-        );
-        let load = |ext: &str| -> Option<serde_json::Value> {
-            serde_json::from_str(&std::fs::read_to_string(format!("{d}/vadcop_final.{ext}.json")).ok()?).ok()
-        };
-        let (Some(s), Some(v)) = (load("starkinfo"), load("verifierinfo")) else {
-            eprintln!("SKIP: no shared key at {d}");
-            return None;
-        };
-        Some((StarkInfo::from_json(&s).unwrap(), VerifierInfo::from_json(&v).unwrap()))
-    }
-
     #[test]
     fn q_verify_refuses_airvalue() {
-        let Some((si, vi)) = shared_key() else { return };
-        assert!(write(&si, &vi).is_ok(), "baseline: the unmodified key renders");
-        let (mut si, mut vi) = (si, vi);
+        let f = full_random(1).pop().expect("a random key");
+        assert!(q_verify_of(&f.si, &f.vi).is_ok(), "baseline: the unmodified key renders");
+        let (mut si, mut vi) = (f.si, f.vi);
         if si.lower_tables.air_values_stage.is_empty() {
             si.lower_tables.air_values_stage = vec![2];
         }
@@ -530,33 +529,17 @@ mod tests {
             boundary: DagBoundary::EveryRow,
             label: "av".into(),
         });
-        let e = write(&si, &vi).expect_err("an airvalue cannot be supplied to q_verify");
+        let e = q_verify_of(&si, &vi).expect_err("an airvalue cannot be supplied to q_verify");
         assert!(format!("{e:#}").to_lowercase().contains("airvalue"), "{e:#}");
     }
 
     #[test]
     fn q_verify_refuses_non_every_row_root() {
-        let Some((si, mut vi)) = shared_key() else { return };
+        let f = full_random(1).pop().expect("a random key");
+        let mut vi = f.vi;
         vi.constraint_dag.roots[0].boundary = DagBoundary::FirstRow;
-        let e = write(&si, &vi).expect_err("a STARK root is everyRow");
+        let e = q_verify_of(&f.si, &vi).expect_err("a STARK root is everyRow");
         assert!(format!("{e:#}").contains("everyRow"), "{e:#}");
-    }
-
-    // DAG-level negative: one constant changed. Render it, then the harness must reject the real proof:
-    // PIL2_CHANGED_VERIFIER=<abs .rs> cargo test -p pil2-stark-setup --lib -- --ignored changed_dag
-    // PIL2_EXPECT_REJECT=1 PIL2_GENERATED_VERIFIER=<same .rs> ... --test generated_verifier (see that file)
-    #[test]
-    #[ignore = "writes $PIL2_CHANGED_VERIFIER from the shared key"]
-    fn writes_a_verifier_from_a_changed_dag() {
-        let Some((si, mut vi)) = shared_key() else { return };
-        let out = std::env::var("PIL2_CHANGED_VERIFIER").expect("set PIL2_CHANGED_VERIFIER");
-        let dag = &mut vi.constraint_dag;
-        let c = dag.nodes.iter_mut().find_map(|n| match n {
-            DagNode::Const { value } if value != "0" => Some(value),
-            _ => None,
-        });
-        *c.expect("the DAG has a non-zero constant") = "1234567".into();
-        write_verifier_rust_file(&out, &si, &vi, true, "blake3").unwrap();
     }
 
     // Dimension corruption: an ext-typed instruction over a base-field operand, and the reverse.
@@ -566,7 +549,7 @@ mod tests {
         let src = |operand, dim| Src { operand, dim };
         let run = |dim, a: Src, b: Src| {
             let code = vec![Instr { op: CodeOp::Mul, dest: 0, dim, src: vec![a, b] }];
-            rust_verify_lines(&si, &VerifierCode { tmp_used: 1, code }, "q_verify", false)
+            rust_verify_lines(&si, &VerifierCode { tmp_used: 1, code }, "q_verify")
         };
         // a public is base-field: typed ext it disagrees with its slot
         assert!(run(3, src(Operand::Public(0), 3), src(Operand::Eval(0), 3)).is_err());

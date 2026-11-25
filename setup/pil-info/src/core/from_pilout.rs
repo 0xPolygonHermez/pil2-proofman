@@ -4,8 +4,8 @@ use num_bigint::BigUint;
 use pil2_pilout::pilout as pb;
 
 use super::ir::{
-    map_expr, visit, Boundary, ColType, Column, Constraint, ConstraintSystem, CustomCommit, Expr, Hint, HintField,
-    HintValue, Lengths, NamedValue,
+    col_dim, map_expr, visit, Boundary, ColType, Column, Constraint, ConstraintSystem, CustomCommit, Expr, Hint,
+    HintField, HintValue, Lengths, NamedValue,
 };
 use super::pilout_core::{self as pc, AggType, AirGroupValue, PiloutCore, SymbolKind};
 pub(crate) use super::pilout_core::bad;
@@ -17,10 +17,6 @@ const MAX_SLOTS: usize = 1 << 24;
 
 fn overflow(what: impl Into<String>) -> PiloutError {
     PiloutError::Overflow { what: what.into() }
-}
-
-pub(crate) fn const_of(be: &[u8]) -> Expr {
-    Expr::Const(BigUint::from_bytes_be(be))
 }
 
 fn refs_of(e: &Expr) -> Vec<u32> {
@@ -336,7 +332,7 @@ fn columns<'a>(
     let mut out = Vec::new();
     for s in symbols {
         let stage = stage(s)?;
-        let dim = if stage <= 1 { 1 } else { field.ext_dim() as u32 };
+        let dim = col_dim(stage, field.ext_dim()) as u32;
         let n = symbol_len(s);
         let fits = |x: usize| x.saturating_add(n) <= MAX_SLOTS;
         within(fits(s.id as usize) && fits(out.len()), s.id as usize, "columns past the ingestion limit")?;
@@ -349,12 +345,18 @@ fn columns<'a>(
     Ok(out)
 }
 
-fn declared_stage(s: &pc::Symbol) -> Result<u32, PiloutError> {
+/// A proof value's stage. The proto leaves it optional and a proof value lives in stage 1 only (the setup refuses
+/// any other), so an absent stage is stage 1; the compiler writes it explicitly for every example and ZisK pilout.
+pub(crate) fn proof_value_stage(s: &pc::Symbol) -> u32 {
+    s.stage.unwrap_or(1)
+}
+
+pub(crate) fn declared_stage(s: &pc::Symbol) -> Result<u32, PiloutError> {
     s.stage.ok_or_else(|| PiloutError::MissingStage { symbol: s.name.clone() })
 }
 
 /// `mk(symbol, cell)` of `symbols` (arrays expanded) placed at their ids; a hole is an error.
-fn named<'a, T: Clone>(
+pub(crate) fn named<'a, T: Clone>(
     symbols: impl Iterator<Item = &'a pc::Symbol>,
     mk: impl Fn(&pc::Symbol, usize) -> Result<T, PiloutError>,
 ) -> Result<Vec<T>, PiloutError> {
@@ -367,8 +369,30 @@ fn named<'a, T: Clone>(
     v.into_iter().enumerate().map(|(i, x)| x.ok_or_else(|| bad(i, "a value with no symbol"))).collect()
 }
 
-fn global(core: &PiloutCore, kind: SymbolKind) -> impl Iterator<Item = &pc::Symbol> {
+pub(crate) fn global(core: &PiloutCore, kind: SymbolKind) -> impl Iterator<Item = &pc::Symbol> {
     core.symbols.iter().filter(move |s| s.kind == kind)
+}
+
+/// `(stage, id)` cells (stage 1-based) name each id `0..declared[stage-1]` exactly once.
+fn check_count(what: &'static str, declared: &[u32], cells: &[(u32, u32)]) -> Result<(), PiloutError> {
+    let mut seen: Vec<Vec<bool>> = declared.iter().map(|&n| vec![false; n as usize]).collect();
+    let mut ok = true;
+    for &(stage, id) in cells {
+        match (stage as usize).checked_sub(1).and_then(|s| seen.get_mut(s)).and_then(|v| v.get_mut(id as usize)) {
+            Some(slot) if !*slot => *slot = true,
+            _ => ok = false,
+        }
+    }
+    if ok && seen.iter().flatten().all(|&b| b) {
+        return Ok(());
+    }
+    let mut named = vec![0u32; declared.len()];
+    cells.iter().filter_map(|&(s, _)| (s as usize).checked_sub(1)).for_each(|s| {
+        if let Some(n) = named.get_mut(s) {
+            *n += 1;
+        }
+    });
+    Err(PiloutError::SymbolCount { what, declared: declared.to_vec(), named })
 }
 
 /// Pairs the declared stages with the symbol cells; a symbol past the table is an error, a trailing unnamed value gets "".
@@ -376,6 +400,18 @@ fn staged(cells: Vec<(String, Lengths)>, stages: &[u32]) -> Result<Vec<NamedValu
     within(cells.len() <= stages.len(), 0, "a value symbol beyond the declared values")?;
     let at = |i: usize| cells.get(i).cloned().unwrap_or_default();
     Ok(stages.iter().enumerate().map(|(i, st)| NamedValue { name: at(i).0, stage: *st, lengths: at(i).1 }).collect())
+}
+
+/// The pilout-wide tables, the airgroup values and the air (`airgroup`, `air`) of `pilout`.
+fn air_inputs(
+    pilout: &pb::PilOut,
+    airgroup: usize,
+    air: usize,
+) -> Result<(PiloutCore, Vec<AirGroupValue>, pc::Air), PiloutError> {
+    let unknown = PiloutError::UnknownAir { airgroup, air };
+    let ag = pilout.air_groups.get(airgroup).ok_or(unknown.clone())?;
+    let a = pc::air_of(ag.airs.get(air).ok_or(unknown)?, airgroup, air)?;
+    Ok((PiloutCore::globals_of(pilout)?, pc::air_group_values(ag)?, a))
 }
 
 /// Lowers air (`airgroup`, `air`) of `pilout`: `from_pilout_core` over that air and `from_pb`'s globals.
@@ -386,10 +422,8 @@ pub fn from_pilout(
     field: &FieldCfg,
     opening: Opening,
 ) -> Result<ConstraintSystem, PiloutError> {
-    let unknown = PiloutError::UnknownAir { airgroup, air };
-    let ag = pilout.air_groups.get(airgroup).ok_or(unknown.clone())?;
-    let a = pc::air_of(ag.airs.get(air).ok_or(unknown)?, airgroup, air)?;
-    lower(&PiloutCore::globals_of(pilout)?, &pc::air_group_values(ag)?, &a, airgroup, air, field, opening)
+    let (core, agvs, a) = air_inputs(pilout, airgroup, air)?;
+    lower(&core, &agvs, &a, airgroup, air, field, opening)
 }
 
 /// Lowers air (`airgroup`, `air`) of `core`.
@@ -452,11 +486,7 @@ fn pilout_expr_ids(
     airgroup: usize,
     air: usize,
 ) -> Result<Vec<crate::core::ir::ExprId>, PiloutError> {
-    let unknown = PiloutError::UnknownAir { airgroup, air };
-    let core = PiloutCore::globals_of(pilout)?;
-    let ag = pilout.air_groups.get(airgroup).ok_or(unknown.clone())?;
-    let a = pc::air_of(ag.airs.get(air).ok_or(unknown)?, airgroup, air)?;
-    let agvs = pc::air_group_values(ag)?;
+    let (core, agvs, a) = air_inputs(pilout, airgroup, air)?;
     check_limits(&core, &a)?;
     Ok(numbered_exprs(&a, &tables_of(&core, &agvs, &a))?.1)
 }
@@ -525,9 +555,17 @@ fn lower(
     let challenges = global(core, SymbolKind::Challenge)
         .map(|s| Ok((declared_stage(s)?, s.id, s.name.clone())))
         .collect::<Result<Vec<_>, PiloutError>>()?;
+    // ids are counted per stage downstream: every declared slot named exactly once
+    let witness_ids = (witness.iter().map(|c| Ok((c.stage, c.id - stage_base(&a.stage_widths, c.stage)?))))
+        .collect::<Result<Vec<_>, PiloutError>>()?;
+    check_count("witness columns per stage", &a.stage_widths, &witness_ids)?;
+    let fixed_ids: Vec<(u32, u32)> = fixed.iter().map(|c| (1, c.id)).collect();
+    check_count("fixed columns", &[a.n_fixed_cols], &fixed_ids)?;
+    let challenge_ids: Vec<(u32, u32)> = challenges.iter().map(|c| (c.0, c.1)).collect();
+    check_count("challenges per stage", &core.num_challenges, &challenge_ids)?;
     let proof_values = named(global(core, SymbolKind::ProofValue), |s, k| {
         let (name, lengths) = cell(s, k);
-        Ok(NamedValue { name, stage: declared_stage(s)?, lengths })
+        Ok(NamedValue { name, stage: proof_value_stage(s), lengths })
     })?;
     let hints = core
         .hints

@@ -2,7 +2,7 @@ use pil2_stark_setup::output::stark_info::solve_low_degree_test;
 use pil2_stark_setup::proving_key::recursive::{recursive_stark_settings, RecursiveTemplate};
 use proofman_common::hash_family::HashFamily;
 use pil2_stark_setup::types::security::check::exact::{inv_sqrt_rate_upper, sqrt_rate_upper, ExactRegime, Rational};
-use pil2_stark_setup::types::security::check::{check_low_degree_test, report_low_degree_test, SecurityError};
+use pil2_stark_setup::types::security::check::{check_low_degree_test, SecurityError};
 use pil2_stark_setup::types::security::pcs::{LowDegreeTest as Solved, Pcs};
 use pil2_stark_setup::types::security::regimes::DecodingRegime;
 use pil2_stark_setup::types::stark_struct::{
@@ -53,6 +53,7 @@ fn exact_agrees_with_float_on_todays_configs() {
         let exact = report.min_bits_floor as i64;
         assert!((exact - float).abs() <= 2, "{name}: exact {exact} vs float {float}");
         assert!(exact >= 128, "{name}: {exact}");
+        assert!(report.summary().starts_with("security: BCHKS25 ") && !report.weakest_phase.is_empty());
         n += 1;
     }
     assert!(n >= 20, "only {n} configs were solvable");
@@ -74,10 +75,6 @@ fn broken_schedule_rejected() {
             f(&mut bad);
             matches!(check_low_degree_test(&bad, &ldt, 200), Err(SecurityError::Schedule(_)))
         };
-        let degrees = |s: &mut StarkStruct| match &mut s.low_degree_test {
-            LowDegreeTest::Fri(f) => f.log_degrees.clone(),
-            LowDegreeTest::Stir(f) => f.log_degrees.clone(),
-        };
         // wrong folding step: a degree that does not follow from its folding factor
         assert!(mutate(&|s| match &mut s.low_degree_test {
             LowDegreeTest::Fri(f) => f.log_degrees[1] += 1,
@@ -98,8 +95,6 @@ fn broken_schedule_rejected() {
             LowDegreeTest::Fri(f) => f.folding_factors[0] += 1,
             LowDegreeTest::Stir(f) => f.folding_factors[0] += 1,
         }));
-        let mut probe = ss.clone();
-        assert!(!degrees(&mut probe).is_empty());
     }
 }
 
@@ -149,12 +144,4 @@ fn rounding_is_against_the_prover() {
     let exact3 = ExactRegime::Jbr { eta: Rational::from_f64(eta) }.error_linear(3, 1 << 10, &q);
     let float3 = DecodingRegime::Jbr.instantiate(q.to_f64(), 0.0).error_linear(&0.125, 1 << 10);
     assert!((exact3 * q.clone()).to_f64() >= float3 * q.to_f64() * (1.0 - 1e-9));
-}
-
-#[test]
-fn report_lists_both_bounds_fields() {
-    let (ss, ldt) = solved(LowDegreeTestKind::Fri);
-    let r = report_low_degree_test(&ss, &ldt, 200).unwrap();
-    assert!(r.summary().starts_with("security: BCHKS25 "));
-    assert!(r.min_bits_floor >= 128 && !r.weakest_phase.is_empty());
 }

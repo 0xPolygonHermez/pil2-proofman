@@ -11,7 +11,7 @@ use pil_info::core::layout::{layout, LayoutParams};
 use pil_info::core::openings::openings;
 use pil_info::emit::verifier::{expression_code, lower_ctx};
 use pil_info::search::im::search_im;
-use pil_info::{PilInfoCfg, PilInfoResult};
+use pil_info::{PilInfoCfg, ShplonkResult};
 
 mod common;
 use common::*;
@@ -37,16 +37,16 @@ fn cfg() -> PilInfoCfg {
     PilInfoCfg::bn128()
 }
 
-fn run(p: &pb::PilOut) -> PilInfoResult {
+fn run(p: &pb::PilOut) -> ShplonkResult {
     pil_info::shplonk_info(p, 0, 0, &cfg(), &Default::default()).unwrap()
 }
 
-fn boundaries(r: &PilInfoResult) -> Vec<DagBoundary> {
+fn boundaries(r: &ShplonkResult) -> Vec<DagBoundary> {
     r.boundaries.iter().map(dag_boundary).collect()
 }
 
 /// The core's DAG and lowering context of the air, with the search's im choice.
-fn dag_and_ctx(p: &pb::PilOut, r: &PilInfoResult) -> (ConstraintDag, LowerCtx) {
+fn dag_and_ctx(p: &pb::PilOut, r: &ShplonkResult) -> (ConstraintDag, LowerCtx) {
     let c = cfg();
     let cs = from_pilout(p, 0, 0, &c.field, c.opening).unwrap();
     let set = search_im(&cs, &c.degree_policy, 1).unwrap();

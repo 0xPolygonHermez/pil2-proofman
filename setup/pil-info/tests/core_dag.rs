@@ -182,20 +182,55 @@ fn every_dag_validates_on_real_pilouts() {
     assert!(airs > 0, "no air built");
 }
 
-/// 64 levels of `x_{k+1} = x_k + x_k`: inlining would be 2^64 nodes, the memoised walk is linear.
+/// 64 levels of `x_{k+1} = x_k + x_k`: inlining would be 2^64 nodes; every pass (tables, degree check and search,
+/// layout and openings, DAG, arena) is memoised and stays linear.
 #[test]
-fn doubling_chain_is_not_inlined() {
-    let mut e = vec![mul(witness(0, 0), witness(1, 0))];
+fn every_pass_is_linear_on_a_doubling_chain() {
+    use num_bigint::BigUint;
+    use pil_info::core::im::check_im;
+    use pil_info::core::ir::{degree_table, dim_table, eval_table, Env, Expr, Hint, HintField, HintValue};
+    use pil_info::core::layout::{layout, LayoutParams};
+    use pil_info::core::openings::openings;
+    use pil_info::emit::prover::to_arena;
+    use pil_info::expr::expression::{ExprChild, Expression};
+
+    let mut e = vec![mul(witness(0, 1), witness(1, 0))];
     for k in 0..64 {
         e.push(add(exp(k), exp(k)));
     }
     e.push(mul(exp(64), exp(0)));
     let cs = system(e, &[65]);
+    let t = std::time::Instant::now();
+    let mut env = Env::default();
+    env.cols.insert(ColRef { col: ColType::Witness, commit_id: None, id: 0, offset: 1 }, BigUint::from(3u32));
+    env.cols.insert(ColRef { col: ColType::Witness, commit_id: None, id: 1, offset: 0 }, BigUint::from(5u32));
+    let (dg, dm, ev) = (degree_table(&cs).unwrap(), dim_table(&cs).unwrap(), eval_table(&cs, &env).unwrap());
+    assert_eq!((dg[64], dm[64]), (2, 1));
+    assert_eq!(ev[64], (BigUint::from(15u32) << 64usize) % cs.field.modulus());
+    assert_eq!(check_im(&cs, &choice(&[]), 4, true).unwrap().root_degrees, vec![4]);
+    assert_eq!(check_im(&cs, &choice(&[64]), 3, true).unwrap().im_degrees, vec![2]);
+    let set = search_im(&cs, &DegreePolicy::FromBlowup { blowup_bits: 1 }, 1).unwrap();
+    check_im(&cs, &im_order(&cs, &set).unwrap(), 3, true).unwrap();
+    let mut hinted = cs.clone();
+    hinted
+        .hints
+        .push(Hint { name: "h".into(), fields: vec![HintField { name: None, value: HintValue::Expr(Expr::Ref(64)) }] });
     for im in [choice(&[]), choice(&[32]), choice(&[64])] {
         let d = build_dag(&cs, &im).unwrap();
         assert!(d.nodes.len() < 200, "{} nodes", d.nodes.len());
         d.validate(&gl()).unwrap();
+        let params = LayoutParams { im_pols_stages: false, deep_challenges: true, q_deg: 1, air_name: "S".into() };
+        let lay = layout(&cs, &im, &params).unwrap();
+        assert_eq!(openings(&cs, &im, &lay).unwrap().opening_points, [0, 1]);
+        assert_eq!(openings(&hinted, &im, &lay).unwrap().opening_points, [0, 1]);
+        let a = to_arena(&cs, &im, &lay).unwrap();
+        assert!(a.arena.len() < cs.exprs.len() + 8 * (im.exprs.len() + 2), "arena {} nodes", a.arena.len());
+        fn nodes(e: &Expression) -> usize {
+            1 + e.values.iter().map(|c| if let ExprChild::Inline(x) = c { nodes(x) } else { 1 }).sum::<usize>()
+        }
+        assert!(a.arena.iter().map(nodes).sum::<usize>() < 100_000);
     }
+    assert!(t.elapsed().as_secs() < 2, "{:?}", t.elapsed());
 }
 
 // ---- lowering ---------------------------------------------------------------------------------

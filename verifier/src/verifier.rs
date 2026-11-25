@@ -21,7 +21,8 @@ pub struct VerifierInfo {
     pub n_fri_queries: u64,
     pub n_fri_steps: u64,
     pub n_challenges: u64,
-    /// `challengesMap` positions of vf1 and vf2 (the DEEP batching challenges).
+    /// `challengesMap` positions of xi (the DEEP point) and of vf1, vf2 (the DEEP batching challenges).
+    pub xi_idx: u64,
     pub vf1_idx: u64,
     pub vf2_idx: u64,
     pub n_challenges_total: u64,
@@ -509,7 +510,7 @@ where
     }
     let fri_queries = fri.queries;
 
-    let xi_challenge = challenges[verifier_info.n_challenges as usize - 3];
+    let xi_challenge = challenges[verifier_info.xi_idx as usize];
 
     let xdivxsub = match deep_denominators_inv(
         &fri_queries[..n_queries.min(fri_queries.len())],
@@ -766,6 +767,7 @@ mod tests {
             n_fri_queries: 0,
             n_fri_steps: 1,
             n_challenges: 6,
+            xi_idx: 3,
             vf1_idx: 4,
             vf2_idx: 5,
             n_challenges_total: 12,
