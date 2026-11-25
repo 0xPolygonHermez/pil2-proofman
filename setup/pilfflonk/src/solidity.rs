@@ -2,17 +2,18 @@
 //! (pilfflonk/docs/verifier.md#solidity-verifier), which `setup-pilfflonk --solidity` writes next
 //! to `pilfflonk.vkey.json` and `proofman-setup pilfflonk-solidity` writes from a vkey alone.
 //!
-//! The template, `tera/verifier_pilfflonk.sol.tera`, is rendered with `tera` as the STARK's Solidity
-//! and circom templates are (`setup/stark-recurser/stark2circom/circuit_templates/templates.rs`:
-//! `include_str!` and one `render`). It is snarkjs 0.7.6's fflonk verifier
-//! (`templates/verifier_fflonk.sol.ejs`) generalised as the JS verifier
-//! (`pilfflonk/js/src/verify.js`, pilfflonk/docs/verifier.md#js-verifier) generalises snarkjs's
-//! `fflonk_verify.js`, and it accepts exactly the proofs the JS verifier accepts. This module
-//! computes what the template takes from the vkey:
+//! The contract is static, `sol/verifier_pilfflonk.sol` (`include_str!`), but for its
+//! `// @generated <part>` lines, which this module replaces with what it computes from the vkey. It is
+//! snarkjs 0.7.6's fflonk verifier (`templates/verifier_fflonk.sol.ejs`) generalised as the JS
+//! verifier (`pilfflonk/js/src/verify.js`, pilfflonk/docs/verifier.md#js-verifier) generalises
+//! snarkjs's `fflonk_verify.js`, and it accepts exactly the proofs the JS verifier accepts. The
+//! parts:
 //! - the constants: `[τ]₂`, the fixed commitments, `digest mod r` and the roots of unity;
 //! - where each value is in the calldata ([`CalldataLayout`]) and in memory;
 //! - the transcript (`challenges.js`, pilfflonk/docs/protocol.md#transcript) and the vkey's
-//!   `qVerifier` (`qverifier.js`), as straight-line Yul.
+//!   `qVerifier` (`qverifier.js`), as straight-line Yul;
+//! - the steps over the vkey's layout (the `f_i`, their roots and boundaries), unrolled into
+//!   straight-line Yul as snarkjs unrolls them: a loop over a table would cost gas.
 //!
 //! **Calldata.** `verifyProof(bytes32[W] calldata proof, uint256[P] calldata pubSignals)`, as
 //! snarkjs's `FflonkVerifier`, with `P = nPublic` (no `pubSignals` if it is 0) and `W` the words of
@@ -34,9 +35,7 @@ use proofman_pilfflonk::calldata::SELECTOR_BYTES;
 use proofman_pilfflonk::field::r;
 use proofman_pilfflonk::names::evaluation_name;
 use proofman_pilfflonk::{Boundary, CalldataLayout, FrBytes, JsonFile, PolType, Vkey};
-use serde::Serialize;
 use serde_json::Value;
-use tera::{Context as TeraContext, Tera};
 
 use crate::error::SetupError;
 
@@ -44,8 +43,9 @@ use crate::error::SetupError;
 /// (pilfflonk/docs/formats.md#provingkey).
 pub const VERIFIER_SOL_FILE: &str = "pilfflonk.verifier.sol";
 
-/// The template (see the module).
-const VERIFIER_TEMPLATE: &str = include_str!("tera/verifier_pilfflonk.sol.tera");
+/// The static contract (see the module), whose `// @generated <part>` lines [`Context::contract`]
+/// replaces.
+const VERIFIER_SOL: &str = include_str!("sol/verifier_pilfflonk.sol");
 
 /// Bytes of a word of the calldata and of the memory.
 const WORD: u64 = 32;
@@ -116,7 +116,6 @@ struct Memory {
     slots: Vec<Slot>,
 }
 
-#[derive(Serialize)]
 struct Slot {
     name: String,
     offset: u64,
@@ -140,10 +139,9 @@ fn sanitize(text: &str) -> String {
 }
 
 // ---------------------------------------------------------------------------------------------
-// The template's context
+// What the contract takes from the vkey
 // ---------------------------------------------------------------------------------------------
 
-#[derive(Serialize)]
 struct Context {
     digest: String,
     digest_fr: String,
@@ -186,7 +184,6 @@ struct Context {
     n_inv_zt: u64,
 }
 
-#[derive(Serialize)]
 struct FixedCommitment {
     index: usize,
     x: String,
@@ -194,7 +191,6 @@ struct FixedCommitment {
 }
 
 /// `Zi(D)` at `ξ` for a boundary `D` (`qverifier.js`, `computeZi`).
-#[derive(Serialize)]
 struct Zi {
     index: usize,
     kind: &'static str,
@@ -208,7 +204,6 @@ struct Zi {
 }
 
 /// `Σ_i ξ^(i·M·N)·Q_i(ξ) = Q(ξ)` (`qverifier.js`, `joinQPieces`).
-#[derive(Serialize)]
 struct QSplit {
     max_q_degree: u64,
     /// The calldata constants of the pieces, from `Q_{m−1}` down to `Q_0`: Horner's order.
@@ -216,7 +211,6 @@ struct QSplit {
 }
 
 /// The power of `y` each `k` needs: `y^k`, with which `Z_T(y) = Π_s (y^k − z_s)`.
-#[derive(Serialize)]
 struct KPowers {
     k: u64,
     p_yk: String,
@@ -224,9 +218,7 @@ struct KPowers {
 
 /// The offsets of the `f_i` of one `(k, offsets)`, which every `f_i` of that shape shares: its
 /// `z_s = ξ·ω_N^s`, `Z_T(y)` and, with several offsets, the CRT factor of each offset.
-#[derive(Serialize)]
 struct RootSet {
-    index: usize,
     k: u64,
     offsets: String,
     p_yk: String,
@@ -237,9 +229,7 @@ struct RootSet {
 }
 
 /// One offset `s` of a root set.
-#[derive(Serialize)]
 struct RootRow {
-    s: i64,
     /// `ω_N^s`, `None` for `s = 0`.
     omega_n_s: Option<String>,
     z: String,
@@ -252,7 +242,6 @@ struct RootRow {
 }
 
 /// One `f_i` of the layout, in the global order (pilfflonk/docs/protocol.md#global-order).
-#[derive(Serialize)]
 struct F {
     index: usize,
     stage: u64,
@@ -271,7 +260,6 @@ struct F {
 
 /// An offset of an `f_i`: the evaluations `p_j(ξ·ω^s)` of `R_s(X) = Σ_j p_j(ξ·ω^s)·X^j`, which is
 /// `f_i` on the roots of the offset, and with several offsets its CRT factor.
-#[derive(Serialize)]
 struct FRow {
     /// Horner's: `p_{k−1}` first, then `p_{k−2} … p_0`.
     horner_first: String,
@@ -280,7 +268,6 @@ struct FRow {
 }
 
 /// `ξ^(−(t−1))` of a number `t ≥ 2` of offsets, from `ξ^(−E)`: times `ξ^(E − (t−1))`.
-#[derive(Serialize)]
 struct XiNeg {
     p: String,
     exponent: u64,
@@ -713,7 +700,7 @@ impl Context {
             let k_pow_k = fr_pow(&BigUint::from(k), k);
             let mut c = BigUint::from(1u32);
             let mut rows = Vec::with_capacity(f.offsets.len());
-            for (m, &s) in f.offsets.iter().enumerate() {
+            for m in 0..f.offsets.len() {
                 // prod_{s' != s} (w^s - w^s')
                 let diff = omegas
                     .iter()
@@ -722,7 +709,6 @@ impl Context {
                     .fold(BigUint::from(1u32), |acc, (_, w)| acc * ((&omegas[m] + r() - w) % r()) % r());
                 c = c * &sigma % r() * &k_pow_k % r() * fr_pow(&omegas[m], k - 1) % r() * fr_pow(&diff, k) % r();
                 rows.push(RootRow {
-                    s,
                     omega_n_s: (omegas[m] != BigUint::from(1u32)).then(|| omegas[m].to_str_radix(10)),
                     z: at(&p_z, WORD * m as u64),
                     other_z: (0..t).filter(|&l| l != m as u64).map(|l| at(&p_z, WORD * l)).collect(),
@@ -732,7 +718,6 @@ impl Context {
             }
             set_consts.push((c, t * (k - 1) + k * t * (t - 1)));
             root_sets.push(RootSet {
-                index,
                 k,
                 offsets: offsets_text(&f.offsets),
                 p_yk: k_powers[&k].p_yk.clone(),
@@ -943,23 +928,363 @@ impl Context {
     }
 }
 
-/// Renders a one-shot template, as `templates.rs` of the STARK's does.
-fn render(template: &str, context: &TeraContext) -> Result<String, SetupError> {
-    let mut tera = Tera::default();
-    // Solidity, not HTML: nothing is escaped.
-    tera.autoescape_on(vec![]);
-    let error = |e: tera::Error| {
-        let mut message = e.to_string();
-        let mut source = std::error::Error::source(&e);
-        while let Some(s) = source {
-            message.push_str(&format!(": {s}"));
-            source = s.source();
+// ---------------------------------------------------------------------------------------------
+// The generated parts of the contract
+// ---------------------------------------------------------------------------------------------
+
+/// Lines of the contract, each indented `indent` spaces.
+struct Lines {
+    indent: usize,
+    out: String,
+}
+
+impl Lines {
+    fn new(indent: usize) -> Self {
+        Lines { indent, out: String::new() }
+    }
+
+    fn line(&mut self, text: impl AsRef<str>) {
+        let text = text.as_ref();
+        if !text.is_empty() {
+            self.out.extend(std::iter::repeat_n(' ', self.indent));
+            self.out.push_str(text);
         }
-        SetupError::Solidity(format!("the template: {message}"))
-    };
-    tera.add_raw_template("verifier_pilfflonk.sol", template).map_err(error)?;
-    // The template starts with a comment of its own.
-    Ok(tera.render("verifier_pilfflonk.sol", context).map_err(error)?.trim_start().to_string())
+        self.out.push('\n');
+    }
+
+    /// The lines of `body` one level (4 spaces) deeper, in `{ }`.
+    fn block(&mut self, body: impl FnOnce(&mut Lines)) {
+        self.line("{");
+        self.indent += 4;
+        body(self);
+        self.indent -= 4;
+        self.line("}");
+    }
+
+    fn done(self) -> String {
+        self.out
+    }
+}
+
+/// `y^k − z`, with `y^k` at `p_yk` and `z` at `z`.
+fn y_minus(p_yk: &str, z: &str) -> String {
+    format!("addmod(mload({p_yk}), sub(q, mload({z})), q)")
+}
+
+/// The Horner evaluation at `y` of one offset of an `f_i`, into `v`.
+fn horner(l: &mut Lines, row: &FRow) {
+    l.line(format!("v := {}", row.horner_first));
+    for e in &row.horner_rest {
+        l.line(format!("v := addmod(mulmod(v, y, q), {e}, q)"));
+    }
+}
+
+impl Context {
+    /// The vkey's constants, inside the contract.
+    fn constants(&self) -> String {
+        let mut l = Lines::new(4);
+        let aux = self.words - self.proof_words;
+        let aux = if aux > 0 { format!(", then {aux} auxiliary inverses") } else { String::new() };
+        l.line(format!("// The vkey with digest {}: `proof` is {} words{aux}", self.digest, self.proof_words));
+        l.line(format!("uint32 constant n = {}; // Domain size, N = 2^{}", self.n, self.power));
+        l.line(format!("uint256 constant powerW = {}; // xi = xiSeed^powerW", self.power_w));
+        l.line("");
+        l.line("// Verifier preprocessed input x·[1]_2: the vkey's X_2, [tau]_2");
+        let x2 = &self.x2;
+        for (name, v) in [("X2x1", &x2[0][0]), ("X2x2", &x2[0][1]), ("X2y1", &x2[1][0]), ("X2y2", &x2[1][1])] {
+            l.line(format!("uint256 constant {name} = {v};"));
+        }
+        l.line("");
+        l.line("// The vkey's digest mod r, the first value of the transcript");
+        l.line(format!("uint256 constant DIGEST = {};", self.digest_fr));
+        if !self.fixed.is_empty() {
+            l.line("");
+            l.line("// The commitments of the fixed f_i, the vkey's: never the proof's");
+            for f in &self.fixed {
+                l.line(format!("uint256 constant f{}x = {};", f.index, f.x));
+                l.line(format!("uint256 constant f{}y = {};", f.index, f.y));
+            }
+        }
+        l.line("");
+        l.line("// Proof calldata: the byte offset of every value (proof.rs, Proof::to_bytes)");
+        for s in &self.calldata {
+            l.line(format!("uint256 constant {} = {}; // {}", s.name, s.offset, s.comment));
+        }
+        l.line("// Where the publics are, the unnamed `uint256[]` (pubSignals)");
+        l.line(format!("uint256 constant pPublic = {};", self.p_public));
+        l.line("");
+        l.line("// Memory data, at absolute addresses from 0x80 (solidity.rs, MEM_BASE)");
+        for s in &self.memory {
+            l.line(format!("uint256 constant {} = {}; // {}", s.name, s.offset, s.comment));
+        }
+        l.line(format!("uint256 constant lastMem = {};", self.last_mem));
+        l.done()
+    }
+
+    /// `verifyProof`'s line: the ABI of the vkey (no `pubSignals` without publics).
+    fn signature(&self) -> String {
+        let publics = if self.n_public > 0 { format!(", uint256[{}] calldata", self.n_public) } else { String::new() };
+        format!("    function verifyProof(bytes32[{}] calldata{publics}) public view returns (bool) {{\n", self.words)
+    }
+
+    fn check_input(&self) -> String {
+        let mut l = Lines::new(16);
+        for p in &self.check_points {
+            l.line(format!("checkPointBelongsToBN128Curve({p})"));
+        }
+        l.line("// Those the transcript absorbs: the commitments and W (challenges.js).");
+        for p in &self.check_absorbed {
+            l.line(format!("checkAbsorbed({p})"));
+        }
+        l.line("let r := q");
+        l.line("let bad := 0");
+        for p in &self.check_scalars {
+            l.line(format!("bad := or(bad, iszero(lt(calldataload({p}), r)))"));
+        }
+        l.line("checkFields(bad)");
+        l.done()
+    }
+
+    fn compute_challenges(&self) -> String {
+        let mut l = Lines::new(16);
+        self.transcript.iter().for_each(|t| l.line(t));
+        l.done()
+    }
+
+    /// `xi^N`: `power` squarings of `xin`.
+    fn compute_zh(&self) -> String {
+        let mut l = Lines::new(16);
+        (0..self.power).for_each(|_| l.line("xin := mulmod(xin, xin, q)"));
+        l.done()
+    }
+
+    fn compute_zi(&self) -> String {
+        let mut l = Lines::new(16);
+        for b in &self.zi {
+            l.line(format!("// boundaries[{}], {}: {}", b.index, b.kind, b.comment));
+            match (&b.aux, &b.neg_root) {
+                _ if b.kind == "everyRow" => l.line(format!("mstore({}, calldataload(pInvZh))", b.slot)),
+                (Some(aux), Some(neg_root)) => l.block(|l| {
+                    l.line("// The calldata's 1/(xi - w^j), checked as inv is.");
+                    l.line(format!("let a := calldataload({aux})"));
+                    l.line(format!("if iszero(eq(mulmod(addmod(xi, {neg_root}, q), a, q), 1)) {{"));
+                    l.line("    fail()");
+                    l.line("}");
+                    l.line(format!("mstore({}, mulmod(zh, a, q))", b.slot));
+                }),
+                _ => l.block(|l| {
+                    l.line("let z := 1");
+                    for neg in &b.neg_rows {
+                        l.line(format!("z := mulmod(z, addmod(xi, {neg}, q), q)"));
+                    }
+                    l.line(format!("mstore({}, z)", b.slot));
+                }),
+            }
+        }
+        l.done()
+    }
+
+    fn compute_q(&self) -> String {
+        let mut l = Lines::new(16);
+        self.q_code.iter().for_each(|t| l.line(t));
+        l.done()
+    }
+
+    /// The function `checkQPieces` of a split `Q`, and its call; nothing for a whole `Q`.
+    fn check_q_pieces(&self) -> (String, String) {
+        let Some(split) = &self.q_split else {
+            return (String::new(), String::new());
+        };
+        let mut l = Lines::new(12);
+        l.line(format!("// STEP 5 (verify.js): Q is split in pieces of M = {}, and", split.max_q_degree));
+        l.line("// sum_i xi^(i·M·N)·Q_i(xi) = Q(xi) (qverifier.js, joinQPieces).");
+        l.line("function checkQPieces() {");
+        l.line(format!("    let shift := powMod(mload(pXiN), {})", split.max_q_degree));
+        l.line("    let acc := 0");
+        for p in &split.pieces_desc {
+            l.line(format!("    acc := addmod(mulmod(acc, shift, q), calldataload({p}), q)"));
+        }
+        l.line("    if iszero(eq(acc, mload(pQ))) {");
+        l.line("        fail()");
+        l.line("    }");
+        l.line("}");
+        (l.done(), "            checkQPieces()\n".to_string())
+    }
+
+    fn compute_z(&self) -> String {
+        let mut l = Lines::new(16);
+        for k in &self.ks {
+            let yk = if k.k == 1 { "y".to_string() } else { format!("powMod(y, {})", k.k) };
+            l.line(format!("mstore({}, {yk})", k.p_yk));
+        }
+        for set in &self.root_sets {
+            l.line(format!("// k = {}, offsets {}", set.k, set.offsets));
+            for row in &set.rows {
+                let z = row.omega_n_s.as_ref().map_or("xi".to_string(), |w| format!("mulmod(xi, {w}, q)"));
+                l.line(format!("mstore({}, {z})", row.z));
+            }
+        }
+        l.done()
+    }
+
+    fn compute_inversions(&self) -> String {
+        let mut l = Lines::new(16);
+        for set in &self.root_sets {
+            l.line(format!("// k = {}, offsets {}", set.k, set.offsets));
+            l.line("d := 1");
+            for row in &set.rows {
+                l.line(format!("d := mulmod(d, {}, q)", y_minus(&set.p_yk, &row.z)));
+            }
+            l.line("// shplonk.js, verifyOpening: y is not a root of an f_i (inv·A·B = 1 checks it too).");
+            l.line("if iszero(d) {");
+            l.line("    fail()");
+            l.line("}");
+            l.line(format!("mstore({}, d)", set.p_zt));
+        }
+        l.line("let a := 1");
+        for f in &self.fs {
+            if let Some(p_inv_zt) = &f.p_inv_zt {
+                l.line(format!("d := mload({})", f.p_zt));
+                l.line(format!("mstore({p_inv_zt}, d)"));
+                l.line("a := mulmod(a, d, q)");
+            }
+        }
+        l.line(format!("let zts := mulmod(a, mload({}), q)", self.fs[0].p_zt));
+        let g = &self.g;
+        let b = if self.e > 0 { format!("mulmod({g}, powMod(mload(pXi), {}), q)", self.e) } else { g.clone() };
+        l.line(format!("let b := mulmod(zts, {b}, q)"));
+        l.line("let invB := mulmod(calldataload(pInv), a, q)");
+        l.line("checkInv(invB, b)");
+        if self.n_inv_zt > 0 {
+            l.line(format!("batchInverse(pInvZt1, {}, mulmod(calldataload(pInv), b, q))", self.n_inv_zt));
+        }
+        if !self.xi_negs.is_empty() {
+            l.line(format!("let xiNegE := mulmod(invB, mulmod({g}, zts, q), q)"));
+            for x in &self.xi_negs {
+                let v = if x.exponent > 0 {
+                    format!("mulmod(xiNegE, powMod(mload(pXi), {}), q)", x.exponent)
+                } else {
+                    "xiNegE".to_string()
+                };
+                l.line(format!("mstore({}, {v})", x.p));
+            }
+            for set in &self.root_sets {
+                let Some(p_xi_neg) = &set.p_xi_neg else { continue };
+                l.line(format!(
+                    "// k = {}, offsets {}: L_s = prod_{{s' != s}} (y^k - z_s')/(z_s - z_s')",
+                    set.k, set.offsets
+                ));
+                for row in &set.rows {
+                    l.line(format!("d := mulmod({}, mload({p_xi_neg}), q)", row.d));
+                    for z in &row.other_z {
+                        l.line(format!("d := mulmod(d, {}, q)", y_minus(&set.p_yk, z)));
+                    }
+                    l.line(format!("mstore({}, d)", row.p_l.as_deref().unwrap_or_default()));
+                }
+            }
+        }
+        l.done()
+    }
+
+    fn compute_r(&self) -> String {
+        let mut l = Lines::new(16);
+        for f in &self.fs {
+            l.line(format!("// f{}: stage {}, k = {}, offsets {}", f.index, f.stage, f.k, f.offsets));
+            if let [row] = f.rows.as_slice() {
+                horner(&mut l, row);
+                l.line(format!("mstore({}, v)", f.p_r));
+            } else {
+                l.block(|l| {
+                    l.line("let acc := 0");
+                    for row in &f.rows {
+                        horner(l, row);
+                        l.line(format!(
+                            "acc := addmod(acc, mulmod(v, mload({}), q), q)",
+                            row.p_l.as_deref().unwrap_or_default()
+                        ));
+                    }
+                    l.line(format!("mstore({}, acc)", f.p_r));
+                });
+            }
+        }
+        l.done()
+    }
+
+    fn compute_fej(&self) -> String {
+        let mut l = Lines::new(16);
+        let f0 = &self.fs[0];
+        l.line(format!("let zt0 := mload({})", f0.p_zt));
+        l.line(format!("let e := mload({})", f0.p_r));
+        if f0.fixed {
+            l.line(format!("mstore(pF, {}x)", f0.commitment));
+            l.line(format!("mstore(add(pF, 32), {}y)", f0.commitment));
+        } else {
+            l.line(format!("calldatacopy(pF, {}, 64)", f0.commitment));
+        }
+        for f in &self.fs[1..] {
+            l.line(format!("// f{}", f.index));
+            l.line("alphaPow := mulmod(alphaPow, alpha, q)");
+            let p_inv_zt = f.p_inv_zt.as_deref().unwrap_or_default();
+            l.line(format!("quotient := mulmod(alphaPow, mulmod(zt0, mload({p_inv_zt}), q), q)"));
+            if f.fixed {
+                l.line(format!("g1_mulAccC(pF, {0}x, {0}y, quotient)", f.commitment));
+            } else {
+                l.line(format!("g1_mulAcc(pF, {}, quotient)", f.commitment));
+            }
+            l.line(format!("e := addmod(e, mulmod(quotient, mload({}), q), q)", f.p_r));
+        }
+        l.done()
+    }
+
+    /// The contract: [`VERIFIER_SOL`] with its parts.
+    fn contract(&self) -> Result<String, SetupError> {
+        let (check_q_pieces, check_q_pieces_call) = self.check_q_pieces();
+        let parts = [
+            ("constants", self.constants()),
+            ("signature", self.signature()),
+            ("checkInput", self.check_input()),
+            ("computeChallenges", self.compute_challenges()),
+            ("computeZh", self.compute_zh()),
+            ("computeZi", self.compute_zi()),
+            ("computeQ", self.compute_q()),
+            ("checkQPieces", check_q_pieces),
+            ("computeZ", self.compute_z()),
+            ("computeInversions", self.compute_inversions()),
+            ("computeR", self.compute_r()),
+            ("computeFEJ", self.compute_fej()),
+            ("checkQPiecesCall", check_q_pieces_call),
+        ];
+        splice(VERIFIER_SOL, &parts)
+    }
+}
+
+/// `src` with each `// @generated <part>` line replaced by that part's text, every part exactly once.
+fn splice(src: &str, parts: &[(&str, String)]) -> Result<String, SetupError> {
+    let mut used = vec![false; parts.len()];
+    let mut out = String::with_capacity(src.len() * 4);
+    // An empty part between blank lines takes the second along.
+    let mut skip_blank = false;
+    for line in src.split_inclusive('\n') {
+        let Some(name) = line.trim().strip_prefix("// @generated ") else {
+            if !(skip_blank && line.trim().is_empty()) {
+                out.push_str(line);
+            }
+            skip_blank = false;
+            continue;
+        };
+        match parts.iter().position(|(n, _)| *n == name) {
+            Some(i) if !used[i] => {
+                used[i] = true;
+                skip_blank = parts[i].1.is_empty() && out.ends_with("\n\n");
+                out.push_str(&parts[i].1);
+            }
+            _ => return fail(format!("the static verifier has an unknown or repeated part {name:?}")),
+        }
+    }
+    if let Some(i) = used.iter().position(|u| !u) {
+        return fail(format!("the static verifier has no part {:?}", parts[i].0));
+    }
+    Ok(out)
 }
 
 /// The Solidity verifier of `vkey` (see the module). Refuses a vkey the verifier would not read and
@@ -972,8 +1297,7 @@ pub fn verifier_sol(vkey: &Vkey) -> Result<String, SetupError> {
              accepts no proof of it",
         );
     }
-    let context = TeraContext::from_serialize(Context::new(vkey)?).map_err(|e| SetupError::Solidity(e.to_string()))?;
-    q_in_memory(&render(VERIFIER_TEMPLATE, &context)?)
+    q_in_memory(&Context::new(vkey)?.contract()?)
 }
 
 /// The memory slot `q` is kept in through `verifyProof`'s assembly: Solidity's zero slot, which the
@@ -986,7 +1310,7 @@ const Q_SLOT: &str = "0x60";
 fn q_in_memory(src: &str) -> Result<String, SetupError> {
     let at = src
         .find("        assembly {\n")
-        .ok_or_else(|| SetupError::Solidity("the verifier template has no `assembly {` block to keep q in".into()))?;
+        .ok_or_else(|| SetupError::Solidity("the static verifier has no `assembly {` block to keep q in".into()))?;
     let (solidity, assembly) = src.split_at(at);
     if !assembly.contains("return(") {
         return Err(SetupError::Solidity(

@@ -174,7 +174,7 @@ fn site_check(function: &str, ordinal: usize) -> Check {
 // The probe
 // ---------------------------------------------------------------------------------------------
 
-/// The steps of the verifier's body, in order (the template's, `verifier_pilfflonk.sol.tera`):
+/// The steps of the verifier's body, in order (the static contract's, `setup/pilfflonk/src/sol/verifier_pilfflonk.sol`):
 /// `checkQPieces` only if `Q` is split.
 pub const STEPS: [&str; 11] = [
     "checkInput",

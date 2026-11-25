@@ -1,29 +1,20 @@
-{#
-    The Solidity verifier of a pilfflonk vkey (pilfflonk/docs/verifier.md#solidity-verifier),
-    rendered by setup/pilfflonk/src/solidity.rs. Its structure is snarkjs 0.7.6's fflonk verifier
-    (templates/verifier_fflonk.sol.ejs): one contract, verifyProof(bytes32[W], uint256[P]), one
-    assembly block of Yul functions, the Montgomery batch inversion with the proof's inv, the
-    precompiles 0x06, 0x07 and 0x08. What snarkjs writes out for its three polynomials C0, C1 and C2
-    is generalised as the JS verifier (pilfflonk/js/src/verify.js,
-    pilfflonk/docs/verifier.md#js-verifier) generalises snarkjs's fflonk_verify.js, and every step
-    names the JS function it does.
--#}
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity >=0.7.0 <0.9.0;
 
 /// @title PilfflonkVerifier
-/// @notice Verifies the pilfflonk proofs of the vkey with digest {{ digest }}: its
-///         pilfflonk.vkey.json, from which `proofman-setup setup-pilfflonk --solidity` or
+/// @notice Verifies the pilfflonk proofs of one vkey (its DIGEST below): its pilfflonk.vkey.json,
+///         from which `proofman-setup setup-pilfflonk --solidity` or
 ///         `proofman-setup pilfflonk-solidity` generated it.
 /// @dev    It accepts exactly the proofs the JS verifier (pilfflonk/js, verify.js) accepts, and its
 ///         steps are the JS's. Calldata: `proof` is the proof's bytes (the commitments of the
 ///         non-fixed f_i, W, W', the evaluations, the Q_i(xi) if Q is split, inv and invZh) as
-///         {{ proof_words }} big-endian words{% if words > proof_words %}, followed by
-///         {{ words - proof_words }} auxiliary inverses of the calldata, 1/(xi - w^j) of the firstRow and lastRow
-///         boundaries{% endif %}; `pubSignals`, the publics.
+///         big-endian words, followed by the auxiliary inverses 1/(xi - w^j) of the firstRow and
+///         lastRow boundaries, if any; `pubSignals`, the publics. Its structure is snarkjs
+///         0.7.6's fflonk verifier (verifier_fflonk.sol.ejs).
+// The static part of the contract: setup/pilfflonk/src/solidity.rs replaces each marker line, the
+// tag "generated" and a part's name, with the vkey's constants or the straight-line Yul of its
+// layout and qVerifier.
 contract PilfflonkVerifier {
-    uint32 constant n = {{ n }}; // Domain size, N = 2^{{ power }}
-
     // Scalar field size
     uint256 constant q    = 21888242871839275222246405745257275088548364400416034343698204186575808495617;
     // Base field size
@@ -37,35 +28,10 @@ contract PilfflonkVerifier {
     uint256 constant G2y1 = 8495653923123431417604973247489272438418190587263600148770280649306958101930;
     uint256 constant G2y2 = 4082367875863433681332203403145435568316851327593401208105741076214120093531;
 
-    // Verifier preprocessed input x·[1]_2: the vkey's X_2, [tau]_2
-    uint256 constant X2x1 = {{ x2[0][0] }};
-    uint256 constant X2x2 = {{ x2[0][1] }};
-    uint256 constant X2y1 = {{ x2[1][0] }};
-    uint256 constant X2y2 = {{ x2[1][1] }};
-
-    // The vkey's digest mod r, the first value of the transcript
-    uint256 constant DIGEST = {{ digest_fr }};
-{% if fixed %}
-    // The commitments of the fixed f_i, the vkey's: never the proof's
-{%- for f in fixed %}
-    uint256 constant f{{ f.index }}x = {{ f.x }};
-    uint256 constant f{{ f.index }}y = {{ f.y }};
-{%- endfor %}
-{% endif %}
-    // Proof calldata: the byte offset of every value (proof.rs, Proof::to_bytes)
-{%- for s in calldata %}
-    uint256 constant {{ s.name }} = {{ s.offset }}; // {{ s.comment }}
-{%- endfor %}
-    // The publics, the unnamed `uint256[]` (pubSignals), follow at {{ p_public }}.
-
-    // Memory data, at absolute addresses from 0x80 (solidity.rs, MEM_BASE)
-{%- for s in memory %}
-    uint256 constant {{ s.name }} = {{ s.offset }}; // {{ s.comment }}
-{%- endfor %}
-    uint256 constant lastMem = {{ last_mem }};
+    // @generated constants
 
     // `proof` has no name: the contract reads its words at the constant offsets above.
-    function verifyProof(bytes32[{{ words }}] calldata{% if n_public > 0 %}, uint256[{{ n_public }}] calldata{% endif %}) public view returns (bool) {
+    // @generated signature
         assembly {
             // The proof is rejected: verifyProof returns false.
             function fail() {
@@ -111,30 +77,16 @@ contract PilfflonkVerifier {
             // auxiliary inverses) and the publics in Fr. The lengths are the vkey's, fixed by the
             // types of the arguments; the vkey is this contract's constants.
             function checkInput() {
-{%- for p in check_points %}
-                checkPointBelongsToBN128Curve({{ p }})
-{%- endfor %}
-                // Those the transcript absorbs: the commitments and W (challenges.js).
-{%- for p in check_absorbed %}
-                checkAbsorbed({{ p }})
-{%- endfor %}
-                let r := q
-                let bad := 0
-{%- for p in check_scalars %}
-                bad := or(bad, iszero(lt(calldataload({{ p }}), r)))
-{%- endfor %}
-                checkFields(bad)
+                // @generated checkInput
             }
 
             // STEP 4: challenges.js, computeChallenges, the transcript. Its buffer, pT,
             // holds what is absorbed since the last squeeze, which is keccak256 of it mod r and
             // then the buffer's only value (transcript.js, squeeze).
-            function computeChallenges({% if n_public > 0 %}pPublic{% endif %}) {
+            function computeChallenges() {
                 let pT := mload(0x40)
                 let c
-{%- for line in transcript %}
-                {{ line }}
-{%- endfor %}
+                // @generated computeChallenges
             }
 
             // b^e mod r.
@@ -151,12 +103,10 @@ contract PilfflonkVerifier {
             // STEP 5 (verify.js): xi = xiSeed^powerW, and Z_H(xi) = xi^N - 1 checked against the
             // proof's invZh.
             function computeZh() {
-                let xi := powMod(mload(pXiSeed), {{ power_w }})
+                let xi := powMod(mload(pXiSeed), powerW)
                 mstore(pXi, xi)
                 let xin := xi
-{%- for i in range(end=power) %}
-                xin := mulmod(xin, xin, q)
-{%- endfor %}
+                // @generated computeZh
                 mstore(pXiN, xin)
                 let zh := addmod(xin, sub(q, 1), q)
                 mstore(pZh, zh)
@@ -170,52 +120,17 @@ contract PilfflonkVerifier {
             function computeZi() {
                 let xi := mload(pXi)
                 let zh := mload(pZh)
-{%- for b in zi %}
-                // boundaries[{{ b.index }}], {{ b.kind }}: {{ b.comment }}
-{%- if b.kind == "everyRow" %}
-                mstore({{ b.slot }}, calldataload(pInvZh))
-{%- elif b.kind == "everyFrame" %}
-                {
-                    let z := 1
-{%- for neg in b.neg_rows %}
-                    z := mulmod(z, addmod(xi, {{ neg }}, q), q)
-{%- endfor %}
-                    mstore({{ b.slot }}, z)
-                }
-{%- else %}
-                {
-                    // The calldata's 1/(xi - w^j), checked as inv is.
-                    let a := calldataload({{ b.aux }})
-                    if iszero(eq(mulmod(addmod(xi, {{ b.neg_root }}, q), a, q), 1)) {
-                        fail()
-                    }
-                    mstore({{ b.slot }}, mulmod(zh, a, q))
-                }
-{%- endif %}
-{%- endfor %}
+                // @generated computeZi
             }
 
             // STEP 5: verify.js, computeQ, and qverifier.js, executeCode: Q(xi) with the vkey's
             // qVerifier, the STARK's fold of the constraints, over the evaluations.
-            function computeQ({% if n_public > 0 %}pPublic{% endif %}) {
-{%- for line in q_code %}
-                {{ line }}
-{%- endfor %}
+            function computeQ() {
+                // @generated computeQ
             }
-{% if q_split %}
-            // STEP 5 (verify.js): Q is split in pieces of M = {{ q_split.max_q_degree }}, and
-            // sum_i xi^(i·M·N)·Q_i(xi) = Q(xi) (qverifier.js, joinQPieces).
-            function checkQPieces() {
-                let shift := powMod(mload(pXiN), {{ q_split.max_q_degree }})
-                let acc := 0
-{%- for p in q_split.pieces_desc %}
-                acc := addmod(mulmod(acc, shift, q), calldataload({{ p }}), q)
-{%- endfor %}
-                if iszero(eq(acc, mload(pQ))) {
-                    fail()
-                }
-            }
-{% endif %}
+
+            // @generated checkQPieces
+
             // STEP 6 (verify.js); shplonk.js, computeRoots: the roots T_i of every f_i are, for each
             // offset s, the k-th roots of z_s = xi·w_N^s; the verifier needs only the z_s and y^k
             // (computeInversions, computeR), never the roots.
@@ -227,15 +142,7 @@ contract PilfflonkVerifier {
                 }
                 let xi := mload(pXi)
                 let y := mload(pY)
-{%- for k in ks %}
-                mstore({{ k.p_yk }}, {% if k.k == 1 %}y{% else %}powMod(y, {{ k.k }}){% endif %})
-{%- endfor %}
-{%- for set in root_sets %}
-                // k = {{ set.k }}, offsets {{ set.offsets }}
-{%- for row in set.rows %}
-                mstore({{ row.z }}, {% if row.omega_n_s %}mulmod(xi, {{ row.omega_n_s }}, q){% else %}xi{% endif %})
-{%- endfor %}
-{%- endfor %}
+                // @generated computeZ
             }
 
             // shplonk.js, isValidInverse: inv·A·B = 1, with invB = inv·A.
@@ -272,48 +179,7 @@ contract PilfflonkVerifier {
             // several offsets, (1/B)·G·prod_i Z_{T_i}(y) = xi^(-E) gives their CRT factors.
             function computeInversions() {
                 let d
-{%- for set in root_sets %}
-                // k = {{ set.k }}, offsets {{ set.offsets }}
-                d := 1
-{%- for row in set.rows %}
-                d := mulmod(d, addmod(mload({{ set.p_yk }}), sub(q, mload({{ row.z }})), q), q)
-{%- endfor %}
-                // shplonk.js, verifyOpening: y is not a root of an f_i (inv·A·B = 1 checks it too).
-                if iszero(d) {
-                    fail()
-                }
-                mstore({{ set.p_zt }}, d)
-{%- endfor %}
-                let a := 1
-{%- for f in fs %}{% if f.p_inv_zt %}
-                d := mload({{ f.p_zt }})
-                mstore({{ f.p_inv_zt }}, d)
-                a := mulmod(a, d, q)
-{%- endif %}{% endfor %}
-{%- set f0 = fs | first %}
-                let zts := mulmod(a, mload({{ f0.p_zt }}), q)
-                let b := mulmod(zts, {% if e > 0 %}mulmod({{ g }}, powMod(mload(pXi), {{ e }}), q){% else %}{{ g }}{% endif %}, q)
-                let invB := mulmod(calldataload(pInv), a, q)
-                checkInv(invB, b)
-{%- if n_inv_zt > 0 %}
-                batchInverse(pInvZt1, {{ n_inv_zt }}, mulmod(calldataload(pInv), b, q))
-{%- endif %}
-{%- if xi_negs | length > 0 %}
-                let xiNegE := mulmod(invB, mulmod({{ g }}, zts, q), q)
-{%- for x in xi_negs %}
-                mstore({{ x.p }}, {% if x.exponent > 0 %}mulmod(xiNegE, powMod(mload(pXi), {{ x.exponent }}), q){% else %}xiNegE{% endif %})
-{%- endfor %}
-{%- for set in root_sets %}{% if set.p_xi_neg %}
-                // k = {{ set.k }}, offsets {{ set.offsets }}: L_s = prod_{s' != s} (y^k - z_s')/(z_s - z_s')
-{%- for row in set.rows %}
-                d := mulmod({{ row.d }}, mload({{ set.p_xi_neg }}), q)
-{%- for z in row.other_z %}
-                d := mulmod(d, addmod(mload({{ set.p_yk }}), sub(q, mload({{ z }})), q), q)
-{%- endfor %}
-                mstore({{ row.p_l }}, d)
-{%- endfor %}
-{%- endif %}{% endfor %}
-{%- endif %}
+                // @generated computeInversions
             }
 
             // STEP 7 (verify.js, openingEvaluations; shplonk.js, computeR): r_i(y), the polynomial of
@@ -324,29 +190,7 @@ contract PilfflonkVerifier {
             function computeR() {
                 let y := mload(pY)
                 let v
-{%- for f in fs %}
-                // f{{ f.index }}: stage {{ f.stage }}, k = {{ f.k }}, offsets {{ f.offsets }}
-{%- if f.rows | length == 1 %}
-{%- set row = f.rows | first %}
-                v := {{ row.horner_first }}
-{%- for e in row.horner_rest %}
-                v := addmod(mulmod(v, y, q), {{ e }}, q)
-{%- endfor %}
-                mstore({{ f.p_r }}, v)
-{%- else %}
-                {
-                    let acc := 0
-{%- for row in f.rows %}
-                    v := {{ row.horner_first }}
-{%- for e in row.horner_rest %}
-                    v := addmod(mulmod(v, y, q), {{ e }}, q)
-{%- endfor %}
-                    acc := addmod(acc, mulmod(v, mload({{ row.p_l }}), q), q)
-{%- endfor %}
-                    mstore({{ f.p_r }}, acc)
-                }
-{%- endif %}
-{%- endfor %}
+                // @generated computeR
             }
 
             // Whether a call to the precompile 0x06 or 0x07 succeeded and returned a point: 64 bytes.
@@ -427,29 +271,10 @@ contract PilfflonkVerifier {
             // q_0 = Z_{T_0}(y), q_i = alpha^i·Z_{T_0}(y)/Z_{T_i}(y), F = [f_0] + sum_i q_i·[f_i],
             // E = (r_0(y) + sum_i q_i·r_i(y))·[1]_1, J = q_0·[W]; the fixed [f_i] are the vkey's.
             function computeFEJ() {
-{%- set f0 = fs | first %}
-                let zt0 := mload({{ f0.p_zt }})
                 let alpha := mload(pAlpha)
                 let alphaPow := 1
                 let quotient
-                let e := mload({{ f0.p_r }})
-{%- if f0.fixed %}
-                mstore(pF, {{ f0.commitment }}x)
-                mstore(add(pF, 32), {{ f0.commitment }}y)
-{%- else %}
-                calldatacopy(pF, {{ f0.commitment }}, 64)
-{%- endif %}
-{%- for f in fs %}{% if not loop.first %}
-                // f{{ f.index }}
-                alphaPow := mulmod(alphaPow, alpha, q)
-                quotient := mulmod(alphaPow, mulmod(zt0, mload({{ f.p_inv_zt }}), q), q)
-{%- if f.fixed %}
-                g1_mulAccC(pF, {{ f.commitment }}x, {{ f.commitment }}y, quotient)
-{%- else %}
-                g1_mulAcc(pF, {{ f.commitment }}, quotient)
-{%- endif %}
-                e := addmod(e, mulmod(quotient, mload({{ f.p_r }}), q), q)
-{%- endif %}{% endfor %}
+                // @generated computeFEJ
 
                 // Compute group-encoded batch evaluation [E]_1
                 g1_mulSetC(pE, G1x, G1y, e)
@@ -507,15 +332,13 @@ contract PilfflonkVerifier {
             checkInput()
 
             // STEP 4: the challenges
-            computeChallenges({% if n_public > 0 %}{{ p_public }}{% endif %})
+            computeChallenges()
 
             // STEP 5: Z_H(xi), the Zi and Q(xi)
             computeZh()
             computeZi()
-            computeQ({% if n_public > 0 %}{{ p_public }}{% endif %})
-{%- if q_split %}
-            checkQPieces()
-{%- endif %}
+            computeQ()
+            // @generated checkQPiecesCall
 
             // STEP 6: the z_s, and inv
             computeZ()

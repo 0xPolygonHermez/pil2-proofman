@@ -77,16 +77,17 @@ at the first check that fails.
 `proofman-setup setup-pilfflonk --solidity` writes `pilfflonk.verifier.sol` next to the vkey, and
 `proofman-setup pilfflonk-solidity -k <vkey> -o <file>` writes the same bytes from a vkey alone.
 
-**Generation.** A Tera template included with `include_str!`,
-`setup/pilfflonk/src/tera/verifier_pilfflonk.sol.tera`, and one `render`, as
-`setup/stark-recurser/stark2circom/circuit_templates/templates.rs` does. `setup/pilfflonk/src/solidity.rs`
-computes the context from the vkey: the constants (`[τ]₂`, the fixed commitments, `digest mod r`, the
-roots of unity), where each value is in the calldata and in memory, and two fragments of straight-line
-Yul, the transcript and the unrolled `qVerifier`. The generator refuses a vkey it should not turn into
+**Generation.** A static contract included with `include_str!`,
+`setup/pilfflonk/src/sol/verifier_pilfflonk.sol`, whose `// @generated <part>` lines
+`setup/pilfflonk/src/solidity.rs` replaces with what it computes from the vkey: the constants (`[τ]₂`,
+the fixed commitments, `digest mod r`, the roots of unity), where each value is in the calldata and in
+memory, the `verifyProof` signature, and the straight-line Yul of the transcript, the unrolled
+`qVerifier` and the steps over the layout (the `f_i`, their roots and boundaries), unrolled as snarkjs
+unrolls them. No templating engine. The generator refuses a vkey it should not turn into
 a contract ([Refused vkeys](#refused-vkeys)). The setup generates the contract before it writes the
 vkey, and an error stops it.
 
-**Template.** snarkjs 0.7.6's FFLONK verifier (`templates/verifier_fflonk.sol.ejs`): one contract,
+**Structure.** snarkjs 0.7.6's FFLONK verifier (`templates/verifier_fflonk.sol.ejs`): one contract,
 `PilfflonkVerifier`, with one `assembly` block of Yul functions; snarkjs's `checkField`,
 `checkPointBelongsToBN128Curve`, `inverseArray`, `g1_acc`, `g1_mulAcc`, `g1_mulAccC` and
 `checkPairing`; the Montgomery batch inversion with the proof's `inv`, checked before it is used; the

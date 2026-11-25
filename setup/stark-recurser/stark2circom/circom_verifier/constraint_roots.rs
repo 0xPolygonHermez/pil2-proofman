@@ -41,7 +41,7 @@ fn operand(src: &Src) -> Result<String> {
 }
 
 /// One instruction, in unroll_code's forms so the constraints are today's.
-// The Tera verifier's forms over lower_roots' stream (counts measured identical).
+// The former templated verifier's forms over lower_roots' stream (counts measured identical).
 fn instr(i: &Instr) -> Result<String> {
     let [a, b] = &i.src[..] else { bail!("tmp_{} has {} operands", i.dest, i.src.len()) };
     let (x, y) = (operand(a)?, operand(b)?);
@@ -114,7 +114,7 @@ fn gl_number(v: &str) -> Result<u128> {
 }
 
 /// BN128 forms of the lowered code: `GLConst`s shared per (value, dim), a base operand lifted by
-/// `GLC3` next to an extension one (a zero is a `GLConst3` instead), as the Tera verifier emitted.
+/// `GLC3` next to an extension one (a zero is a `GLConst3` instead), as the former templated verifier emitted.
 #[derive(Default)]
 struct Bn128Code {
     lines: Vec<String>,

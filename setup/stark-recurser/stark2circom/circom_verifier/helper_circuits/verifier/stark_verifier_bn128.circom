@@ -7,7 +7,7 @@ include "transcript.circom";
 /*
     The BN128 STARK verifier: Goldilocks emulated over BN128 with lazily reduced `{maxNum}` signals
     (circuits.bn128/gl.circom or custom/gl.circom, whichever the generated verifier includes). Every
-    reduction (GLNorm / GLCNorm, the GL* quotients) is where the Tera verifier had it, so the circuit
+    reduction (GLNorm / GLCNorm, the GL* quotients) is where the former templated verifier had it, so the circuit
     is the same. StarkVerifierBN128(k) (below) wires:
 
         StarkVerifierTranscript   shared with the GL verifier (transcript.circom)
@@ -223,7 +223,7 @@ template DeepConstantsBN128(nGroups, nPols, nEvals, GROUP_LEN, REF_COL) {
 
 /*
     f_0 at one query x of L_0 against fold tree 1's opened coset (deep.circom's DeepQuery, emulated):
-    x and every x - g^o xi from repeated GLMul as the Tera verifier did, the same grouped sum
+    x and every x - g^o xi from repeated GLMul as the former templated verifier did, the same grouped sum
     (lib_params.rs: OPEN, SUMS, COLS), a base-field leaf lifted with GLC3 where it meets an extension.
 */
 template DeepQueryBN128(nGroups, nPols, nColGroups, nSums, bits0, nextBits, s0Width, nBits, OPEN, SUMS, COLS) {
@@ -290,7 +290,7 @@ template DeepQueryBN128(nGroups, nPols, nColGroups, nSums, bits0, nextBits, s0Wi
         xDivXSubXi[r] <== GLCInv()(wSub[r].out);
     }
 
-    // In deep.rs's op order (as the Tera verifier emitted it): A_r = vf1^{e_r} * xDivXSubXi[r] (e = 0
+    // In deep.rs's op order (as the former templated verifier emitted it): A_r = vf1^{e_r} * xDivXSubXi[r] (e = 0
     // for the last opening); per column group its new prefix sums of A (SUMS), its columns' products,
     // their sum S_G and S_G * sum A; then the groups' sum.
     component aMul[n];
@@ -397,7 +397,7 @@ template DeepQueryBN128(nGroups, nPols, nColGroups, nSums, bits0, nextBits, s0Wi
         kSub[r].inb <== kMul[r].out;
     }
 
-    // Reduced once on its own (as the Tera verifier did), then against the next oracle's member.
+    // Reduced once on its own (as the former templated verifier did), then against the next oracle's member.
     signal queryVals[3] <== GLCNorm()(kSub[n - 1].out);
 
     signal {binary} keysLow[nextStep];

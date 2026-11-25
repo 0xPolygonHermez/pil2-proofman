@@ -1,12 +1,11 @@
 //! The circom mains and the Solidity contracts. A main is data over static templates
 //! (`helper_circuits/recursion.circom`, `final_snark.circom`): its keys' dispatch
 //! (`circom_verifier::key_dispatch`), the vadcop data `vd_*()` and a `component main` line. The
-//! Solidity contracts are the only Tera left: `verifier.sol.tera` → [`gen_solidity`],
-//! `iverifier.sol.tera` → [`gen_iverifier`].
+//! Solidity contracts are static too (`sol/`): [`gen_solidity`] and [`gen_iverifier`] fill in their
+//! `__TOKEN__`s.
 
-use anyhow::{bail, Context, Result};
+use anyhow::{bail, Result};
 use serde_json::Value;
-use tera::{Context as TeraCtx, Tera};
 
 use super::get_sha256_inputs::sha256_defs;
 use super::vadcop_inputs::{air_id_vars, vadcop_data};
@@ -15,16 +14,17 @@ use super::CircomGenOptions;
 use crate::stark2circom::circom_verifier::lib_params::{proof_inputs, Origin};
 use crate::stark2circom::circom_verifier::{key_dispatch, key_suffix};
 
-// ── Embedded Tera templates ───────────────────────────────────────────────────
+// ── The static Solidity contracts ────────────────────────────────────────────
 
-const VERIFIER_SOL_TMPL: &str = include_str!("tera/verifier.sol.tera");
-const IVERIFIER_SOL_TMPL: &str = include_str!("tera/iverifier.sol.tera");
+const VERIFIER_SOL: &str = include_str!("sol/verifier.sol");
+const IVERIFIER_SOL: &str = include_str!("sol/iverifier.sol");
 
-/// Render a single one-shot Tera template string (no inheritance / include).
-pub(super) fn render(template_src: &str, ctx: &TeraCtx) -> Result<String> {
-    let mut tera = Tera::default();
-    tera.add_raw_template("t", template_src).context("Failed to parse Tera template")?;
-    tera.render("t", ctx).context("Failed to render Tera template")
+/// `src` with each `token` replaced by its value; every token must be in `src`.
+fn fill(src: &str, tokens: &[(&str, &str)]) -> String {
+    tokens.iter().fold(src.to_string(), |out, (token, value)| {
+        assert!(out.contains(token), "the static contract has no {token}");
+        out.replace(token, value)
+    })
 }
 
 // ── circom mains ──────────────────────────────────────────────────────────────
@@ -281,21 +281,29 @@ pub fn gen_solidity(
     let camel = capitalise(name);
 
     let (has_program_vk, first_is_vk) = program_vk(publics);
-
-    let mut ctx = TeraCtx::new();
-    ctx.insert("name", &camel);
-    ctx.insert("snark", verifier.name());
-    ctx.insert("snark_source", &verifier.source());
-    ctx.insert("version", version);
-    ctx.insert("root_c_0", &root_c[0]);
-    ctx.insert("root_c_1", &root_c[1]);
-    ctx.insert("root_c_2", &root_c[2]);
-    ctx.insert("root_c_3", &root_c[3]);
-    ctx.insert("has_program_vk", &has_program_vk);
-    ctx.insert("first_is_vk", &first_is_vk);
-    ctx.insert("proof_decode", &verifier.proof_decode());
-
-    render(VERIFIER_SOL_TMPL, &ctx).unwrap_or_else(|e| panic!("verifier.sol template error: {e:#}"))
+    let packed = match (has_program_vk, first_is_vk) {
+        (true, true) => "programVK, publicValues, rootCVadcopFinal",
+        (true, false) => "publicValues, programVK, rootCVadcopFinal",
+        (false, _) => "publicValues, rootCVadcopFinal",
+    };
+    let root_c = root_c.map(|r| r.to_string());
+    fill(
+        VERIFIER_SOL,
+        &[
+            ("__SNARK_SOURCE__", &verifier.source()),
+            ("__SNARK__", verifier.name()),
+            ("__NAME__", &camel),
+            ("__VERSION__", version),
+            ("__ROOT_C_0__", &root_c[0]),
+            ("__ROOT_C_1__", &root_c[1]),
+            ("__ROOT_C_2__", &root_c[2]),
+            ("__ROOT_C_3__", &root_c[3]),
+            ("__PROGRAM_VK_PARAM__", if has_program_vk { "bytes32 programVK,\n        " } else { "" }),
+            ("__PROGRAM_VK_ARG__", if has_program_vk { "programVK, " } else { "" }),
+            ("__PACKED__", packed),
+            ("__PROOF_DECODE__", &verifier.proof_decode()),
+        ],
+    )
 }
 
 /// Port of `src/recursion/contracts/iverifier.sol.ejs`.
@@ -303,13 +311,31 @@ pub fn gen_iverifier(name: &str, publics: Option<&Value>, verifier: &SnarkVerifi
     let camel = capitalise(name);
 
     let (has_program_vk, _) = program_vk(publics);
-
-    let mut ctx = TeraCtx::new();
-    ctx.insert("name", &camel);
-    ctx.insert("snark_label", verifier.label());
-    ctx.insert("has_program_vk", &has_program_vk);
-
-    render(IVERIFIER_SOL_TMPL, &ctx).unwrap_or_else(|e| panic!("iverifier.sol template error: {e:#}"))
+    let (pin, pin_value, fold_tree, vk_doc, vk_param) = if has_program_vk {
+        (
+            "Both keys MUST be constants",
+            "values",
+            " For an aggregated proof both are the recurser's verkey, and pinning\n    /// them together is what \
+             extends that recurser's leaf allow-list over the whole\n    /// fold tree.",
+            "/// @param programVK The identity committed by the proof: the ROM root of the\n    /// RISC-V program for \
+             a plain proof, the recursion domain for an aggregated one.\n    ",
+            "bytes32 programVK,\n        ",
+        )
+    } else {
+        ("The root MUST be a constant", "a value", "", "", "")
+    };
+    fill(
+        IVERIFIER_SOL,
+        &[
+            ("__SNARK_LABEL__", verifier.label()),
+            ("__NAME__", &camel),
+            ("__PIN_VALUE__", pin_value),
+            ("__PIN__", pin),
+            ("__FOLD_TREE__", fold_tree),
+            ("__PROGRAM_VK_DOC__", vk_doc),
+            ("__PROGRAM_VK_PARAM__", vk_param),
+        ],
+    )
 }
 
 /// (the publics carry a program verification key, it is the first definition).
@@ -335,7 +361,7 @@ mod tests {
 
     use super::*;
     use crate::stark2circom::circom_verifier::{gen_stark_verifier_bn128, Pil2CircomOptions};
-    use crate::plonk2pil::r1cs_types::read_r1cs_from_bytes;
+    use crate::plonk2pil::r1cs::types::read_r1cs_from_bytes;
     use proofman_fields::Bn128;
     use serde_json::json;
 

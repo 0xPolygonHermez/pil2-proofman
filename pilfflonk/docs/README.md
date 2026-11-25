@@ -344,7 +344,7 @@ witnesses only: the prover's arithmetic is ffiasm's.
 | Bindings | `provers/starks-lib-c/bindings_pilfflonk.rs`, `src/ffi_pilfflonk.rs` | Rust | the hand-written FFI, as `bindings_starks.rs` and `ffi_starks.rs` |
 | CLI | `cli/src/commands/pilfflonk/` | Rust | `pilfflonk prove`, `check`, `verify` and `calldata` |
 | JS verifier | `pilfflonk/js/` | JS (Node) | transcript, `Q(ξ)`, SHPLONK and the pairing |
-| Solidity template | `setup/pilfflonk/src/tera/verifier_pilfflonk.sol.tera` | Tera, Solidity | the contract `setup/pilfflonk/src/solidity.rs` renders |
+| Solidity verifier | `setup/pilfflonk/src/sol/verifier_pilfflonk.sol` | Solidity | the static contract whose `// @generated` parts `setup/pilfflonk/src/solidity.rs` fills |
 | Foundry project | `pilfflonk/solidity/` | Solidity | the contract's tests and the fuzzer's harness |
 | Benchmarks | `pilfflonk/bench/` | shell, PIL, Rust | `bench.sh` and `gpu_check.sh` ([performance.md](performance.md)) |
 | Wrap's witness | `pilfflonk-wrap-witness`, `wrap-witness/` | Rust, C++ | the stage-1 columns of the wrap's AIR from a recursivef proof or zkin: the final circuit's `final.so` and plonk2pil's `.exec` |
