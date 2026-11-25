@@ -663,24 +663,30 @@ static void wait_device_idle_before_teardown(DeviceCommitBuffers *d_buffers) {
 
     // Fence work queued by entries that already returned, before freeing the memory it references.
     // Bounded per-stream so a wedged stream degrades to a diagnostic, not an unbounded hang. All
-    // proof work runs on the named streams, so polling those covers it.
+    // proof work runs on the three named streams of each StreamData, so polling those covers it.
     if (d_buffers->streamsData != nullptr) {
         bool any_timed_out = false;
         for (uint32_t s = 0; s < d_buffers->n_total_streams; ++s) {
-            cudaSetDevice(d_buffers->streamsData[s].gpuId);
-            cudaStream_t stream = d_buffers->streamsData[s].stream;
-            // Per-stream deadline so one wedged stream can't starve the fencing of the rest: a
-            // shared deadline let a stuck stream burn the whole budget, freeing later streams still in use.
-            const auto stream_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
-            while (cudaStreamQuery(stream) == cudaErrorNotReady &&
-                   std::chrono::steady_clock::now() < stream_deadline) {
-                std::this_thread::sleep_for(std::chrono::microseconds(200));
+            StreamData &sd = d_buffers->streamsData[s];
+            cudaSetDevice(sd.gpuId);
+            // The custom-commit and fixed-tree lanes too: the proof waits their completion events only
+            // where it first reads their output, so a job that ends before that leaves their work
+            // unfenced by `stream`.
+            const cudaStream_t lanes[] = {sd.stream, sd.customStream, sd.fixedStream};
+            for (cudaStream_t stream : lanes) {
+                // Per-stream deadline so one wedged stream can't starve the fencing of the rest: a
+                // shared deadline let a stuck stream burn the whole budget, freeing later streams still in use.
+                const auto stream_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+                while (cudaStreamQuery(stream) == cudaErrorNotReady &&
+                       std::chrono::steady_clock::now() < stream_deadline) {
+                    std::this_thread::sleep_for(std::chrono::microseconds(200));
+                }
+                if (stream == sd.stream && d_buffers->pipelineMode) harvestPipelineStream(d_buffers, s, true);
+                if (std::chrono::steady_clock::now() >= stream_deadline) {
+                    any_timed_out = true;
+                }
+                cudaGetLastError();  // clear the sticky status left by the last query
             }
-            if (d_buffers->pipelineMode) harvestPipelineStream(d_buffers, s, true);
-            if (std::chrono::steady_clock::now() >= stream_deadline) {
-                any_timed_out = true;
-            }
-            cudaGetLastError();  // clear the sticky status left by the last query
         }
         if (any_timed_out) {
             printf("[teardown] WARNING: a device stream did not drain within 10s; freeing anyway\n");
