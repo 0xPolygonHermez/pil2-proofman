@@ -310,7 +310,7 @@ mod agg_arity_tests {
     fn the_builder_emits_the_aggregation_arity() {
         let pilout = pb::PilOut::default();
         let settings = StarkStructsConfig::default();
-        for arity in [2usize, 3] {
+        for arity in proofman_common::global_info::VALID_AGGREGATION_ARITIES {
             let v = super::build_global_info_json(
                 &pilout,
                 "t",

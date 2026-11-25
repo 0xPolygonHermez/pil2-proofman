@@ -1680,25 +1680,16 @@ pub fn get_recursive_buffer_sizes<F: PrimeField64>(
     Ok(max_prover_size as usize)
 }
 
-/// Aggregation proofs needed to reduce `n` proofs to one, and whether the last chunk needs a
-/// null proof to fill it.
-///
-/// A short chunk needs `arity - rem` nulls, which is 0 or 1 only while `arity <= 3` — hence the
-/// bool. Raising `VALID_AGGREGATION_ARITIES` past 3 means making this a count and updating the
-/// `push(null_proof)` sites in proofman.rs.
+/// Aggregation proofs needed to reduce `n` proofs to one, and the null proofs that pad them: the
+/// fewest that make `n + n_nulls - 1` a multiple of `arity - 1`, so at most `arity - 2`.
 #[derive(Debug)]
 pub struct Recursive2Proofs {
     pub n_proofs: usize,
-    pub has_remaining: bool,
-}
-
-impl Recursive2Proofs {
-    pub fn new(n_proofs: usize, has_remaining: bool) -> Self {
-        Self { n_proofs, has_remaining }
-    }
+    pub n_nulls: usize,
 }
 
 pub fn total_recursive_proofs(mut n: usize, arity: usize) -> Recursive2Proofs {
+    let n_nulls = if n < 2 { 0 } else { (arity - 1 - (n - 1) % (arity - 1)) % (arity - 1) };
     let mut total = 0;
     let mut rem = n % arity;
     while n > 1 {
@@ -1714,11 +1705,8 @@ pub fn total_recursive_proofs(mut n: usize, arity: usize) -> Recursive2Proofs {
 
     // A remainder of 2 or more needs one more aggregation, null-padded up to the arity.
     // At arity 2 the remainder is never >= 2, so this never fires.
-    if rem >= 2 {
-        Recursive2Proofs::new(total + 1, true)
-    } else {
-        Recursive2Proofs::new(total, false)
-    }
+    let n_proofs = if rem >= 2 { total + 1 } else { total };
+    Recursive2Proofs { n_proofs, n_nulls }
 }
 
 #[cfg(test)]
@@ -1853,9 +1841,7 @@ mod arity_tests {
 
     #[test]
     fn the_formula_matches_the_loop_for_every_supported_arity() {
-        // 4 is included as a pure-arithmetic check that the formula is not
-        // accidentally 3-shaped. It is not a usable setup.
-        for arity in [2usize, 3, 4] {
+        for arity in proofman_common::global_info::VALID_AGGREGATION_ARITIES {
             for n in 0..200 {
                 assert_eq!(total_recursive_proofs(n, arity).n_proofs, simulate(n, arity), "arity={arity} n={n}");
             }
@@ -1887,10 +1873,44 @@ mod arity_tests {
         assert_eq!(total_recursive_proofs(3, 2).n_proofs, 2, "one fold too many: the hang");
     }
 
+    /// The scheduler seeds its pool with `n_nulls` nulls and folds whenever it holds `arity`.
+    #[test]
+    fn the_seeded_pool_folds_to_one_proof_with_real_proofs_in_every_chunk() {
+        for arity in proofman_common::global_info::VALID_AGGREGATION_ARITIES {
+            for n in 2..200 {
+                let r = total_recursive_proofs(n, arity);
+                assert!(r.n_nulls <= arity - 2, "arity={arity} n={n}: {} nulls leave a chunk short", r.n_nulls);
+                // Worst case for the chunk check: every null lands in the first fold.
+                let (mut pool, mut folds) = (n + r.n_nulls, 0usize);
+                while pool >= arity {
+                    pool -= arity - 1;
+                    folds += 1;
+                }
+                assert_eq!(pool, 1, "arity={arity} n={n}: the pool stalls at {pool} proofs");
+                assert_eq!(folds, r.n_proofs, "arity={arity} n={n}");
+            }
+        }
+    }
+
+    #[test]
+    fn arity_three_pads_with_at_most_one_null_as_before() {
+        for n in 0..200 {
+            let r = total_recursive_proofs(n, 3);
+            assert_eq!(r.n_nulls, usize::from(n >= 2 && n % 2 == 0), "n={n}");
+        }
+    }
+
+    #[test]
+    fn arity_four_pads_short_trees_with_up_to_two_nulls() {
+        for (n, nulls) in [(0usize, 0usize), (1, 0), (2, 2), (3, 1), (4, 0), (5, 2), (6, 1), (7, 0)] {
+            assert_eq!(total_recursive_proofs(n, 4).n_nulls, nulls, "n={n}");
+        }
+    }
+
     /// Distributing moves folds between workers without creating or destroying any.
     #[test]
     fn distributing_the_tree_preserves_the_total_fold_count() {
-        for arity in [2usize, 3] {
+        for arity in proofman_common::global_info::VALID_AGGREGATION_ARITIES {
             for n_leaves in 1..40 {
                 let (mut sets, mut folds) = (n_leaves, 0usize);
                 while sets > 1 {

@@ -98,7 +98,7 @@ struct SetupArgs {
     #[arg(long, default_value = proofman_common::hash_family::DEFAULT_HASH_ID)]
     hash: String,
 
-    /// Proofs each recursive2 circuit aggregates. Must be 2 or 3. Defaults per hash family --
+    /// Proofs each recursive2 circuit aggregates: 2, 3 or 4. Defaults per hash family --
     /// 2 for blake3, 3 for poseidon -- see hash_family::default_aggregation_arity.
     #[arg(long)]
     agg_arity: Option<usize>,

@@ -3836,12 +3836,16 @@ where
         if options.aggregation {
             for (airgroup, &n_proofs) in n_airgroup_proofs.iter().enumerate().take(n_airgroups) {
                 let n_recursive2_proofs = total_recursive_proofs(n_proofs, self.pctx.global_info.aggregation_arity);
-                if n_recursive2_proofs.has_remaining || n_proofs == 0 {
+                // An airgroup with no proofs still contributes one (null) proof to the final stage.
+                let n_nulls = if n_proofs == 0 { 1 } else { n_recursive2_proofs.n_nulls };
+                if n_nulls > 0 {
                     let setup = self.setups.get_setup(airgroup, 0, &ProofType::Recursive2)?;
                     let publics_aggregation = n_publics_aggregation(&self.pctx, airgroup);
-                    let null_proof_buffer = vec![0; setup.proof_size as usize + publics_aggregation];
-                    let null_proof = Proof::new(ProofType::Recursive2, airgroup, 0, None, null_proof_buffer);
-                    self.recursive2_proofs[airgroup].write().unwrap().push(null_proof);
+                    let mut pool = self.recursive2_proofs[airgroup].write().unwrap();
+                    for _ in 0..n_nulls {
+                        let null_proof_buffer = vec![0; setup.proof_size as usize + publics_aggregation];
+                        pool.push(Proof::new(ProofType::Recursive2, airgroup, 0, None, null_proof_buffer));
+                    }
                 }
             }
         }
@@ -5110,21 +5114,23 @@ where
                     total_proofs_received[airgroup_id] = n_agg_proofs;
                     let n_agg_proofs_to_be_done =
                         total_recursive_proofs(n_agg_proofs, self.pctx.global_info.aggregation_arity);
-                    if n_agg_proofs_to_be_done.has_remaining {
+                    if n_agg_proofs_to_be_done.n_nulls > 0 {
                         let setup = self.setups.get_setup(airgroup_id, 0, &ProofType::Recursive2)?;
                         let publics_aggregation = n_publics_aggregation(&self.pctx, airgroup_id);
-                        let null_proof_buffer = vec![0; setup.proof_size as usize + publics_aggregation];
 
-                        let id = {
-                            let mut rec2_proofs = self.recursive2_proofs_ongoing.write().unwrap();
-                            let id = rec2_proofs.len();
-                            let null_proof =
-                                Proof::new(ProofType::Recursive2, airgroup_id, 0, Some(id), null_proof_buffer);
-                            rec2_proofs.push(Some(null_proof));
-                            id
-                        };
+                        for _ in 0..n_agg_proofs_to_be_done.n_nulls {
+                            let null_proof_buffer = vec![0; setup.proof_size as usize + publics_aggregation];
+                            let id = {
+                                let mut rec2_proofs = self.recursive2_proofs_ongoing.write().unwrap();
+                                let id = rec2_proofs.len();
+                                let null_proof =
+                                    Proof::new(ProofType::Recursive2, airgroup_id, 0, Some(id), null_proof_buffer);
+                                rec2_proofs.push(Some(null_proof));
+                                id
+                            };
 
-                        launch_callback_c(id as u64, ProofType::Recursive2.into());
+                            launch_callback_c(id as u64, ProofType::Recursive2.into());
+                        }
                     }
                     total_proofs_to_be_done += n_agg_proofs_to_be_done.n_proofs;
                 }
@@ -5549,12 +5555,14 @@ where
         let mut total_proofs: usize = 0;
         for (airgroup, &n_proofs) in alives.iter().enumerate() {
             let n_recursive2_proofs = total_recursive_proofs(n_proofs, self.pctx.global_info.aggregation_arity);
-            if n_recursive2_proofs.has_remaining {
+            if n_recursive2_proofs.n_nulls > 0 {
                 let setup = self.setups.get_setup(airgroup, 0, &ProofType::Recursive2)?;
                 let publics_aggregation = n_publics_aggregation(&self.pctx, airgroup);
-                let null_proof_buffer = vec![0; setup.proof_size as usize + publics_aggregation];
-                let null_proof = Proof::new(ProofType::Recursive2, airgroup, 0, None, null_proof_buffer);
-                self.recursive2_proofs[airgroup].write().unwrap().push(null_proof);
+                let mut pool = self.recursive2_proofs[airgroup].write().unwrap();
+                for _ in 0..n_recursive2_proofs.n_nulls {
+                    let null_proof_buffer = vec![0; setup.proof_size as usize + publics_aggregation];
+                    pool.push(Proof::new(ProofType::Recursive2, airgroup, 0, None, null_proof_buffer));
+                }
             }
             total_proofs += n_recursive2_proofs.n_proofs;
         }
