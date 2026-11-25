@@ -145,11 +145,12 @@ TEST(GateBandsGPU, MatchesTheHostExpander)
 /// The same host-vs-device comparison for the BLAKE3 kinds. Their multiplicities are the one place
 /// the two backends genuinely differ -- a host thread reduces a private buffer, a device thread
 /// adds atomically into the trace -- so an exact match over the table columns is the real assertion
-/// here, not just the permutation cells.
-TEST(GateBandsGPU, MatchesTheHostExpanderOnBlake3)
+/// here, not just the permutation cells. BLOCKS cycles the three kinds; with enough of them the
+/// device kernel runs several CUDA blocks and a partial last one.
+static void expectBlake3Matches(const uint64_t LANES, const uint64_t BLOCKS)
 {
     namespace b3 = gate_bands::blake3;
-    constexpr uint64_t LANES = 2, BLOCKS = 3, BAND = 18;
+    constexpr uint64_t BAND = 18;
     const uint64_t nCols = b3::stage1_cols(LANES, BAND);
     const uint64_t nRows = b3::TABLE_SIZE;   // exactly the rows the table multiplicities need
 
@@ -157,11 +158,12 @@ TEST(GateBandsGPU, MatchesTheHostExpanderOnBlake3)
     // aux: LANES low, band width high -- expand_gate_bands rejects a BLAKE3 air with band 0.
     std::vector<uint64_t> exec{exec_layout::EXEC_MAGIC | exec_layout::EXEC_FORMAT_VERSION, 0, 0, 0,
                                V, BLOCKS, LANES | (BAND << 32)};
-    const uint64_t kinds[BLOCKS] = {GB_BLAKE3_NODE, GB_BLAKE3_COMPRESS_CHUNK, GB_BLAKE3_COMPRESS_PARENT};
+    const uint64_t kinds[3] = {GB_BLAKE3_NODE, GB_BLAKE3_COMPRESS_CHUNK, GB_BLAKE3_COMPRESS_PARENT};
+    ASSERT_LE(BLOCKS * b3::CLOCKS, nRows);
     std::vector<uint64_t> bands;
     for (uint64_t k = 0; k < BLOCKS; k++) {
         bands.push_back(k * b3::CLOCKS);
-        bands.push_back(kinds[k]);
+        bands.push_back(kinds[k % 3]);
         bands.push_back(11);   // flags
     }
     exec.insert(exec.end(), bands.begin(), bands.end());
@@ -173,7 +175,7 @@ TEST(GateBandsGPU, MatchesTheHostExpanderOnBlake3)
             const uint64_t row = k * b3::CLOCKS + l;
             for (int j = 0; j < 18; j++) {
                 seed[row * nCols + j] = Goldilocks::fromU64(
-                    0x9E3779B97F4A7C15ull * (k * 32 + l * 18 + j + 1) % GOLDILOCKS_PRIME);
+                    0x9E3779B97F4A7C15ull * ((k * LANES + l) * 18 + j + 1) % GOLDILOCKS_PRIME);
             }
         }
     }
@@ -231,10 +233,25 @@ TEST(GateBandsGPU, MatchesTheHostExpanderOnBlake3)
     }
     ASSERT_EQ(diffs, 0u) << diffs << " cells differ between the host and device BLAKE3 expanders";
 
-    // Not vacuous: the counts are the ones three blocks of two lanes actually look up.
+    // Not vacuous: the counts are the ones these blocks and lanes actually look up.
     uint64_t tableTotal = 0, rangeTotal = 0;
     for (uint64_t i = 0; i < b3::TABLE_SIZE; i++) tableTotal += device[i * nCols + Lseed.mul_table];
     for (uint64_t i = 0; i < b3::RANGE_SIZE; i++) rangeTotal += device[i * nCols + Lseed.mul_range];
     EXPECT_EQ(tableTotal, BLOCKS * LANES * (16 * b3::CLOCKS + 4 * 16));
     EXPECT_EQ(rangeTotal, BLOCKS * LANES * 6 * b3::CLOCKS);
+}
+
+TEST(GateBandsGPU, MatchesTheHostExpanderOnBlake3)
+{
+    expectBlake3Matches(2, 3);
+}
+
+// 70 bands: 3 CUDA blocks at 2 lanes (32 bands each), 5 at 4 lanes (16), and at 3 lanes (21 per
+// block, one thread idle) a lane count that does not divide the block.
+TEST(GateBandsGPU, MatchesTheHostExpanderOnBlake3AcrossBlocks)
+{
+    for (const uint64_t lanes : {2ull, 3ull, 4ull}) {
+        SCOPED_TRACE("lanes " + std::to_string(lanes));
+        expectBlake3Matches(lanes, 70);
+    }
 }

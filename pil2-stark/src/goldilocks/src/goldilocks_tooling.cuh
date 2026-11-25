@@ -4,6 +4,8 @@
 #include <cstdint>
 #include <cassert>
 #include <atomic>
+#include <condition_variable>
+#include <mutex>
 #ifdef USE_CUDA_GRAPH
 #include <memory>
 #include "cuda_graph_cache.cuh"
@@ -87,8 +89,9 @@ struct AirInstanceInfo {
     ExpressionsGPU *expressions_gpu;
     int64_t *opening_points;
 
-    EvalGroup *evalGroups = nullptr;
-    uint64_t nEvalGroups = 0;
+    EvalSlot *evalSlots = nullptr;
+    uint32_t *evalTileStart = nullptr;   // nEvalTiles + 1 bounds into evalSlots
+    uint64_t nEvalTiles = 0;
 
     // FRI terms opening-major (friTermStart has nOpenings + 1 bounds), for deep_expression.cuh.
     FriTerm *friTerms = nullptr;
@@ -218,11 +221,13 @@ struct AirInstanceInfo {
         CHECKCUDAERR(cudaMalloc(&d_num_packed_words, sizeof(uint64_t)));
 
 
-        const std::vector<EvalGroup> groups = buildEvalGroups(setupCtx->starkInfo);
-        nEvalGroups = groups.size();
-        if (nEvalGroups != 0) {
-            CHECKCUDAERR(cudaMalloc(&evalGroups, nEvalGroups * sizeof(EvalGroup)));
-            CHECKCUDAERR(cudaMemcpy(evalGroups, groups.data(), nEvalGroups * sizeof(EvalGroup), cudaMemcpyHostToDevice));
+        const EvalSlots evalTable = buildEvalSlots(setupCtx->starkInfo);
+        nEvalTiles = evalTable.tileStart.size() - 1;
+        if (nEvalTiles != 0) {
+            CHECKCUDAERR(cudaMalloc(&evalSlots, evalTable.slots.size() * sizeof(EvalSlot)));
+            CHECKCUDAERR(cudaMemcpy(evalSlots, evalTable.slots.data(), evalTable.slots.size() * sizeof(EvalSlot), cudaMemcpyHostToDevice));
+            CHECKCUDAERR(cudaMalloc(&evalTileStart, evalTable.tileStart.size() * sizeof(uint32_t)));
+            CHECKCUDAERR(cudaMemcpy(evalTileStart, evalTable.tileStart.data(), evalTable.tileStart.size() * sizeof(uint32_t), cudaMemcpyHostToDevice));
         }
 
         uint64_t nOpeningPoints = setupCtx->starkInfo.openingPoints.size();
@@ -328,7 +333,8 @@ struct AirInstanceInfo {
 
         delete expressions_gpu;
 
-        if (evalGroups != nullptr) CHECKCUDAERR(cudaFree(evalGroups));
+        if (evalSlots != nullptr) CHECKCUDAERR(cudaFree(evalSlots));
+        if (evalTileStart != nullptr) CHECKCUDAERR(cudaFree(evalTileStart));
         CHECKCUDAERR(cudaFree(d_num_packed_words));
 
         for (void *p : {(void *)friTerms, (void *)friTermStart, (void *)friCols, (void *)friColStart, (void *)friOpStart,
@@ -369,6 +375,16 @@ struct AirInstanceInfo {
 // main streams and the recursiveF buffer so the single bound matches every allocation.
 #define PINNED_EXPS_SLOTS 40000
 
+// Stage-1 tree levels >= CM1_UPPER_LEVEL, kept by the phase-1 slot commit so the proof uploads them
+// instead of rebuilding the tree.
+constexpr uint32_t CM1_UPPER_LEVEL = 8;
+constexpr uint64_t CM1_UPPER_LEVEL_MAX_WORDS = 1ull << 20;
+struct Cm1UpperTree {
+    uint64_t airgroupId = 0, airId = 0;
+    uint64_t root[4] = {};
+    std::vector<uint64_t> words;   // levels >= CM1_UPPER_LEVEL, root last
+};
+
 struct StreamData{
 
     //const data
@@ -394,6 +410,8 @@ struct StreamData{
     Goldilocks::Element *pinned_buffer_proof;
     Goldilocks::Element *pinned_buffer_exps_params;
     Goldilocks::Element *pinned_buffer_exps_args;
+    // Cm1UpperTree upload staging, x2 (pipeSlot parity).
+    uint64_t *pinned_cm1_upper = nullptr;
     // Per-stream pinned staging for the aux_values H2D of the proof and verify-constraints paths,
     // enabling an async copy (no per-copy stream sync); reused only on event-gated stream reselect.
     Goldilocks::Element *pinned_aux_values;
@@ -403,17 +421,26 @@ struct StreamData{
     uint64_t *d_gate_band_scratch = nullptr;
 
     //runtime data
-    // Atomic: status is read (unlocked) by wait_trace_h2d_done / callbacks while
+    // Atomic: status is read (unlocked) by callbacks and selection scans while
     // reserveStream/gen_proof write it, so a plain int would be a data race. The
     // atomic only removes UB on the individual load/store; the check-then-act
     // sequences in selectStream/reserveStream/get_stream_proofs_* are made correct
     // by holding mutex_stream_selection, not by the atomic.
     std::atomic<uint32_t> status{0}; //0: unused, 1: loading, 2: full, 3: reusable (not unused)
     cudaEvent_t end_event;
-    // Marks the point where this stream stops reading the caller's host trace buffer, i.e. the
-    // trace H2D. Distinct from end_event (the whole commit): the buffer can be recycled as soon
-    // as the copy is done, and gating that on the LDE/Merkle work kept the pool starved.
-    cudaEvent_t trace_copy_event;
+    // Host-trace release gates, one per launch (armTraceGate / wait_trace_h2d_done_gpu).
+    struct TraceGate {
+        enum : uint8_t { FREE = 0, ARMED = 1, WAITING = 2 };
+        uint8_t state = FREE;
+        uint64_t instanceId = 0;
+        uint64_t seq = 0;            // arm order, for evicting the oldest
+        cudaEvent_t event = nullptr;
+    };
+    static constexpr uint32_t TRACE_GATES = 8;
+    TraceGate traceGates[TRACE_GATES];
+    std::mutex traceGateMutex;
+    std::condition_variable traceGateCv;
+    uint64_t traceGateSeq = 0;
     // One timer per ring slot: the next proof is enqueued while the current one still runs,
     // so it must record into its own object. launchSeq advances only at ring pushes, so
     // outside the pipeline every path shares timers[0].
@@ -525,7 +552,10 @@ struct StreamData{
         localStreamId = localStreamId_;
         recursive = recursive_;
         cudaEventCreate(&end_event);
-        cudaEventCreate(&trace_copy_event);
+        for (TraceGate &g : traceGates) {
+            CHECKCUDAERR(cudaEventCreateWithFlags(&g.event, cudaEventDisableTiming));
+            g.state = TraceGate::FREE;
+        }
         instanceId = -1;
         status = 0;
         // x2: parity slots for the deep pipeline (slot 0 is the only one used
@@ -536,6 +566,8 @@ struct StreamData{
         // staging must not overwrite a slot whose H2D is still queued behind the running proof.
         CHECKCUDAERR(cudaMallocHost((void **)&pinned_buffer_exps_params, 2 * maxExps * 2 * sizeof(DestParamsGPU)));
         CHECKCUDAERR(cudaMallocHost((void **)&pinned_buffer_exps_args, 2 * maxExps * sizeof(ExpsArguments)));
+        // Every class: phase-B basics also run on recursive streams.
+        CHECKCUDAERR(cudaMallocHost((void **)&pinned_cm1_upper, 2 * CM1_UPPER_LEVEL_MAX_WORDS * sizeof(uint64_t)));
         CHECKCUDAERR(cudaMallocHost((void **)&pinned_params, 2 * sizeof(StepsParams)));
         CHECKCUDAERR(cudaMallocHost((void **)&pinned_aux_values, 2 * PINNED_AUX_VALUES_MAX * sizeof(Goldilocks::Element)));
         for (int k = 0; k < 2; k++) {
@@ -576,7 +608,7 @@ struct StreamData{
 
     void reset(bool reset_status){
         cudaSetDevice(gpuId);
-        // end_event / trace_copy_event are created once in initialize() and destroyed in free();
+        // end_event / the trace gates are created once in initialize() and destroyed in free();
         // cudaEventRecord overwrites them on each use, so there is no need to
         // destroy/recreate them on every per-instance reset.
         status = reset_status ? 0 : 3;
@@ -630,10 +662,14 @@ struct StreamData{
         cudaEventDestroy(fixedPolsDone);
         cudaEventDestroy(fixedTreeDone);
         cudaEventDestroy(end_event);
-        cudaEventDestroy(trace_copy_event);
+        for (TraceGate &g : traceGates) cudaEventDestroy(g.event);
         cudaFreeHost(pinned_buffer_proof);
         cudaFreeHost(pinned_buffer_exps_params);
         cudaFreeHost(pinned_buffer_exps_args);
+        if (pinned_cm1_upper != nullptr) {
+            cudaFreeHost(pinned_cm1_upper);
+            pinned_cm1_upper = nullptr;
+        }
         cudaFreeHost(pinned_params);
         cudaFreeHost(pinned_aux_values);
         if (d_gate_band_scratch != nullptr) {
@@ -735,6 +771,9 @@ struct DeviceCommitBuffers
     std::map<uint64_t, Goldilocks::Element *> hostBasicFixed;
     std::mutex constCacheMutex;
     std::condition_variable constCacheCv;   // a slot's last pending reader enqueued its unpack
+    // Cm1UpperTree by instance id.
+    std::mutex cm1UpperMutex;
+    std::map<uint64_t, Cm1UpperTree> cm1Upper;
     struct HostConstPols { Goldilocks::Element *ptr = nullptr; uint64_t elems = 0; };
     std::map<int64_t, HostConstPols> hostConstPols;   // const set key -> pinned host copy
     gl64_t ***d_aux_trace;
@@ -851,6 +890,8 @@ struct DeviceCommitBuffers
     // Pinned per slot (pageable copies block the driver): root, column widths, GPU-witness
     // input bounce. [n_gpus * streamCommitSlots * STREAM_COMMIT_HOST_WORDS]
     uint64_t *streamCommitHost = nullptr;
+    // Cm1UpperTree D2H landing, pinned so the copy doesn't block the thread. One per commit slot.
+    uint64_t *streamCommitUpperHost = nullptr;
     // Per GPU: shared hold of that GPU's overlapped legacy streams. The first in-flight slot commit
     // sets every overlapped stream's `slotHeld` flag, the last clears them. `cv` is signalled
     // when the quiesce lifts and when the last in-flight commit leaves.

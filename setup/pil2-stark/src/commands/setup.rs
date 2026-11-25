@@ -34,7 +34,7 @@ pub struct SetupOptions {
     /// If None, no stats file is written.
     pub stats_output_path: Option<String>,
     pub hash: String,
-    /// Proofs each recursive2 circuit aggregates. 2 or 3.
+    /// Proofs each recursive2 circuit aggregates: 2, 3 or 4.
     pub agg_arity: usize,
     /// Build the `vadcop_final_compressed` stage. Defaults per family -- see
     /// `hash_family::compressed_final_by_default` -- and can be added later with the

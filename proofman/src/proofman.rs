@@ -663,6 +663,8 @@ pub struct ProofMan<F: PrimeField64> {
     wcm: Arc<WitnessManager<F>>,
     n_streams: usize,
     n_streams_non_recursive: usize,
+    /// Basic streams on each GPU.
+    n_basic_streams_per_gpu: usize,
     memory_handler: Arc<MemoryHandler<F>>,
     memory_handler_recursive_witness: Arc<MemoryHandlerRecursive<F>>,
     proofs: Arc<Vec<RwLock<Option<Proof<F>>>>>,
@@ -2112,7 +2114,7 @@ where
         if is_shared_buffer {
             // The trace H2D is asynchronous: recycle the buffer only once it has been read.
             if pctx.gpu {
-                wait_trace_h2d_done_c(pctx.get_device_buffers_ptr(), stream_id as u64);
+                wait_trace_h2d_done_c(pctx.get_device_buffers_ptr(), stream_id as u64, instance_id as u64);
             }
             memory_handler.release_buffer(witness_buffer)?;
         }
@@ -2224,6 +2226,7 @@ where
                 &self.const_tree,
                 None,
                 true,
+                std::ptr::null_mut(),
             )?;
             if self.pctx.gpu {
                 // gen_proof is async on GPU: the proof buffer is only filled once the stream drains.
@@ -2887,6 +2890,7 @@ where
             recurser_fold_lock: Mutex::new(()),
             n_streams,
             n_streams_non_recursive,
+            n_basic_streams_per_gpu: n_streams_per_gpu as usize,
             max_num_threads,
             num_threads_per_witness,
             memory_handler,
@@ -3733,7 +3737,7 @@ where
             }
         }
 
-        let mut global_challenge = calculate_global_challenge(&self.pctx, all_partial_contributions_u64);
+        let mut global_challenge = calculate_global_challenge(&self.pctx, all_partial_contributions_u64)?;
         tracing::info!(
             "··· Global challenge: [{}, {}, {}]",
             global_challenge[0],
@@ -3794,12 +3798,16 @@ where
         if options.aggregation {
             for (airgroup, &n_proofs) in n_airgroup_proofs.iter().enumerate().take(n_airgroups) {
                 let n_recursive2_proofs = total_recursive_proofs(n_proofs, self.pctx.global_info.aggregation_arity);
-                if n_recursive2_proofs.has_remaining || n_proofs == 0 {
+                // An airgroup with no proofs still contributes one (null) proof to the final stage.
+                let n_nulls = if n_proofs == 0 { 1 } else { n_recursive2_proofs.n_nulls };
+                if n_nulls > 0 {
                     let setup = self.setups.get_setup(airgroup, 0, &ProofType::Recursive2)?;
                     let publics_aggregation = n_publics_aggregation(&self.pctx, airgroup);
-                    let null_proof_buffer = vec![0; setup.proof_size as usize + publics_aggregation];
-                    let null_proof = Proof::new(ProofType::Recursive2, airgroup, 0, None, null_proof_buffer);
-                    self.recursive2_proofs[airgroup].write().unwrap().push(null_proof);
+                    let mut pool = self.recursive2_proofs[airgroup].write().unwrap();
+                    for _ in 0..n_nulls {
+                        let null_proof_buffer = vec![0; setup.proof_size as usize + publics_aggregation];
+                        pool.push(Proof::new(ProofType::Recursive2, airgroup, 0, None, null_proof_buffer));
+                    }
                 }
             }
         }
@@ -3816,8 +3824,9 @@ where
         // Dequeue-ahead prefetch (witness-zone mode): the worker dequeues the next
         // ready basics from the scheduler ahead of dispatch. Only READY
         // (stored/computed) witnesses ever enter the scheduler queue, so a held
-        // instance is always launchable. Single basic stream only; on with the zone the planner armed.
-        let prefetch_dequeue_ahead = self.pctx.gpu && self.n_streams_non_recursive == 1 && self.pctx.prefetch_units > 0;
+        // instance is always launchable. One basic stream per GPU (each worker keeps its own held
+        // queue); on with the zone the planner armed.
+        let prefetch_dequeue_ahead = self.pctx.gpu && self.n_basic_streams_per_gpu == 1 && self.pctx.prefetch_units > 0;
         self.pctx.set_proof_tx(Some(self.proofs_tx.clone()));
 
         // Key-affinity recursive scheduler (GPU only; CPU has no streams and uses the witness
@@ -4204,6 +4213,7 @@ where
             let const_pols_clone = self.const_pols.clone();
             let const_tree_clone = self.const_tree.clone();
             let proofs_clone = self.proofs.clone();
+            let roots_contributions_clone = self.roots_contributions.clone();
             let compressor_proofs_clone = self.compressor_proofs.clone();
             let recursive1_proofs_clone = self.recursive1_proofs.clone();
             let recursive2_proofs_ongoing_clone = self.recursive2_proofs_ongoing.clone();
@@ -4358,6 +4368,7 @@ where
                                 &const_tree_clone,
                                 reserved,
                                 false,
+                                roots_contributions_clone.ptr(instance_id),
                             ) {
                                 Ok(sid) => {
                                     pending.commit();
@@ -4402,7 +4413,11 @@ where
                             let (is_shared_buffer, witness_buffer) = pctx_clone.free_instance(instance_id);
                             if is_shared_buffer {
                                 if pctx_clone.gpu {
-                                    wait_trace_h2d_done_c(pctx_clone.get_device_buffers_ptr(), proof_stream_id as u64);
+                                    wait_trace_h2d_done_c(
+                                        pctx_clone.get_device_buffers_ptr(),
+                                        proof_stream_id as u64,
+                                        instance_id as u64,
+                                    );
                                 }
                                 if let Err(e) = memory_handler_clone.release_buffer(witness_buffer) {
                                     cancellation_info_clone.write_recover().cancel(Some(e));
@@ -4874,7 +4889,14 @@ where
             let mut received = self.received_agg_proofs.write().unwrap();
 
             for proof in agg_proofs {
-                let airgroup_vec = &mut received[proof.airgroup_id as usize];
+                // Peer-supplied: an out-of-range id would panic with the lock held and poison it.
+                let Some(airgroup_vec) = received.get_mut(proof.airgroup_id as usize) else {
+                    self.cancellation_info.write_recover().cancel(Some(ProofmanError::InvalidProof(format!(
+                        "Received aggregated proofs for unknown airgroup {}",
+                        proof.airgroup_id
+                    ))));
+                    break;
+                };
 
                 for &worker_idx in &proof.worker_indexes {
                     if airgroup_vec.contains(&worker_idx) {
@@ -4935,7 +4957,13 @@ where
         for proof in agg_proofs {
             {
                 let received = self.received_agg_proofs.read().unwrap();
-                let airgroup_vec = &received[proof.airgroup_id as usize];
+                let Some(airgroup_vec) = received.get(proof.airgroup_id as usize) else {
+                    self.cancellation_info.write_recover().cancel(Some(ProofmanError::InvalidProof(format!(
+                        "Received aggregated proof for unknown airgroup {}",
+                        proof.airgroup_id
+                    ))));
+                    break;
+                };
 
                 for &worker_idx in &proof.worker_indexes {
                     if !airgroup_vec.contains(&worker_idx) {
@@ -5048,21 +5076,23 @@ where
                     total_proofs_received[airgroup_id] = n_agg_proofs;
                     let n_agg_proofs_to_be_done =
                         total_recursive_proofs(n_agg_proofs, self.pctx.global_info.aggregation_arity);
-                    if n_agg_proofs_to_be_done.has_remaining {
+                    if n_agg_proofs_to_be_done.n_nulls > 0 {
                         let setup = self.setups.get_setup(airgroup_id, 0, &ProofType::Recursive2)?;
                         let publics_aggregation = n_publics_aggregation(&self.pctx, airgroup_id);
-                        let null_proof_buffer = vec![0; setup.proof_size as usize + publics_aggregation];
 
-                        let id = {
-                            let mut rec2_proofs = self.recursive2_proofs_ongoing.write().unwrap();
-                            let id = rec2_proofs.len();
-                            let null_proof =
-                                Proof::new(ProofType::Recursive2, airgroup_id, 0, Some(id), null_proof_buffer);
-                            rec2_proofs.push(Some(null_proof));
-                            id
-                        };
+                        for _ in 0..n_agg_proofs_to_be_done.n_nulls {
+                            let null_proof_buffer = vec![0; setup.proof_size as usize + publics_aggregation];
+                            let id = {
+                                let mut rec2_proofs = self.recursive2_proofs_ongoing.write().unwrap();
+                                let id = rec2_proofs.len();
+                                let null_proof =
+                                    Proof::new(ProofType::Recursive2, airgroup_id, 0, Some(id), null_proof_buffer);
+                                rec2_proofs.push(Some(null_proof));
+                                id
+                            };
 
-                        launch_callback_c(id as u64, ProofType::Recursive2.into());
+                            launch_callback_c(id as u64, ProofType::Recursive2.into());
+                        }
                     }
                     total_proofs_to_be_done += n_agg_proofs_to_be_done.n_proofs;
                 }
@@ -5164,7 +5194,7 @@ where
                         aggregated: true,
                     })
                     .collect();
-                let global_challenge_calculated = calculate_global_challenge(&self.pctx, &recomputed_contributions);
+                let global_challenge_calculated = calculate_global_challenge(&self.pctx, &recomputed_contributions)?;
 
                 if global_challenge_calculated != *global_challenge {
                     let error =
@@ -5487,12 +5517,14 @@ where
         let mut total_proofs: usize = 0;
         for (airgroup, &n_proofs) in alives.iter().enumerate() {
             let n_recursive2_proofs = total_recursive_proofs(n_proofs, self.pctx.global_info.aggregation_arity);
-            if n_recursive2_proofs.has_remaining {
+            if n_recursive2_proofs.n_nulls > 0 {
                 let setup = self.setups.get_setup(airgroup, 0, &ProofType::Recursive2)?;
                 let publics_aggregation = n_publics_aggregation(&self.pctx, airgroup);
-                let null_proof_buffer = vec![0; setup.proof_size as usize + publics_aggregation];
-                let null_proof = Proof::new(ProofType::Recursive2, airgroup, 0, None, null_proof_buffer);
-                self.recursive2_proofs[airgroup].write().unwrap().push(null_proof);
+                let mut pool = self.recursive2_proofs[airgroup].write().unwrap();
+                for _ in 0..n_recursive2_proofs.n_nulls {
+                    let null_proof_buffer = vec![0; setup.proof_size as usize + publics_aggregation];
+                    pool.push(Proof::new(ProofType::Recursive2, airgroup, 0, None, null_proof_buffer));
+                }
             }
             total_proofs += n_recursive2_proofs.n_proofs;
         }
@@ -6229,6 +6261,8 @@ where
         // true: no global challenge -- the transcript is seeded from this AIR's own
         // verkey + publics (see genProof's `recursive` branch).
         self_contained: bool,
+        // Stage-1 root from the contribution, or null.
+        contribution_root: *mut c_void,
     ) -> ProofmanResult<usize> {
         let (airgroup_id, air_id) = pctx.dctx_get_instance_info(instance_id)?;
         timer_start_debug!(GEN_PROOF, "GEN_PROOF_{} [{}:{}]", instance_id, airgroup_id, air_id);
@@ -6285,6 +6319,7 @@ where
             const_pols_tree_path,
             &custom_commits_fixed_path,
             self_contained,
+            contribution_root,
         );
         if proof_stream_id == u64::MAX {
             return Err(ProofmanError::ProofmanError(format!(

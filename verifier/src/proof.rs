@@ -73,8 +73,9 @@ impl VadcopFinalProof {
                 format!("Failed to open file for loading proof: {}: {}", path.as_ref().display(), e),
             )
         })?;
-        let proof: VadcopFinalProof =
-            bincode::serde::decode_from_std_read(&mut file, bincode::config::standard().with_fixed_int_encoding())?;
+        // Bounded (a final proof is under 1 MB): a length the file claims is otherwise allocated up front.
+        let config = bincode::config::standard().with_fixed_int_encoding().with_limit::<{ 64 << 20 }>();
+        let proof: VadcopFinalProof = bincode::serde::decode_from_std_read(&mut file, config)?;
         proof.check_canonical_publics()?;
         Ok(proof)
     }
@@ -134,5 +135,18 @@ mod tests {
         assert!(VadcopFinalProof::new(alloc::vec![7], alloc::vec![alias], false, "Poseidon2".into())
             .check_canonical_publics()
             .is_err());
+    }
+
+    /// 25 bytes whose `hash` claims 2^40 bytes: unbounded, loading aborts on the allocation.
+    #[cfg(feature = "std")]
+    #[test]
+    fn a_proof_file_claiming_a_huge_string_is_an_error() {
+        let path = std::env::temp_dir().join(format!("vadcop-huge-hash-{}.bin", std::process::id()));
+        let mut bytes = alloc::vec![0u8; 17];
+        bytes.extend_from_slice(&(1u64 << 40).to_le_bytes());
+        std::fs::write(&path, bytes).unwrap();
+        let loaded = VadcopFinalProof::load(&path);
+        std::fs::remove_file(&path).unwrap();
+        assert!(loaded.is_err());
     }
 }

@@ -27,7 +27,7 @@ struct StarksBackend {
     // Proof generation
     // customCommitsFixedPath: path to the on-disk custom-commits-fixed file for this
     // (airgroupId, airId). Empty string means no custom commits for this instance.
-    uint64_t (*gen_proof)(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void *params, void *globalChallenge, uint64_t* proofBuffer, char *proofFile, void *d_buffers, uint64_t streamId, char *constPolsPath, char *constTreePath, char *customCommitsFixedPath, bool selfContained);
+    uint64_t (*gen_proof)(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void *params, void *globalChallenge, uint64_t* proofBuffer, char *proofFile, void *d_buffers, uint64_t streamId, char *constPolsPath, char *constTreePath, char *customCommitsFixedPath, bool selfContained, void *contributionRoot);
     void (*get_stream_proofs)(void *d_buffers_);
     void (*get_stream_proofs_non_blocking)(void *d_buffers_);
     void (*get_stream_id_proof)(void *d_buffers_, uint64_t streamId);
@@ -46,7 +46,7 @@ struct StarksBackend {
     void (*unregister_host_memory)(void *ptr);
     // Wait for a stream's async commit (incl. the now-unsynced trace H2D) to
     // finish, so the shared trace buffer can be reused. GPU backend only.
-    void (*wait_trace_h2d_done)(void *d_buffers, uint64_t stream_id);
+    void (*wait_trace_h2d_done)(void *d_buffers, uint64_t stream_id, uint64_t instance_id);
 
     // Device management
     void *(*gen_device_buffers)(uint32_t node_rank, uint32_t node_size, const int32_t* numa_nodes, uint32_t arity, uint32_t max_n_bits_ext);

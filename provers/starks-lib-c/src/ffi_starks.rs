@@ -203,13 +203,11 @@ pub fn unregister_host_memory_c(ptr: *mut c_void) {
     }
 }
 
-/// Block until the commit work on `stream_id` has completed on the GPU, so a
-/// shared trace buffer whose async H2D copy rode that stream can be safely
-/// reused. No-op on the CPU backend (the symbol is GPU-only; callers gate on
-/// `pctx.gpu`).
-pub fn wait_trace_h2d_done_c(d_buffers: *mut c_void, stream_id: u64) {
+/// Block until the launch of `instance_id` on `stream_id` has finished reading
+/// its host trace, so the buffer can be reused. No-op on the CPU backend.
+pub fn wait_trace_h2d_done_c(d_buffers: *mut c_void, stream_id: u64, instance_id: u64) {
     unsafe {
-        wait_trace_h2d_done(d_buffers, stream_id);
+        wait_trace_h2d_done(d_buffers, stream_id, instance_id);
     }
 }
 
@@ -973,6 +971,8 @@ pub fn gen_proof_c(
     // true: seed the transcript from this AIR's own verkey + publics instead of the
     // global challenge (self-contained proof, no contributions phase).
     self_contained: bool,
+    // Stage-1 root from the contribution, or null; lets the GPU proof reuse its upper tree.
+    contribution_root: *mut c_void,
 ) -> u64 {
     let proof_file_name = CString::new(proof_file).unwrap();
     let proof_file_ptr = proof_file_name.as_ptr() as *mut std::os::raw::c_char;
@@ -1002,6 +1002,7 @@ pub fn gen_proof_c(
             const_tree_filename_ptr,
             custom_commits_path_ptr,
             self_contained,
+            contribution_root,
         )
     }
 }

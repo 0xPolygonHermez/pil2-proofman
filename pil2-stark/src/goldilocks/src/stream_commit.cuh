@@ -146,6 +146,12 @@ int64_t streamCommitPacked(gl64_t *slotBase, const StreamCommitDims &dims,
                            StreamCommitChunkHook chunkHook = nullptr, void *chunkUser = nullptr,
                            // Elements the slot owns; colMajorForHook transposes into the
                            // unused tail. 0 disables it.
-                           uint64_t slotElems = 0);
+                           uint64_t slotElems = 0,
+                           // Non-null: also copy tree levels >= upperLevel here (arity 2).
+                           uint64_t *hUpper = nullptr, uint32_t upperLevel = 0);
+
+// Arity-2 tree over nLeaves: offset and size (root included) of its levels >= upperLevel.
+uint64_t streamCommitUpperOffset(uint64_t nLeaves, uint32_t upperLevel);
+uint64_t streamCommitUpperWords(uint64_t nLeaves, uint32_t upperLevel);
 
 #endif

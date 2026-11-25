@@ -214,6 +214,59 @@ struct BlockInputs {
     }
 };
 
+// One clock (round r, G g) of one lane: its row, written through `put`, and its lookups. Advances `v`.
+template <class Put, class Sink>
+B3_HD inline void expand_clock(const Put &put, uint64_t base, uint64_t lane, const Layout &L,
+                               const BlockInputs &in, Sink &mul, uint32_t v[16], int r, int g) {
+    const uint64_t row = base + (uint64_t)(r * G_PER_ROUND + g);
+    const int ia = g_idx(g, 0), ib = g_idx(g, 1), ic = g_idx(g, 2), id = g_idx(g, 3);
+    const uint32_t x = in.block[sigma(r, 2 * g)];
+    const uint32_t y = in.block[sigma(r, 2 * g + 1)];
+    const GTrace t = g_step(v[ia], v[ib], v[ic], v[id], x, y);
+
+    auto lim = [&](uint64_t colBase, int per, int idx) { return colBase + lane * per + idx; };
+    for (int i = 0; i < 2; i++) {
+        put(row, lim(L.va, 2, i), (t.va >> (16 * i)) & 0xFFFF);
+        put(row, lim(L.x,  2, i), (x    >> (16 * i)) & 0xFFFF);
+        put(row, lim(L.y,  2, i), (y    >> (16 * i)) & 0xFFFF);
+        // va, x and y: every limb, every row. vc is not a column -- the air builds it
+        // from vc'' and the IV.
+        mul.range((t.va >> (16 * i)) & 0xFFFF);
+        mul.range((x    >> (16 * i)) & 0xFFFF);
+        mul.range((y    >> (16 * i)) & 0xFFFF);
+    }
+    for (int i = 0; i < 4; i++) {
+        const uint8_t vb_b = (t.vb >> (8 * i)) & 0xFF, vd_b = (t.vd >> (8 * i)) & 0xFF;
+        const uint8_t a1_b = (t.a1 >> (8 * i)) & 0xFF, d1_b = (t.d1 >> (8 * i)) & 0xFF;
+        const uint8_t c1_b = (t.c1 >> (8 * i)) & 0xFF, a2_b = (t.a2 >> (8 * i)) & 0xFF;
+        const uint8_t d2_b = (t.d2 >> (8 * i)) & 0xFF, c2_b = (t.c2 >> (8 * i)) & 0xFF;
+        const uint8_t b1_b = (t.b1 >> (8 * i)) & 0xFF, z_b = (t.z >> (8 * i)) & 0xFF;
+        put(row, lim(L.vb, 4, i), vb_b);
+        put(row, lim(L.vd, 4, i), vd_b);
+        put(row, lim(L.va_p, 4, i), a1_b);
+        put(row, lim(L.vd_p, 4, i), d1_b);
+        put(row, lim(L.vc_p, 4, i), c1_b);
+        put(row, lim(L.va_pp, 4, i), a2_b);
+        put(row, lim(L.vd_pp, 4, i), d2_b);
+        put(row, lim(L.vc_pp, 4, i), c2_b);
+        put(row, lim(L.vb_pp_xor, 4, i), z_b);
+
+        uint8_t s0, s1;
+        table_out(vb_b, c1_b, 12, s0, s1);
+        put(row, L.vb_p_s + lane * 8 + i * 2 + 0, s0);
+        put(row, L.vb_p_s + lane * 8 + i * 2 + 1, s1);
+
+        // the four XOR groups the permutation looks up, per byte
+        mul.table(table_row(vd_b, a1_b, 0));    // vd' = (vd ^ va') >>> 16
+        mul.table(table_row(vb_b, c1_b, 12));   // vb' = (vb ^ vc') >>> 12
+        mul.table(table_row(d1_b, a2_b, 0));    // vd'' = (vd' ^ va'')
+        mul.table(table_row(b1_b, c2_b, 0));    // z = vb' ^ vc''
+    }
+    put(row, L.vb_pp_t + lane, (t.z >> 7) & 1);
+
+    v[ia] = t.a2; v[ib] = t.b2; v[ic] = t.c2; v[id] = t.d2;
+}
+
 // Rebuild one lane's whole 56-row column group, and count every lookup it makes. Returns the final
 // state, which the caller needs for the feedforward.
 template <class T, class Sink>
@@ -226,55 +279,7 @@ B3_HD inline void expand_lane(T *trace, uint64_t nCols, uint64_t base, uint64_t 
     in.initial_state(v);
 
     for (int r = 0; r < ROUNDS; r++) {
-        for (int g = 0; g < G_PER_ROUND; g++) {
-            const uint64_t row = base + (uint64_t)(r * G_PER_ROUND + g);
-            const int ia = g_idx(g, 0), ib = g_idx(g, 1), ic = g_idx(g, 2), id = g_idx(g, 3);
-            const uint32_t x = in.block[sigma(r, 2 * g)];
-            const uint32_t y = in.block[sigma(r, 2 * g + 1)];
-            const GTrace t = g_step(v[ia], v[ib], v[ic], v[id], x, y);
-
-            auto lim = [&](uint64_t colBase, int per, int idx) { return colBase + lane * per + idx; };
-            for (int i = 0; i < 2; i++) {
-                put(row, lim(L.va, 2, i), (t.va >> (16 * i)) & 0xFFFF);
-                put(row, lim(L.x,  2, i), (x    >> (16 * i)) & 0xFFFF);
-                put(row, lim(L.y,  2, i), (y    >> (16 * i)) & 0xFFFF);
-                // va, x and y: every limb, every row. vc is not a column -- the air builds it
-                // from vc'' and the IV.
-                mul.range((t.va >> (16 * i)) & 0xFFFF);
-                mul.range((x    >> (16 * i)) & 0xFFFF);
-                mul.range((y    >> (16 * i)) & 0xFFFF);
-            }
-            for (int i = 0; i < 4; i++) {
-                const uint8_t vb_b = (t.vb >> (8 * i)) & 0xFF, vd_b = (t.vd >> (8 * i)) & 0xFF;
-                const uint8_t a1_b = (t.a1 >> (8 * i)) & 0xFF, d1_b = (t.d1 >> (8 * i)) & 0xFF;
-                const uint8_t c1_b = (t.c1 >> (8 * i)) & 0xFF, a2_b = (t.a2 >> (8 * i)) & 0xFF;
-                const uint8_t d2_b = (t.d2 >> (8 * i)) & 0xFF, c2_b = (t.c2 >> (8 * i)) & 0xFF;
-                const uint8_t b1_b = (t.b1 >> (8 * i)) & 0xFF, z_b = (t.z >> (8 * i)) & 0xFF;
-                put(row, lim(L.vb, 4, i), vb_b);
-                put(row, lim(L.vd, 4, i), vd_b);
-                put(row, lim(L.va_p, 4, i), a1_b);
-                put(row, lim(L.vd_p, 4, i), d1_b);
-                put(row, lim(L.vc_p, 4, i), c1_b);
-                put(row, lim(L.va_pp, 4, i), a2_b);
-                put(row, lim(L.vd_pp, 4, i), d2_b);
-                put(row, lim(L.vc_pp, 4, i), c2_b);
-                put(row, lim(L.vb_pp_xor, 4, i), z_b);
-
-                uint8_t s0, s1;
-                table_out(vb_b, c1_b, 12, s0, s1);
-                put(row, L.vb_p_s + lane * 8 + i * 2 + 0, s0);
-                put(row, L.vb_p_s + lane * 8 + i * 2 + 1, s1);
-
-                // the four XOR groups the permutation looks up, per byte
-                mul.table(table_row(vd_b, a1_b, 0));    // vd' = (vd ^ va') >>> 16
-                mul.table(table_row(vb_b, c1_b, 12));   // vb' = (vb ^ vc') >>> 12
-                mul.table(table_row(d1_b, a2_b, 0));    // vd'' = (vd' ^ va'')
-                mul.table(table_row(b1_b, c2_b, 0));    // z = vb' ^ vc''
-            }
-            put(row, L.vb_pp_t + lane, (t.z >> 7) & 1);
-
-            v[ia] = t.a2; v[ib] = t.b2; v[ic] = t.c2; v[id] = t.d2;
-        }
+        for (int g = 0; g < G_PER_ROUND; g++) expand_clock(put, base, lane, L, in, mul, v, r, g);
     }
     std::memcpy(finalState, v, sizeof(v));
 }

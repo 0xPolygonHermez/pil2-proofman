@@ -92,6 +92,16 @@ static void withGpuHashFamily(uint32_t arity, Fn &&fn)
     }
 }
 
+// Can the proof reuse the slot commit's upper stage-1 tree (Cm1UpperTree)? BLAKE3, arity 2, no
+// leaf level, and tall enough that the kept levels include the last-level verification.
+static bool cm1UpperTreeEligible(const StarkInfo &si, StreamCommitHash hash)
+{
+    const uint64_t nExt = 1ull << si.starkStruct.nBitsExt;
+    return hash == StreamCommitHash::Blake3 && si.dropLeafLevel && si.starkStruct.merkleTreeArity == 2 &&
+           (nExt >> (CM1_UPPER_LEVEL + si.starkStruct.lastLevelVerification + 1)) > 0 &&
+           streamCommitUpperWords(nExt, CM1_UPPER_LEVEL) <= CM1_UPPER_LEVEL_MAX_WORDS;
+}
+
 void buildMerkleTreeGPU(uint32_t arity, uint64_t *d_tree, uint64_t *d_input,
                          uint64_t nCols, uint64_t nRows, Layout layout, cudaStream_t stream)
 {
@@ -149,23 +159,65 @@ void unregister_host_memory_gpu(void *ptr) {
     }
 }
 
-// Block until `streamId` has finished reading the caller's host trace buffer, i.e. until the
-// trace H2D completes. The copy is no longer synced at copy time (see
-// copy_direct_registered_h2d_if_enabled), so the buffer must not be recycled before that or the
-// in-flight DMA reads reused bytes. Called from the buffer pool before reusing a shared trace
-// buffer. No-op if the stream has no outstanding commit (status != 2).
-//
-// This waits on trace_copy_event, not end_event: the commit's LDE/Merkle work reads the device
-// copy, not the host buffer, so gating recycling on the whole commit held pool buffers for the
-// entire GPU pipeline and left witness threads queueing in take_buffer for them.
-void wait_trace_h2d_done_gpu(void *d_buffers_, uint64_t streamId) {
+// Host-trace release gates: each launch arms one per instance behind its trace H2D, and the caller
+// waits on it before recycling the buffer. Per launch, not per stream: in pipeline mode the next
+// prover can reuse the stream before this caller waits.
+
+// Sync `g` outside the lock, then free it.
+static void syncAndFreeTraceGate(StreamData &sd, StreamData::TraceGate &g, std::unique_lock<std::mutex> &lk) {
+    g.state = StreamData::TraceGate::WAITING;
+    cudaEvent_t ev = g.event;
+    lk.unlock();
+    CHECKCUDAERR(cudaEventSynchronize(ev));
+    lk.lock();
+    g.state = StreamData::TraceGate::FREE;
+    sd.traceGateCv.notify_all();
+}
+
+// Arm `instanceId`'s gate on the stream that carried its H2D. If all gates are armed, the oldest is
+// waited out first.
+static void armTraceGate(StreamData &sd, uint64_t instanceId, cudaStream_t uploadStream) {
+    using TG = StreamData::TraceGate;
+    std::unique_lock<std::mutex> lk(sd.traceGateMutex);
+    for (;;) {
+        TG *free = nullptr, *oldest = nullptr;
+        for (TG &g : sd.traceGates) {
+            if (g.state == TG::FREE) { free = &g; break; }
+            if (g.state == TG::ARMED && (oldest == nullptr || g.seq < oldest->seq)) oldest = &g;
+        }
+        if (free != nullptr) {
+            free->state = TG::ARMED;
+            free->instanceId = instanceId;
+            free->seq = sd.traceGateSeq++;
+            CHECKCUDAERR(cudaEventRecord(free->event, uploadStream));
+            return;
+        }
+        if (oldest != nullptr) syncAndFreeTraceGate(sd, *oldest, lk);
+        else sd.traceGateCv.wait(lk);   // every gate is being waited on by another thread
+    }
+}
+
+// Block until `instanceId`'s host trace on `streamId` has been read. No-op if nothing is pending.
+void wait_trace_h2d_done_gpu(void *d_buffers_, uint64_t streamId, uint64_t instanceId) {
     if (d_buffers_ == nullptr) return;
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
     // Guard the C-ABI surface: an out-of-range streamId would index streamsData OOB and segfault.
     if (streamId >= d_buffers->n_total_streams) return;
-    cudaSetDevice(d_buffers->streamsData[streamId].gpuId);
-    if (d_buffers->streamsData[streamId].status == 2) {
-        CHECKCUDAERR(cudaEventSynchronize(d_buffers->streamsData[streamId].trace_copy_event));
+    using TG = StreamData::TraceGate;
+    StreamData &sd = d_buffers->streamsData[streamId];
+    cudaSetDevice(sd.gpuId);
+    std::unique_lock<std::mutex> lk(sd.traceGateMutex);
+    for (;;) {
+        TG *armed = nullptr;
+        bool inFlight = false;
+        for (TG &g : sd.traceGates) {
+            if (g.instanceId != instanceId) continue;
+            if (g.state == TG::ARMED) { armed = &g; break; }
+            if (g.state == TG::WAITING) inFlight = true;   // being evicted by armTraceGate
+        }
+        if (armed != nullptr) syncAndFreeTraceGate(sd, *armed, lk);
+        else if (inFlight) sd.traceGateCv.wait(lk);
+        else return;
     }
 }
 
@@ -877,6 +929,10 @@ void free_device_buffers_gpu(void *d_buffers_)
         if (d_buffers->streamCommitHost != nullptr) {
             cudaFreeHost(d_buffers->streamCommitHost);
             d_buffers->streamCommitHost = nullptr;
+        }
+        if (d_buffers->streamCommitUpperHost != nullptr) {
+            cudaFreeHost(d_buffers->streamCommitUpperHost);
+            d_buffers->streamCommitUpperHost = nullptr;
         }
         d_buffers->streamCommitSlots = 0;
     }
@@ -1696,13 +1752,11 @@ static bool gpuWitnessFillTrace(DeviceCommitBuffers *d_buffers, StepsParams *par
         zklog.error("gpu witness: air " + air + " kernel returned " + std::to_string(rc));
         exitProcess();
     }
-    // Record the trace path's release gate so the caller's recycling logic is unchanged.
-    CHECKCUDAERR(cudaEventRecord(d_buffers->streamsData[streamId].trace_copy_event, stream));
     return true;
 }
 
 
-uint64_t gen_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void *params_, void *globalChallenge, uint64_t* proofBuffer, char *proofFile, void *d_buffers_, uint64_t streamId_, char *constPolsPath,  char *constTreePath, char *customCommitsFixedPath, bool selfContained) {
+uint64_t gen_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void *params_, void *globalChallenge, uint64_t* proofBuffer, char *proofFile, void *d_buffers_, uint64_t streamId_, char *constPolsPath,  char *constTreePath, char *customCommitsFixedPath, bool selfContained, void *contributionRoot) {
 
     auto key = std::make_pair(airgroupId, airId);
     std::string proofType = "basic";
@@ -1818,6 +1872,8 @@ uint64_t gen_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, ui
                                                   // The small cm1, below the landing: written only by the unpack.
                                                   d_aux_trace + setupCtx->starkInfo.mapOffsets[std::make_pair("cm1", true)], N * nCols,
                                                   (int)sd.gpuId, streamId, stream);
+    // Stream that does the H2D: the proof stream, or the zone's copy stream.
+    cudaStream_t gateStream = stream;
     if (mulExported || kernelFilled) {
         // nothing to upload
     } else
@@ -1833,7 +1889,7 @@ uint64_t gen_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, ui
             if (slot >= 0 && z.traceBytes[slot] != total_size) slot = -1;
             if (slot < 0 && params->trace != nullptr) {
                 // Miss: nothing staged for this instance. Stage host -> slot here, asynchronously: the
-                // caller gates recycling the buffer on trace_copy_event (wait_trace_h2d_done).
+                // caller waits on its trace gate.
                 slot = stageWitnessSlotLocked(d_buffers, z, instanceId, params->trace, total_size);
             }
             // Hit or miss, the proof stream waits on the copy's event; no host sync here.
@@ -1853,14 +1909,13 @@ uint64_t gen_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, ui
                                                 cudaMemcpyDeviceToDevice, stream));
                 prefetchRecordDrainedLocked(z, slot, stream);
                 prefetchFreeSpanLocked(z, slot);
-                // Host-buffer release gate: the copy stream's tail is at/after this trace's H2D,
-                // so the event fires when the HOST buffer is free -- not when the proof runs.
-                CHECKCUDAERR(cudaEventRecord(d_buffers->streamsData[streamId].trace_copy_event, z.stream));
+                gateStream = z.stream;
             }
         }
     } else {
         copy_to_device_in_chunks(d_buffers, params->trace, dst, total_size, streamId, timer);
     }
+    armTraceGate(sd, instanceId, gateStream);  // outside z.mutex: it may block
     
     size_t totalCopySize = 0;
     totalCopySize += setupCtx->starkInfo.nPublics;
@@ -1911,7 +1966,21 @@ uint64_t gen_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, ui
     // tree. Costs a redundant unpack in exactly that case.
     if (customFixedRebuilt) CHECKCUDAERR(cudaStreamWaitEvent(stream, sd.customFixedDone, 0));
     if (fixedPrebuilt) CHECKCUDAERR(cudaStreamWaitEvent(stream, sd.fixedPolsDone, 0));
-    genProof_gpu(*setupCtx, d_aux_trace, d_const_pols, d_const_tree, streamId, instanceId, d_buffers, air_instance_info, timer, stream, selfContained, reuse_const_tree || fixedPrebuilt, fixedPrebuilt);
+    // Take the slot commit's upper tree only if air and root match (ids repeat across jobs); erase it
+    // either way.
+    Cm1UpperTree cm1Upper;
+    bool haveCm1Upper = false;
+    if (contributionRoot != nullptr && !selfContained) {
+        std::lock_guard<std::mutex> lk(d_buffers->cm1UpperMutex);
+        auto it = d_buffers->cm1Upper.find(instanceId);
+        if (it != d_buffers->cm1Upper.end()) {
+            haveCm1Upper = it->second.airgroupId == airgroupId && it->second.airId == airId &&
+                           memcmp(it->second.root, contributionRoot, sizeof(it->second.root)) == 0;
+            if (haveCm1Upper) cm1Upper = std::move(it->second);
+            d_buffers->cm1Upper.erase(it);
+        }
+    }
+    genProof_gpu(*setupCtx, d_aux_trace, d_const_pols, d_const_tree, streamId, instanceId, d_buffers, air_instance_info, timer, stream, selfContained, reuse_const_tree || fixedPrebuilt, fixedPrebuilt, haveCm1Upper ? &cm1Upper : nullptr);
     if (pipeline) {
         // Snapshot the completion into the ring (the per-stream sd fields will be
         // overwritten by the next launch); the harvester writeProofs + fires the callback.
@@ -2008,6 +2077,7 @@ uint64_t initialize_instance_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t
     if (!mulExported && !kernelFilled) {
         copy_to_device_in_chunks(d_buffers, params->trace, dst, total_size, streamId, timer);
     }
+    armTraceGate(d_buffers->streamsData[streamId], instanceId, stream);
     PROOFMAN_SUMCHECK("proof_before_unpack", dst, total_size / sizeof(uint64_t), stream);
 
     size_t totalCopySize = 0;
@@ -2460,6 +2530,7 @@ uint64_t gen_recursive_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t
     } else {
         copy_to_device_in_chunks(d_buffers, trace, (uint8_t*)(d_aux_trace + offsetStage1Extended), sizeTrace, streamId, timer, false);
     }
+    armTraceGate(sd, instanceId, stream);
 
     // Stream-owned scratch; see StreamData::d_gate_band_scratch. Once per stream, and only for a
     // family that asks for one.
@@ -3293,6 +3364,8 @@ void configure_stream_commit_slots_gpu(void *d_buffers_) {
                                 (size_t)nAll * PINNED_AUX_VALUES_MAX * sizeof(Goldilocks::Element)));
     CHECKCUDAERR(cudaMallocHost((void **)&d_buffers->streamCommitHost,
                                 (size_t)nAll * STREAM_COMMIT_HOST_WORDS * sizeof(uint64_t)));
+    CHECKCUDAERR(cudaMallocHost((void **)&d_buffers->streamCommitUpperHost,
+                                (size_t)nAll * CM1_UPPER_LEVEL_MAX_WORDS * sizeof(uint64_t)));
     d_buffers->streamCommitStreams = (cudaStream_t *)malloc(nAll * sizeof(cudaStream_t));
     d_buffers->streamCommitRegions = new DeviceCommitBuffers::SlotRegion[d_buffers->n_gpus];
     int prevDevice = 0;
@@ -3991,6 +4064,15 @@ int64_t commit_witness_streaming_gpu(void *d_buffers_, uint64_t slotIdx,
     // An air that scatters nothing holds no count back (a failed commit is fatal, see the caller).
     if (slotCtx.mul == nullptr) mul_note_commit();
 
+    // Upper tree levels kept for the instance's proof (Cm1UpperTree), via the slot's pinned area.
+    uint64_t upperWords = 0;
+    uint64_t *hUpper = nullptr;
+    if (aii != nullptr && aii->setupCtx != nullptr && d_buffers->streamCommitUpperHost != nullptr &&
+        cm1UpperTreeEligible(aii->setupCtx->starkInfo, scHash)) {
+        upperWords = streamCommitUpperWords(1ull << nBitsExt, CM1_UPPER_LEVEL);
+        hUpper = d_buffers->streamCommitUpperHost + slotIdx * CM1_UPPER_LEVEL_MAX_WORDS;
+    }
+
     TimerStartGPU(timer, STARK_GPU_COMMIT);
     memcpy(hWidths, colWidths, nCols * sizeof(uint64_t));
     int64_t rc = streamCommitPacked(slotBase, dims, hWidths, packedSrc,
@@ -3998,9 +4080,23 @@ int64_t commit_witness_streaming_gpu(void *d_buffers_, uint64_t slotIdx,
                                     dColSource, dColLane, dTable, scHash,
                                     hook, hook ? (void *)&slotCtx : nullptr, &timer,
                                     chunkHook, chunkHook ? (void *)&slotCtx : nullptr,
-                                    slotElems);
+                                    slotElems, hUpper, CM1_UPPER_LEVEL);
     TimerStopGPU(timer, STARK_GPU_COMMIT);
     if (rc == 0) memcpy(root, hRoot, STREAM_COMMIT_HOST_ROOT_WORDS * sizeof(uint64_t));
+    if (rc == 0) {
+        std::vector<uint64_t> upper;
+        if (hUpper != nullptr) upper.assign(hUpper, hUpper + upperWords);   // empty when ineligible
+        std::lock_guard<std::mutex> lk(d_buffers->cm1UpperMutex);
+        if (upper.empty()) {
+            d_buffers->cm1Upper.erase(instanceId);
+        } else {
+            Cm1UpperTree &e = d_buffers->cm1Upper[instanceId];
+            e.airgroupId = airgroupId;
+            e.airId = airId;
+            memcpy(e.root, hRoot, sizeof(e.root));
+            e.words = std::move(upper);
+        }
+    }
     closeStreamTimer(timer, instanceId, airgroupId, airId, false);
     releaseRegion();
     return rc;

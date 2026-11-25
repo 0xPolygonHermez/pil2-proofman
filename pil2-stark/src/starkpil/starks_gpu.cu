@@ -264,12 +264,12 @@ static void buildCommitTreeGPU(bool dropLeaves, uint32_t arity, uint64_t *nodes,
     else buildMerkleTreeGPU(arity, nodes, src, nCols, nRows, layout, stream);
 }
 
-void commitStage_inplace(uint64_t step, SetupCtx &setupCtx, MerkleTreeGL **treesGL, gl64_t *d_trace, gl64_t *d_aux_trace, TranscriptGL_GPU *d_transcript, TimerGPU &timer, cudaStream_t stream, uint32_t qStepLg)
+void commitStage_inplace(uint64_t step, SetupCtx &setupCtx, MerkleTreeGL **treesGL, gl64_t *d_trace, gl64_t *d_aux_trace, TranscriptGL_GPU *d_transcript, TimerGPU &timer, cudaStream_t stream, uint32_t qStepLg, bool skipTree)
 {
     if (step <= setupCtx.starkInfo.nStages)
     {
     
-        extendAndMerkelize_inplace(step, setupCtx, treesGL, d_trace, d_aux_trace, d_transcript, timer, stream);
+        extendAndMerkelize_inplace(step, setupCtx, treesGL, d_trace, d_aux_trace, d_transcript, timer, stream, skipTree);
     }
     else
     {
@@ -277,7 +277,7 @@ void commitStage_inplace(uint64_t step, SetupCtx &setupCtx, MerkleTreeGL **trees
     }
 }
 
-void extendAndMerkelize_inplace(uint64_t step, SetupCtx& setupCtx, MerkleTreeGL** treesGL, gl64_t *d_trace, gl64_t *d_aux_trace, TranscriptGL_GPU *d_transcript, TimerGPU &timer, cudaStream_t stream)
+void extendAndMerkelize_inplace(uint64_t step, SetupCtx& setupCtx, MerkleTreeGL** treesGL, gl64_t *d_trace, gl64_t *d_aux_trace, TranscriptGL_GPU *d_transcript, TimerGPU &timer, cudaStream_t stream, bool skipTree)
 {
     uint64_t NExtended = 1 << setupCtx.starkInfo.starkStruct.nBitsExt;
     std::string section = "cm" + to_string(step);
@@ -304,12 +304,14 @@ void extendAndMerkelize_inplace(uint64_t step, SetupCtx& setupCtx, MerkleTreeGL*
         const bool aliased = (src + offset_src) == (dst + offset_dst);
         ntt.LDE(dst, offset_dst, src, offset_src, setupCtx.starkInfo.starkStruct.nBits, setupCtx.starkInfo.starkStruct.nBitsExt, nCols, timer, stream, !aliased, (gl64_t*)pNodes, setupCtx.starkInfo.getNumNodesMTCommit(NExtended));
         PROOFMAN_SUMCHECK("proof_after_lde_cm%u", dst + offset_dst, (uint64_t)NExtended * nCols, stream, (unsigned)step);
-        TimerStartCategoryGPU(timer, MERKLE_TREE);
-        buildCommitTreeGPU(setupCtx.starkInfo.dropLeafLevel, setupCtx.starkInfo.starkStruct.merkleTreeArity, (uint64_t*)pNodes, (uint64_t*)(dst + offset_dst), nCols, NExtended, resolveLayout(setupCtx.starkInfo.starkStruct.nBits, nCols), stream);
-        TimerStopCategoryGPU(timer, MERKLE_TREE);
+        if (!skipTree) {
+            TimerStartCategoryGPU(timer, MERKLE_TREE);
+            buildCommitTreeGPU(setupCtx.starkInfo.dropLeafLevel, setupCtx.starkInfo.starkStruct.merkleTreeArity, (uint64_t*)pNodes, (uint64_t*)(dst + offset_dst), nCols, NExtended, resolveLayout(setupCtx.starkInfo.starkStruct.nBits, nCols), stream);
+            TimerStopCategoryGPU(timer, MERKLE_TREE);
+        }
     }
 
-    if (nCols > 0)
+    if (nCols > 0 && !skipTree)
     {
         uint64_t tree_size = setupCtx.starkInfo.getNumNodesMTCommit(NExtended);
         PROOFMAN_SUMCHECK("proof_root_cm%u", &pNodes[tree_size - HASH_SIZE], HASH_SIZE, stream, (unsigned)step);
@@ -664,62 +666,74 @@ void computeLEv_inplace(Goldilocks::Element *d_xiChallenge, uint64_t nBits, uint
     CHECKCUDAERR(cudaGetLastError());
 }
 
-// p(xi w^o) = SUM_i L_i(y) ext[(i + o*b) mod NExt] (w = g^b): opening 0's weights serve every opening,
-// and a group reads its column once for all its openings.
-// grid (groups, stripes); each eval's stripe partial goes to partials[evalPos][stripe].
-__global__ void computeEvalsShifted(uint64_t N, uint64_t extendBits, const EvalGroup *d_groups,
-                                    const gl64_t *d_cmPols, const gl64_t *d_customCommits,
-                                    const gl64_t *d_fixedPols, const gl64_t *d_LEv, gl64_t *d_partials)
+// p(xi w^o) = SUM_i L_i(y) ext[(i + o*b) mod NExt] (w = g^b): opening 0's weights serve every opening.
+// grid (tiles, stripes); each slot's stripe partial goes to partials[evalPos][stripe].
+__global__ void __launch_bounds__(256) computeEvalsPairs(uint64_t N, uint64_t extendBits, const EvalSlot *d_slots,
+                                  const uint32_t *d_tileStart, const gl64_t *d_cmPols, const gl64_t *d_customCommits,
+                                  const gl64_t *d_fixedPols, const gl64_t *d_LEv, gl64_t *d_partials)
 {
-    extern __shared__ Goldilocks3GPU::Element warpSums[];   // [nWarps][EVALS_GROUP_OPENINGS]
-    const EvalGroup &g = d_groups[blockIdx.x];
-    const uint32_t nOpen = g.nOpen, dim = g.dim;
-    const uint64_t NExt = N << extendBits;
-    const gl64_t *pol = (g.src == 0 ? d_cmPols : g.src == 1 ? d_customCommits : d_fixedPols) + g.col;
-    uint64_t shift[EVALS_GROUP_OPENINGS];
-    Goldilocks3GPU::Element acc[EVALS_GROUP_OPENINGS];
+    extern __shared__ Goldilocks3GPU::Element warpSums[];   // [nWarps][EVALS_TILE_SLOTS]
+    const uint32_t s0 = d_tileStart[blockIdx.x], nS = d_tileStart[blockIdx.x + 1] - s0;
+    const uint64_t NExt = N << extendBits, mask = NExt - 1;
+    const uint32_t dim = d_slots[s0].dim;
+    const gl64_t *base[EVALS_TILE_SLOTS];
+    uint64_t shift[EVALS_TILE_SLOTS];
     #pragma unroll
-    for (uint32_t o = 0; o < EVALS_GROUP_OPENINGS; o++) {
-        shift[o] = o < nOpen ? g.shift[o] : 0;
-        Goldilocks3GPU::zero(acc[o]);
+    for (uint32_t t = 0; t < EVALS_TILE_SLOTS; t++) {
+        const EvalSlot &sl = d_slots[s0 + (t < nS ? t : 0)];
+        base[t] = (sl.src == 0 ? d_cmPols : sl.src == 1 ? d_customCommits : d_fixedPols) + sl.col;
+        shift[t] = (uint64_t)sl.shift << extendBits;
     }
+    Goldilocks3GPU::Element acc[EVALS_TILE_SLOTS];
+    #pragma unroll
+    for (uint32_t t = 0; t < EVALS_TILE_SLOTS; t++) Goldilocks3GPU::zero(acc[t]);
 
-    for (uint64_t i = (uint64_t)blockIdx.y * blockDim.x + threadIdx.x; i < N; i += (uint64_t)blockDim.x * gridDim.y) {
-        Goldilocks3GPU::Element L = {d_LEv[i], d_LEv[N + i], d_LEv[2 * N + i]};
-        #pragma unroll
-        for (uint32_t o = 0; o < EVALS_GROUP_OPENINGS; o++) {
-            if (o >= nOpen) break;
-            const uint64_t row = (i + (shift[o] << extendBits)) & (NExt - 1);
-            Goldilocks3GPU::Element res;
-            if (dim == 1) {
-                gl64_t v = pol[row];
+    const uint64_t i0 = (uint64_t)blockIdx.y * blockDim.x + threadIdx.x, step = (uint64_t)blockDim.x * gridDim.y;
+    if (dim == 1) {
+        for (uint64_t i = i0; i < N; i += step) {
+            Goldilocks3GPU::Element L = {d_LEv[i], d_LEv[N + i], d_LEv[2 * N + i]};
+            #pragma unroll
+            for (uint32_t t = 0; t < EVALS_TILE_SLOTS; t++) {
+                if (t >= nS) break;
+                gl64_t v = base[t][(i + shift[t]) & mask];
+                Goldilocks3GPU::Element res;
                 Goldilocks3GPU::mul(res, L, v);
-            } else {
-                Goldilocks3GPU::Element v = {pol[row], pol[NExt + row], pol[2 * NExt + row]};
-                Goldilocks3GPU::mul(res, L, v);
+                Goldilocks3GPU::add(acc[t], acc[t], res);
             }
-            Goldilocks3GPU::add(acc[o], acc[o], res);
+        }
+    } else {
+        for (uint64_t i = i0; i < N; i += step) {
+            Goldilocks3GPU::Element L = {d_LEv[i], d_LEv[N + i], d_LEv[2 * N + i]};
+            #pragma unroll
+            for (uint32_t t = 0; t < EVALS_TILE_SLOTS; t++) {
+                if (t >= nS) break;
+                const uint64_t row = (i + shift[t]) & mask;
+                Goldilocks3GPU::Element v = {base[t][row], base[t][NExt + row], base[t][2 * NExt + row]};
+                Goldilocks3GPU::Element res;
+                Goldilocks3GPU::mul(res, L, v);
+                Goldilocks3GPU::add(acc[t], acc[t], res);
+            }
         }
     }
 
     const uint32_t lane = threadIdx.x & 31, warp = threadIdx.x >> 5, nWarps = (blockDim.x + 31) >> 5;
     #pragma unroll
-    for (uint32_t o = 0; o < EVALS_GROUP_OPENINGS; o++) {
-        if (o >= nOpen) break;
+    for (uint32_t t = 0; t < EVALS_TILE_SLOTS; t++) {
+        if (t >= nS) break;
         for (uint32_t off = 16; off > 0; off >>= 1)
             for (uint32_t k = 0; k < FIELD_EXTENSION; k++) {
                 gl64_t other;
-                other[0] = (uint64_t)__shfl_down_sync(0xffffffffu, (unsigned long long)acc[o][k][0], off);
-                if (lane < off) acc[o][k] += other;
+                other[0] = (uint64_t)__shfl_down_sync(0xffffffffu, (unsigned long long)acc[t][k][0], off);
+                if (lane < off) acc[t][k] += other;
             }
-        if (lane == 0) Goldilocks3GPU::copy(warpSums[warp * EVALS_GROUP_OPENINGS + o], acc[o]);
+        if (lane == 0) Goldilocks3GPU::copy(warpSums[warp * EVALS_TILE_SLOTS + t], acc[t]);
     }
     __syncthreads();
-    if (threadIdx.x < nOpen * FIELD_EXTENSION) {
-        const uint32_t o = threadIdx.x / FIELD_EXTENSION, k = threadIdx.x % FIELD_EXTENSION;
-        gl64_t s = warpSums[o][k];
-        for (uint32_t w = 1; w < nWarps; w++) s += warpSums[w * EVALS_GROUP_OPENINGS + o][k];
-        d_partials[((uint64_t)g.evalPos[o] * gridDim.y + blockIdx.y) * FIELD_EXTENSION + k] = s;
+    if (threadIdx.x < nS * FIELD_EXTENSION) {
+        const uint32_t t = threadIdx.x / FIELD_EXTENSION, k = threadIdx.x % FIELD_EXTENSION;
+        gl64_t s = warpSums[t][k];
+        for (uint32_t w = 1; w < nWarps; w++) s += warpSums[w * EVALS_TILE_SLOTS + t][k];
+        d_partials[((uint64_t)d_slots[s0 + t].evalPos * gridDim.y + blockIdx.y) * FIELD_EXTENSION + k] = s;
     }
 }
 
@@ -739,13 +753,13 @@ void evmap_inplace(SetupCtx &setupCtx, StepsParams &h_params, AirInstanceInfo *a
 {
     TimerStartCategoryGPU(timer, EVALS);
     const uint64_t nEvals = setupCtx.starkInfo.evMap.size();
-    if (air_instance_info->nEvalGroups != 0) {
+    if (air_instance_info->nEvalTiles != 0) {
         const uint64_t nBits = setupCtx.starkInfo.starkStruct.nBits;
         gl64_t *d_partials = (gl64_t *)h_params.aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("evals_partials", false)];
         const dim3 threads(256);
-        const size_t shmem = ((threads.x + 31) / 32) * EVALS_GROUP_OPENINGS * sizeof(Goldilocks3GPU::Element);
-        computeEvalsShifted<<<dim3((unsigned)air_instance_info->nEvalGroups, EVALS_HELPER_CHUNKS), threads, shmem, stream>>>(
-            1ULL << nBits, setupCtx.starkInfo.starkStruct.nBitsExt - nBits, air_instance_info->evalGroups,
+        const size_t shmem = ((threads.x + 31) / 32) * EVALS_TILE_SLOTS * sizeof(Goldilocks3GPU::Element);
+        computeEvalsPairs<<<dim3((unsigned)air_instance_info->nEvalTiles, EVALS_HELPER_CHUNKS), threads, shmem, stream>>>(
+            1ULL << nBits, setupCtx.starkInfo.starkStruct.nBitsExt - nBits, air_instance_info->evalSlots, air_instance_info->evalTileStart,
             (gl64_t *)h_params.aux_trace, (gl64_t *)h_params.pCustomCommitsFixed,
             (gl64_t *)h_params.pConstPolsExtendedTreeAddress, (gl64_t *)d_LEv, d_partials);
         reduceEvalsShifted<<<(unsigned)((nEvals + 255) / 256), 256, 0, stream>>>(nEvals, EVALS_HELPER_CHUNKS, d_partials, (gl64_t *)h_params.evals);

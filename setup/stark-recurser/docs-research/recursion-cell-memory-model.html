@@ -179,7 +179,7 @@
     <p class="eyebrow">Recursion setup · linear-hash model</p>
     <h1>Cell &amp; GPU-memory decision map</h1>
     <p class="sub">Each cell is a recursive-verifier configuration at 2<sup>N</sup> rows, blowup&nbsp;2<sup>b</sup>, Merkle arity from the hash (blake3 and SHA-256 binary, blake2b quaternary). The folding schedule is not a single factor: <strong>STIR folds by 4 for every family</strong>, while <strong>FRI is solved, not folded</strong>, for the binary-tree families &mdash; <code>optimal_fri_steps</code> gives blake3 2<sup>21</sup>&nbsp;&rarr;&nbsp;17&nbsp;&rarr;&nbsp;13&nbsp;&rarr;&nbsp;10&nbsp;&rarr;&nbsp;7, folds of 4/4/3/3, because path cost is linear in the bits and leaf cost exponential in the fold. Both tests stop at the family's <code>fri_terminal_degree</code> (blake3&nbsp;7), which FRI reads as the last committed <em>domain</em> and STIR as the degree bound <em>d<sub>M</sub></em> itself. Hash counts mirror <code>verifier_hashes.rs</code> rule for rule &mdash; leaf hashes, Merkle paths to <code>lastLevelVerification</code>, per-tree root reductions, the real <code>generate_stark_struct</code> schedule. Transcript and grinding are left out. Paths dominate, 60&ndash;75% of the total. Color is prover GPU memory; a teal ring marks <strong>feasible</strong>: the verifier self-fits, a ZisK&nbsp;Main proof fits the cell budget, and memory stays under 32&nbsp;GB.</p>
-    <p class="sub" style="margin-top:10px">Blake3's stage widths are <strong>measured on the <code>test-recursive</code> recursion air</strong>, not extrapolated from the <code>examples/hashes</code> precompile. <code>stage1&nbsp;=&nbsp;54k&nbsp;+&nbsp;20</code>, <strong>affine</strong> in <em>k</em> rather than proportional: a lane costs 54 columns (51 for the permutation, 3 for its boundary since the 2026-10-09 packing, down from 8), the 18-wide plonk band and 2 multiplicity columns are shared. <code>fixed&nbsp;=&nbsp;43</code>. Widths also move <strong>along the blowup axis</strong> &mdash; 2<sup>b</sup> lets the quotient span 2<sup>b</sup> chunks, so <code>maxDeg&nbsp;=&nbsp;min(2<sup>b</sup>+1,&nbsp;8)</code> and a higher degree lets <code>std_sum</code> pack more bus terms behind each <code>im</code>. Blowup&nbsp;2 is measured at <strong>k&nbsp;=&nbsp;2/3/4/5/6</strong> (stage1 128/182/236/290/344, stage2 60/81/102/123/144); other blowups are the model's own <code>im</code> arithmetic. Self-fit is a <strong>fixed point</strong> &mdash; each lane widens the trace the verifier must hash itself &mdash; and <strong>LANES trades rows for columns while the next layer pays for the columns</strong>, so packing lanes shortens this air and makes the one verifying it dearer. Blake3 is 56 clocks, SHA-256 72, Blake2b 96 &mdash; and <strong>only blake3's lane geometry is a recursion air</strong>. SHA-256's is the <code>examples/hashes</code> <strong>precompile</strong>, anchored to its one measured point (115&nbsp;committed columns &times; 72&nbsp;clocks = <strong>8,280</strong> cells at LANES&nbsp;1, blowup&nbsp;1). Its lane does not amortize with <em>k</em> &mdash; <code>sha2.pil</code> has no LANES parameter to share columns across &mdash; but it <em>does</em> move along the blowup axis, and <strong>the wrong way</strong>: 8,280&nbsp;&rarr;&nbsp;8,496&nbsp;&rarr;&nbsp;9,144 at blowup 1/2/3. Degree headroom lets <code>std_sum</code> cluster more bus terms behind each <code>im</code>, but the <code>im</code> constraint then becomes the air's highest-degree one, so <code>stageQ</code> grows unconditionally. Blake3 wins that trade with 48 columns of stage2 to give back; sha2 has 6, so it pays the stageQ growth for almost nothing. Blake2b's is extrapolated. Read SHA-256's cells as a <strong>floor</strong>, not a like-for-like &mdash; blake3's own precompile is 4,382 against the 4,760 its recursion air costs at the same k=4/blowup&nbsp;2, a 9% gap, and 115 counts stageQ where blake3's 85 does not.</p>
+    <p class="sub" style="margin-top:10px">Blake3's stage widths are <strong>measured on the <code>test-recursive</code> recursion air</strong>, not extrapolated from the <code>examples/hashes</code> precompile. <code>stage1&nbsp;=&nbsp;54k&nbsp;+&nbsp;20</code>, <strong>affine</strong> in <em>k</em> rather than proportional: a lane costs 54 columns (51 for the permutation, 3 for its boundary since the 2026-10-09 packing, down from 8), the 18-wide plonk band and 2 multiplicity columns are shared. <code>fixed&nbsp;=&nbsp;44</code>. Widths also move <strong>along the blowup axis</strong> &mdash; 2<sup>b</sup> lets the quotient span 2<sup>b</sup> chunks, so <code>maxDeg&nbsp;=&nbsp;min(2<sup>b</sup>+1,&nbsp;8)</code> and a higher degree lets <code>std_sum</code> pack more bus terms behind each <code>im</code>. Blowup&nbsp;2 is measured at <strong>k&nbsp;=&nbsp;2/3/4/5/6</strong> (stage1 128/182/236/290/344, stage2 60/81/102/123/144), blowup&nbsp;1 at <strong>k&nbsp;=&nbsp;3/4</strong> (stage2 183/229); blowup&nbsp;3 is the model's own <code>im</code> arithmetic. At blowup&nbsp;1 stage2 also pays <code>pil-info</code>'s <strong>degree-reduction intermediates</strong>, since the air's own constraints reach degree 5: <code>4k&nbsp;+&nbsp;12</code> columns (24/28), down from <code>13k&nbsp;+&nbsp;21</code> before <code>NODE_START</code> and the two-level <code>treeselector4</code> (2026-11-25). Self-fit is a <strong>fixed point</strong> &mdash; each lane widens the trace the verifier must hash itself &mdash; and <strong>LANES trades rows for columns while the next layer pays for the columns</strong>, so packing lanes shortens this air and makes the one verifying it dearer. Blake3 is 56 clocks, SHA-256 72, Blake2b 96 &mdash; and <strong>only blake3's lane geometry is a recursion air</strong>. SHA-256's is the <code>examples/hashes</code> <strong>precompile</strong>, anchored to its one measured point (115&nbsp;committed columns &times; 72&nbsp;clocks = <strong>8,280</strong> cells at LANES&nbsp;1, blowup&nbsp;1). Its lane does not amortize with <em>k</em> &mdash; <code>sha2.pil</code> has no LANES parameter to share columns across &mdash; but it <em>does</em> move along the blowup axis, and <strong>the wrong way</strong>: 8,280&nbsp;&rarr;&nbsp;8,496&nbsp;&rarr;&nbsp;9,144 at blowup 1/2/3. Degree headroom lets <code>std_sum</code> cluster more bus terms behind each <code>im</code>, but the <code>im</code> constraint then becomes the air's highest-degree one, so <code>stageQ</code> grows unconditionally. Blake3 wins that trade with 48 columns of stage2 to give back; sha2 has 6, so it pays the stageQ growth for almost nothing. Blake2b's is extrapolated. Read SHA-256's cells as a <strong>floor</strong>, not a like-for-like &mdash; blake3's own precompile is 4,382 against the 4,760 its recursion air costs at the same k=4/blowup&nbsp;2, a 9% gap, and 115 counts stageQ where blake3's 85 does not.</p>
   </header>
 
   <div class="controls">
@@ -317,7 +317,7 @@
     <br>&middot; SHA-256 = 72 clocks (<code>sha2.pil</code>: 4 load-state + 16 load-input + 48 mixing + 4 write-state), grinding 24 read off a real sha256 proving key, block/arity/padding exact arithmetic; its <code>fold</code> is inert, since an arity-2 family solves its FRI schedule rather than folding uniformly. Its WIDTHS are anchored to the <code>examples/hashes</code> precompile at LANES 1 / blowup 1 &mdash; fixed 5, stage1 103, stage2 6, stageQ 6, 115 committed &mdash; with <code>bus 3</code> back-fitted from that stage2 so the model reproduces the point and runs its own <code>im</code> arithmetic above it. stage1 does not amortize with <em>k</em> (no LANES parameter to share across) and no sha256 recursion air exists to fit a slope to; building one is what would pin it. Its <code>laneCols</code> counts stageQ, following README.md's cells/hash convention, where the recursion-air families' does not. Earlier revisions instead scaled blake3's recursion slopes by the two precompiles' widths (103/53); measured, sha2's stage2 is 6 against blake3's 48, so that overstated its bus by roughly 8x and its cells/permutation by 50%.
     <br>&middot; <strong>Folding schedules follow <code>stark_struct.rs</code>, not a uniform factor.</strong> STIR: <code>generate_stir_schedule</code> folds the DEGREE bound by 4 (<code>initial_folding_factor.unwrap_or(is_stir ? 4 : 3)</code>) until it reaches <code>fri_terminal_degree</code>, shortening the last fold to land exactly &mdash; blake3 at 2<sup>19</sup> gives 19&nbsp;&rarr;&nbsp;15&nbsp;&rarr;&nbsp;11&nbsp;&rarr;&nbsp;7 at every blowup, since the stopping point is a family constant and does not move with the rate. FRI: arity-2 families run <code>optimal_fri_steps</code>, a DP over committed domains costed as (compressions/query, trees), ported here in full; arity-4 families fold uniformly by 3. An earlier revision of this page folded STIR to <code>5 &minus; blowup</code> and FRI uniformly to a constant 2<sup>5</sup> domain, which ran STIR one phantom round past its terminal (19&nbsp;&rarr;&nbsp;15&nbsp;&rarr;&nbsp;11&nbsp;&rarr;&nbsp;7&nbsp;&rarr;&nbsp;3) and overstated its hash bill by 1.9%, and put FRI on 21&nbsp;&rarr;&nbsp;17&nbsp;&rarr;&nbsp;13&nbsp;&rarr;&nbsp;9&nbsp;&rarr;&nbsp;5 instead of the solved 21&nbsp;&rarr;&nbsp;17&nbsp;&rarr;&nbsp;13&nbsp;&rarr;&nbsp;10&nbsp;&rarr;&nbsp;7. Both are now checked against the repo: at 2<sup>19</sup>&nbsp;/&nbsp;blowup&nbsp;2 the model reproduces <code>generate_stark_struct</code>'s schedules and the solver's <em>q</em>&nbsp;=&nbsp;106, <em>t</em>&nbsp;=&nbsp;[106,&nbsp;43,&nbsp;27] exactly.
     <br>&middot; <strong>Grinding is uniform across STIR rounds</strong>, which is what <code>generate_stir_schedule</code> emits (<code>vec![grinding_bits; M]</code>). The per-round <code>grindingBitsQueries</code> override exists and is the one untaken lever &mdash; round 0 alone is worth &minus;7.7% at 24&nbsp;&rarr;&nbsp;32, since <em>t<sub>0</sub></em> is what multiplies the four trace trees &mdash; but it is prover proof-of-work, not a free saving, and the slider here models the uniform default.
-    <br>&middot; blake3 = 56 clocks &times; the lane width; stage1 54k+20, fixed 43, stage2/stageQ follow maxDeg &mdash; <strong>measured at k = 2/3/4/5/6, blowup 2, on the <code>test-recursive</code> air</strong> (43/236/102/12 at k=4, after the boundary packing), the rest extrapolated. blake2b = 96 clocks, stage1 98k+2, fixed 6, 12 rounds; <code>blake2b.pil</code> has no LANES parameter, so its per-lane split is extrapolated from the same bus decomposition (52 lane-local lookups + 2 shared).
+    <br>&middot; blake3 = 56 clocks &times; the lane width; stage1 54k+20, fixed 44, stage2/stageQ follow maxDeg &mdash; <strong>measured at k = 2/3/4/5/6, blowup 2, on the <code>test-recursive</code> air</strong> (44/236/102/12 at k=4), and at k = 3/4, blowup 1 (44/236/229/6 at k=4, of which 28 are degree-reduction intermediates), the rest extrapolated. blake2b = 96 clocks, stage1 98k+2, fixed 6, 12 rounds; <code>blake2b.pil</code> has no LANES parameter, so its per-lane split is extrapolated from the same bus decomposition (52 lane-local lookups + 2 shared).
     <br>&middot; ZisK airs, from <code>proofman-setup stats</code> on <code>zisk.pilout</code> (2026-10-09), proved with the selected test like ZisK's own <code>default</code> starkStruct: <strong>Main</strong> nBits 22, blowup 1, fixed 2 / stage1 152 / stage2 87 / stageQ 6, 194 evals; <strong>Keccakf</strong> nBits 21, blowup 1, fixed 3 / stage1 467 / stage2 142 / stageQ 6, 3,628 evals over 140 opening points. A basic air's FRI stops at the domain 5&nbsp;+&nbsp;blowup (<code>generate_stark_struct</code>'s own <code>final_degree</code> 5), not the family terminal. The model reproduces stats' blake3 totals exactly, transcript and grinding excluded: Main 36,201 FRI / 29,551 STIR, Keccakf 44,641 / 38,940.
     <br>&middot; <strong>K</strong> marks a cell whose recursive1 could verify Keccakf <strong>without its compressor</strong>: its hashes fit the cells AND its arithmetic fits the PLONK band. The band is an <strong>estimate</strong> fitted to the blake3 fibonacci setups, rows&nbsp;=&nbsp;A&middot;hashes&nbsp;+&nbsp;B&middot;(evals&nbsp;&times;&nbsp;t<sub>0</sub>) (FRI 2.45 / 0.735, STIR 3.63 / 0.808), against 84% of 2<sup>N</sup> rows. Keccakf's 3,628 evals put its DEEP sum at ~560k rows on its own, so the band, not the hashes, is what keeps its compressor.
   </footer>
@@ -344,12 +344,20 @@ const MAX_EXT_BITS = 31;
 //   LANES 2..6, blowup 2^2 (maxDeg 5):  fixed 43 · stage1 128/182/236/290/344 · stage2 60/81/102/123/144
 //   · stageQ 12  (LANES 4: total 350, against 385 measured 2026-08-26 before the packing)
 //
+// and again 2026-11-25 after NODE_START (one fixed column for the Node input clocks, in place of
+// BLAKE3_NODE * CLK[k]) and the two-level treeselector4, at blowup 2^1 (maxDeg 3), N = 2^20:
+//
+//   LANES 3/4, blowup 2^1 (maxDeg 3):  fixed 44 · stage1 182/236 · stage2 183/229 · stageQ 6
+//   (stage2 = the bus's 159/201 + pil-info's degree-reduction intermediates 24/28, from 60/73)
+//
+// Blowup 2 is unchanged by those edits but for fixed 43 -> 44.
+//
 // Earlier revisions of this page took blake3's widths from the examples/hashes PRECOMPILE
 // (stage1 53k + 2, fixed 8) as a proxy, measured over a LANES 1-4 x blowup 1-3 grid. The
 // recursion air is a different air -- it carries the plonk band, the custom-gate circuits and
 // the block-kind selectors on top of the lanes -- so those figures understated it by a wide
-// margin. Blowup 2 is measured at k = 2..6; the other blowups are the model's own im
-// arithmetic, which reproduces every measured point exactly.
+// margin. Blowup 2 is measured at k = 2..6 and blowup 1 at k = 3/4; blowup 3 is the model's own
+// im arithmetic, which reproduces every measured point exactly.
 const HASHES = {
   // `block` = compression-block width in Goldilocks elements (blake3 64B = 8,
   // blake2b 128B = 16). Merkle nodes are sized by this and not by a sponge rate: a node is
@@ -371,6 +379,8 @@ const HASHES = {
   // Where the fitted slopes come from: stage1 = 54k + 20 (the 18-wide plonk band and the 2
   // multiplicity columns are shared), busOps = 28k + 21 -- at k=4 that is 133, im = ceil(130/4)
   // = 33, stage2 = 3*34 = 102, reproducing the measured air above.
+  // `degIm`/`degImBase`: pil-info's degree-reduction intermediates for the air's own degree-5
+  // constraints, paid only below maxDeg 5 (4k + 12 at maxDeg 3). Unmeasured elsewhere: 0.
   // `fold` is the UNIFORM FRI fold, used only by families that do not solve their schedule --
   // `uses_optimal_fri_schedule(family) = merkle_tree_arity(family) == 2`, so arity-2 families
   // (blake3, sha256) run optimal_fri_steps instead and this field is unused for them. STIR never
@@ -379,8 +389,8 @@ const HASHES = {
   // FRI reads as a DOMAIN size (degree bound = terminal - blowup) and STIR as the degree bound
   // d_M itself. Only blake3's 7 and poseidon's 5 exist in the repo; blake2b and sha256 have no
   // family entry at all, so they take the value of the arity they share (arity 2 -> 7, arity 4 -> 5).
-  blake3: { label: 'Blake3', block: 8,  chunkElems: 128, arity: 2, clocks: 56, fixed: 43, grinding: 24, recursionLlv: 5,
-            fold: 4, terminal: 7, stage1: 54, stage1Base: 20, bus: 28, busBase: 21 },
+  blake3: { label: 'Blake3', block: 8,  chunkElems: 128, arity: 2, clocks: 56, fixed: 44, grinding: 24, recursionLlv: 5,
+            fold: 4, terminal: 7, stage1: 54, stage1Base: 20, bus: 28, busBase: 21, degIm: 4, degImBase: 12 },
   blake2: { label: 'Blake2', block: 16, chunkElems: 0,   arity: 4, clocks: 96, fixed: 6, grinding: 24,
             fold: 3, terminal: 5, stage1: 98, stage1Base: 2, bus: 52, busBase: 2 },
   // SHA-256, and it is modelled on a DIFFERENT AIR from the other two -- deliberately. blake3's
@@ -440,9 +450,9 @@ const HASHES = {
 // A blowup of 2^b lets the quotient be split into 2^b chunks, so the
 // arithmetization can carry constraints of degree up to 2^b + 1. Compile the PIL
 // below that and the extra headroom is wasted; compile it above and the setup
-// inserts im pols to pull the degree back down (measured: blake3 at maxDeg 5 with
-// blowup 1 gets degraded to 3 and pays 11 im pols / +33 columns). The cap is the
-// repo's own convention -- Compressor.pil pins set_max_constraint_degree(8).
+// inserts im pols to pull the degree back down (measured 2026-11-25: blake3's air,
+// written to degree 5, pays 26 im pols / 28 columns at blowup 1, k=4 -- `degIm`).
+// The cap is the repo's own convention -- Compressor.pil pins set_max_constraint_degree(8).
 const MAXDEG_CAP = 8;
 function maxDegFor(blowup) { return Math.min(2 ** blowup + 1, MAXDEG_CAP); }
 
@@ -452,15 +462,18 @@ function maxDegFor(blowup) { return Math.min(2 ** blowup + 1, MAXDEG_CAP); }
 //           direct fraction (maxDeg - 2 of them), then clusters the rest
 //           maxDeg - 1 at a time behind one `im` -- the im constraint is
 //           im * prod(f_i + gamma), degree 1 + cluster. Each im, and gsum
-//           itself, is one extension element = 3 Goldilocks columns.
+//           itself, is one extension element = 3 Goldilocks columns. Below maxDeg 5
+//           it also carries pil-info's degree-reduction intermediates (`degIm`).
 //   stageQ  the quotient, maxDeg - 1 chunks x 3.
-// Reproduces the measured recursion air at k=4 / maxDeg 5: stage1 236, stage2 102, stageQ 12.
+// Reproduces the measured recursion air at k=4: stage1 236, stage2 102, stageQ 12 at maxDeg 5,
+// and stage2 229 (201 bus + 28 degIm), stageQ 6 at maxDeg 3.
 function geometry(h, k, blowup) {
   const maxDeg = maxDegFor(blowup);
   const busOps = h.bus * k + h.busBase;
   const im = Math.max(0, Math.ceil((busOps - (maxDeg - 2)) / (maxDeg - 1)));
   const stage1 = h.stage1 * k + h.stage1Base;
-  const stage2 = FE * (im + 1);
+  const degIm = maxDeg < 5 ? (h.degIm || 0) * k + (h.degImBase || 0) : 0;
+  const stage2 = FE * (im + 1) + degIm;
   const stageQ = FE * (maxDeg - 1);
   // Cells the verifier can spend live in the committed lanes, so the lane width
   // is the committed width divided by the lanes that share it.

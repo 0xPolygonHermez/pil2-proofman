@@ -138,6 +138,44 @@ __global__ void b3_merkleNodeKernel(uint64_t *cursor, uint64_t nextN, uint64_t n
     for (int i = 0; i < 4; ++i) o[i] = dig[i];
 }
 
+// Level 1 of the 2^K-leaf subtree holding query j: hashes rows 2i, 2i+1 into node (s << (K-1)) + i.
+__global__ void b3_subtreeLevel1Kernel(uint64_t *d_tree, const uint64_t *d_trace, uint32_t nCols, uint64_t nRows,
+                                       Layout layout, const uint64_t *d_queries, uint64_t nQueries, uint32_t K)
+{
+    const uint64_t t = (uint64_t)blockIdx.x * blockDim.x + threadIdx.x;
+    const uint64_t per = 1ull << (K - 1);
+    if (t >= nQueries * per) return;
+    const uint64_t s = d_queries[t >> (K - 1)] >> K, i = t & (per - 1);
+    const uint64_t r0 = (s << K) + 2 * i;
+    uint64_t pair[8];
+    b3_hash_row(d_trace, nCols, r0, nRows, layout, pair);
+    b3_hash_row(d_trace, nCols, r0 + 1, nRows, layout, pair + 4);
+    uint32_t cv[8];
+    blake3core::compress_chunk(pair, 8u, 0ull, true, cv);
+    uint64_t dig[4];
+    blake3core::pack4(cv, dig);
+    uint64_t *o = d_tree + ((s << (K - 1)) + i) * 4ull;
+#pragma unroll
+    for (int w = 0; w < 4; ++w) o[w] = dig[w];
+}
+
+// Level l (2 <= l < K) of that subtree, from level l-1.
+__global__ void b3_subtreeLevelKernel(uint64_t *d_tree, uint64_t childOff, uint64_t levelOff,
+                                      const uint64_t *d_queries, uint64_t nQueries, uint32_t K, uint32_t l)
+{
+    const uint64_t t = (uint64_t)blockIdx.x * blockDim.x + threadIdx.x;
+    const uint64_t per = 1ull << (K - l);
+    if (t >= nQueries * per) return;
+    const uint64_t s = d_queries[t >> (K - l)] >> K, i = t & (per - 1);
+    uint32_t cv[8];
+    blake3core::compress_chunk(&d_tree[childOff + ((s << (K - l + 1)) + 2 * i) * 4ull], 8u, 0ull, true, cv);
+    uint64_t dig[4];
+    blake3core::pack4(cv, dig);
+    uint64_t *o = d_tree + levelOff + ((s << (K - l)) + i) * 4ull;
+#pragma unroll
+    for (int w = 0; w < 4; ++w) o[w] = dig[w];
+}
+
 // Grinding hash: [c0, c1, c2, nonce, 0, 0, 0, 0] -> first output word.
 struct B3GrindHash
 {
@@ -165,6 +203,27 @@ void Blake3GoldilocksGPU::linearHash(uint64_t *d_hash_output, uint64_t *d_trace,
     b3_linearHashKernel<<<blks, tpb, 0, stream>>>(
         d_hash_output, d_trace, (uint32_t)num_cols, (uint32_t)num_rows, layout, ld ? ld : num_rows);
     CHECKCUDAERR(cudaGetLastError());
+}
+
+void Blake3GoldilocksGPU::rebuildQueriedSubtreesNoLeaves(uint64_t *d_tree, const uint64_t *d_trace, uint64_t num_cols,
+                                                         uint64_t num_rows, Layout layout, const uint64_t *d_queries,
+                                                         uint64_t n_queries, uint32_t upperLevel, cudaStream_t stream)
+{
+    const uint32_t K = upperLevel;
+    if (n_queries == 0 || K < 2 || (num_rows >> K) == 0) return;
+    uint64_t n = n_queries << (K - 1);
+    b3_subtreeLevel1Kernel<<<(uint32_t)((n + TPB_B3 - 1) / TPB_B3), TPB_B3, 0, stream>>>(
+        d_tree, d_trace, (uint32_t)num_cols, num_rows, layout, d_queries, n_queries, K);
+    CHECKCUDAERR(cudaGetLastError());
+    uint64_t childOff = 0;
+    for (uint32_t l = 2; l < K; ++l) {
+        const uint64_t levelOff = childOff + (num_rows >> (l - 1)) * CAPACITY;
+        n = n_queries << (K - l);
+        b3_subtreeLevelKernel<<<(uint32_t)((n + TPB_B3 - 1) / TPB_B3), TPB_B3, 0, stream>>>(
+            d_tree, childOff, levelOff, d_queries, n_queries, K, l);
+        CHECKCUDAERR(cudaGetLastError());
+        childOff = levelOff;
+    }
 }
 
 void Blake3GoldilocksGPU::merkletree(uint32_t arity, uint64_t *d_tree, uint64_t *d_input,

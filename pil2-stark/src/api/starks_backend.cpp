@@ -14,7 +14,7 @@ void calculate_const_tree_cpu(void *pStarkInfo, void *pConstPolsAddress, void *p
 void write_custom_commit_cpu(void *root, uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, void *d_buffers_, void *buffer, char *bufferFile);
 uint64_t commit_witness_cpu(void *pSetupCtx, void *params, uint64_t instanceId, uint64_t airgroupId, uint64_t airId, void *root, void *d_buffers, char *customCommitsFixedPath);
 void verify_constraints_cpu(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, void *stepsParams, void *constraintsInfo, void *d_buffers, uint64_t streamId);
-uint64_t gen_proof_cpu(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void *params, void *globalChallenge, uint64_t* proofBuffer, char *proofFile, void *d_buffers, uint64_t streamId, char *constPolsPath, char *constTreePath, char *customCommitsFixedPath, bool selfContained);
+uint64_t gen_proof_cpu(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void *params, void *globalChallenge, uint64_t* proofBuffer, char *proofFile, void *d_buffers, uint64_t streamId, char *constPolsPath, char *constTreePath, char *customCommitsFixedPath, bool selfContained, void *contributionRoot);
 void *gen_device_buffers_cpu(uint32_t node_rank, uint32_t node_size, const int32_t* numa_nodes, uint32_t arity, uint32_t max_n_bits_ext);
 void use_packed_trace_cpu(void *d_buffers_, bool packed);
 void register_instruction_table_cpu(void *d_buffers_, uint64_t airgroupId, uint64_t airId, uint64_t *table, uint64_t num_entries, uint64_t words_per_entry);
@@ -34,7 +34,7 @@ void gen_final_snark_proof_cpu(void *snark_prover, void *circomWitnessFinal, uin
 #ifdef __USE_CUDA__
 uint32_t register_host_memory_gpu(void *ptr, uint64_t size);
 void unregister_host_memory_gpu(void *ptr);
-void wait_trace_h2d_done_gpu(void *d_buffers, uint64_t stream_id);
+void wait_trace_h2d_done_gpu(void *d_buffers, uint64_t stream_id, uint64_t instance_id);
 void init_gpu_setup_gpu(uint64_t arity);
 void tile_const_pols_gpu(void *pStarkInfo, void *pConstPols, char *constFile, void *pConstTree, char *constTreeFile, void *unified_buffer_gpu);
 void prepare_blocks_gpu(uint64_t* pol, uint64_t N, uint64_t nCols, void *unified_buffer_gpu);
@@ -43,7 +43,7 @@ void write_custom_commit_gpu(void *root, uint64_t arity, uint64_t nBits, uint64_
 uint64_t initialize_instance_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void* params_, void *d_buffers_, char *customCommitsFixedPath);
 void calculate_trace_instance_gpu(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, void *stepsParams, void *d_buffers, uint64_t streamId);
 void verify_constraints_gpu(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, void *stepsParams, void *constraintsInfo, void *d_buffers, uint64_t streamId);
-uint64_t gen_proof_gpu(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void *params, void *globalChallenge, uint64_t* proofBuffer, char *proofFile, void *d_buffers, uint64_t streamId, char *constPolsPath, char *constTreePath, char *customCommitsFixedPath, bool selfContained);
+uint64_t gen_proof_gpu(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void *params, void *globalChallenge, uint64_t* proofBuffer, char *proofFile, void *d_buffers, uint64_t streamId, char *constPolsPath, char *constTreePath, char *customCommitsFixedPath, bool selfContained, void *contributionRoot);
 void get_stream_proofs_gpu(void *d_buffers_);
 void get_stream_proofs_non_blocking_gpu(void *d_buffers_);
 void get_stream_id_proof_gpu(void *d_buffers_, uint64_t streamId);
@@ -366,9 +366,9 @@ void verify_constraints(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, vo
 }
 
 // Proof generation
-uint64_t gen_proof(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void *params, void *globalChallenge, uint64_t* proofBuffer, char *proofFile, void *d_buffers, uint64_t streamId, char *constPolsPath, char *constTreePath, char *customCommitsFixedPath, bool selfContained) {
+uint64_t gen_proof(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void *params, void *globalChallenge, uint64_t* proofBuffer, char *proofFile, void *d_buffers, uint64_t streamId, char *constPolsPath, char *constTreePath, char *customCommitsFixedPath, bool selfContained, void *contributionRoot) {
     auto backend = active_backend.load(std::memory_order_acquire);
-    return backend->gen_proof(pSetupCtx, airgroupId, airId, instanceId, params, globalChallenge, proofBuffer, proofFile, d_buffers, streamId, constPolsPath, constTreePath, customCommitsFixedPath, selfContained);
+    return backend->gen_proof(pSetupCtx, airgroupId, airId, instanceId, params, globalChallenge, proofBuffer, proofFile, d_buffers, streamId, constPolsPath, constTreePath, customCommitsFixedPath, selfContained, contributionRoot);
 }
 
 void get_stream_proofs(void *d_buffers_) {
@@ -449,9 +449,9 @@ void unregister_host_memory(void *ptr) {
     if (backend->unregister_host_memory) backend->unregister_host_memory(ptr);
 }
 
-void wait_trace_h2d_done(void *d_buffers, uint64_t stream_id) {
+void wait_trace_h2d_done(void *d_buffers, uint64_t stream_id, uint64_t instance_id) {
     auto backend = active_backend.load(std::memory_order_acquire);
-    if (backend->wait_trace_h2d_done) backend->wait_trace_h2d_done(d_buffers, stream_id);
+    if (backend->wait_trace_h2d_done) backend->wait_trace_h2d_done(d_buffers, stream_id, instance_id);
 }
 
 void free_device_buffers(void *d_buffers) {
