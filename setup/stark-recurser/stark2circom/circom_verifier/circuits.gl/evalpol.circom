@@ -91,7 +91,7 @@ template EvalPol(n) {
         }
     }
 
-    // If n = 0 return an empty array. Otherwise return the evaluation of the polynomial
+    // If n = 0 the evaluation is zero. Otherwise it is the evaluation of the polynomial
     if (n==0) {
         out <== [0,0,0];
     } else {

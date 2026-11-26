@@ -51,7 +51,6 @@ template Recursive1Compressed() {
     var W = vadcop_W();
     var nPub = vadcop_nPublics();
     var nPV = vadcop_nProofValues();
-    var S = vadcopValuesSize(nAgg, W);
 
     signal input sv_circuitType;
     signal input sv_aggregatedProofs;

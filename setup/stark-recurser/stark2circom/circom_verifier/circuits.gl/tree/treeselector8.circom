@@ -1,8 +1,6 @@
 pragma circom 2.1.0;
 pragma custom_templates;
 
-include "utils.circom";
-
 template custom TreeSelector8() {
     signal input values[8][3];
     signal input keys[3];

@@ -1,7 +1,7 @@
 pragma circom 2.1.0;
 
 /*
-    Check if a value is zero or not. Used in recursive2
+    Check if a value is zero or not.
 */
 template IsZero() {
     signal input in;

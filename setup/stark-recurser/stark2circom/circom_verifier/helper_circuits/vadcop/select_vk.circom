@@ -1,7 +1,5 @@
 pragma circom 2.1.0;
 
-include "mux1.circom";
-include "mux2.circom";
 include "iszero.circom";
 include "vadcop/circuit_type.circom";
 
