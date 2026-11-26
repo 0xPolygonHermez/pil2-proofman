@@ -164,7 +164,8 @@ fn stage1_columns(
 }
 
 /// Lane names the generated Rust would reject: a type of the row (`{Row}{Lane}`, its `View`/`Ops`,
-/// the row's own) or a row field or flattened accessor (`{lane}_{column}`) defined twice.
+/// the row's own), a row field or flattened accessor (`{lane}_{column}`) defined twice, or a lane's
+/// trait method (`x(lane)`) named as a column's.
 fn check_lane_names(plain: &[String], groups: &[LaneGroup]) -> Result<(), String> {
     // As the macro names a lane's struct: each `_`-separated word capitalised.
     let pascal = |s: &str| -> String {
@@ -187,6 +188,12 @@ fn check_lane_names(plain: &[String], groups: &[LaneGroup]) -> Result<(), String
         if let Some(w) = list.windows(2).find(|w| w[0] == w[1]) {
             return Err(format!("its row would define {what} `{}` twice", w[0]));
         }
+    }
+    // The row trait has a lane's method beside each column's setters and getters.
+    let methods: Vec<String> =
+        accessors.iter().flat_map(|a| ["set_", "get_", "set_all_", "get_all_"].map(|p| format!("{p}{a}"))).collect();
+    if let Some(lane) = lanes.iter().find(|l| methods.iter().any(|m| m == *l)) {
+        return Err(format!("its row would define method `{lane}` twice"));
     }
     Ok(())
 }
@@ -912,5 +919,12 @@ mod tests {
         pilout.symbols[0].name = "Main.bin".into();
         let err = pil_helpers(&dir, &pilout).unwrap_err();
         assert!(err.contains("field `bin` twice"), "{err}");
+        // A lane named as a column's getter.
+        let mut pilout = lanes_pilout();
+        for s in pilout.symbols.iter_mut().filter_map(|s| s.lane.as_mut()).filter(|l| l.lane_name == "bin") {
+            s.lane_name = "get_a".into();
+        }
+        let err = pil_helpers(&dir, &pilout).unwrap_err();
+        assert!(err.contains("method `get_a` twice"), "{err}");
     }
 }
