@@ -1,7 +1,7 @@
 pragma circom 2.1.0;
 pragma custom_templates;
 
-include "sha256_inputs.circom";
+include "mains/sha256_inputs.circom";
 
 /*
     The final SNARK's circuit: the recursivef's proof verified (StarkVerifierBN128, key 0) and its publics

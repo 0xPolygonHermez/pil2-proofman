@@ -1,4 +1,4 @@
-//! The data of `GetSha256Inputs` (static, `helper_circuits/sha256_inputs.circom`): publics_info's
+//! The data of `GetSha256Inputs` (static, `helper_circuits/mains/sha256_inputs.circom`): publics_info's
 //! definitions as the final circuit's `vd_DEFS()`.
 
 use anyhow::{bail, Context, Result};

@@ -1,6 +1,6 @@
 //! The global constraints of a vadcop_final: `GlobalConstraints(nAg, maxAgg, nPub, nPV, nCh)` and its
 //! `GlobalConstraint{c}_chunk{i}` parts (≤ 50 instructions each, to keep circom compile times down),
-//! over the padded `airgroupvalues[nAg][maxAgg][3]` that `VadcopFinal` (final_vadcop.circom) builds.
+//! over the padded `airgroupvalues[nAg][maxAgg][3]` that `VadcopFinal` (mains/vadcop_final.circom) builds.
 
 use std::collections::{HashMap, HashSet};
 

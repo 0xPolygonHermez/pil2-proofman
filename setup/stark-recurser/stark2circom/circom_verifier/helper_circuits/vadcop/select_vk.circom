@@ -3,7 +3,7 @@ pragma circom 2.1.0;
 include "mux1.circom";
 include "mux2.circom";
 include "iszero.circom";
-include "circuit_type.circom";
+include "vadcop/circuit_type.circom";
 
 // Given a circuit type, return the corresponding verification key
 template SelectVerificationKeyNull(nBasics, airgroupId) {

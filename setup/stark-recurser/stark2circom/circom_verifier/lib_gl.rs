@@ -354,9 +354,13 @@ pub(crate) mod tests {
         let lib = [
             include_str!("helper_circuits/verifier/stark_verifier.circom"),
             include_str!("helper_circuits/verifier/stark_verifier_bn128.circom"),
-            include_str!("helper_circuits/recursion.circom"),
-            include_str!("helper_circuits/final_vadcop.circom"),
-            include_str!("helper_circuits/final_snark.circom"),
+            include_str!("helper_circuits/vadcop/values.circom"),
+            include_str!("helper_circuits/vadcop/fold.circom"),
+            include_str!("helper_circuits/mains/compressor.circom"),
+            include_str!("helper_circuits/mains/recursive1.circom"),
+            include_str!("helper_circuits/mains/recursive2.circom"),
+            include_str!("helper_circuits/mains/vadcop_final.circom"),
+            include_str!("helper_circuits/mains/final_snark.circom"),
         ]
         .concat();
         let mut used: Vec<&str> = lib

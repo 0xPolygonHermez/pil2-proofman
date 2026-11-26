@@ -315,7 +315,7 @@ fn transcript_matches_reference_blake3() {
 
 /// One round of the contributions lattice chain, circom against the prover.
 ///
-/// vadcop_hashes.circom runs the blake3 chain as `Blake3Permute8` rounds eight words
+/// vadcop/hashes.circom runs the blake3 chain as `Blake3Permute8` rounds eight words
 /// wide; the prover steps it with `hash_state` at the width
 /// `TranscriptDyn::get_chain_state` returns. Those are two separate implementations of one
 /// function and they must agree, or prover and verifier derive different contributions --
@@ -666,7 +666,7 @@ fn circom_circuit_type_matches_rust() {
         }
     }
     let src = format!(
-        "pragma circom 2.1.0;\npragma custom_templates;\ninclude \"circuit_type.circom\";\n\n\
+        "pragma circom 2.1.0;\npragma custom_templates;\ninclude \"vadcop/circuit_type.circom\";\n\n\
          template Probe() {{\n    signal output out[{}];\n{body}}}\n\ncomponent main = Probe();\n",
         N * N
     );

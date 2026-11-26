@@ -1,5 +1,4 @@
-//! The vadcop data a recursion main hands its static templates (`helper_circuits/recursion.circom`,
-//! `final_vadcop.circom`): `vd_<name>()` and, per airgroup, `vd_<name>(i)`.
+//! The vadcop data a recursion main hands its static templates (`helper_circuits/vadcop/` and `helper_circuits/mains/`): `vd_<name>()` and, per airgroup, `vd_<name>(i)`.
 
 use anyhow::{bail, Context, Result};
 use serde_json::Value;

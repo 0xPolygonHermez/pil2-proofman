@@ -1,10 +1,14 @@
 pragma circom 2.1.0;
 pragma custom_templates;
 
-include "recursion.circom";
+include "iszero.circom";
+include "vadcop/values.circom";
+include "vadcop/agg_values.circom";
+include "vadcop/select_vk.circom";
+include "vadcop/hashes.circom";
 
 /*
-    vadcop_final (recursion.circom's conventions); the generated main adds GlobalConstraints,
+    vadcop_final (the conventions of vadcop/values.circom); the generated main adds GlobalConstraints,
     vd_nGlobalChallenges() and the global data vd_nPVMap() / vd_PV() (proofValuesMap's size and stages).
 */
 // The vadcop_final of nAg airgroups: one recursive2 proof each (key a), the global challenge and the
