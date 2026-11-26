@@ -107,19 +107,22 @@ function stir_nHints(stir, M, T) {
     return stir_hintOff(T, M - 1);
 }
 
-// Query-batch slots: L_0 tree j's width, fold tree j+1's coset members and path levels (0 past the last).
-function geo_slotW(L0_TREE_START, nTrees, j) {
-    if (j < nTrees) { return L0_TREE_START[j + 1] - L0_TREE_START[j]; }
-    return 0;
+// Fold trees opened at the L_0 queries: FRI's every one, STIR's T_0 only (its STEPS has two entries).
+function nQueryFoldTrees(nSteps) { return nSteps - 1; }
+
+// A query's fold-tree data is flat in fold-tree order: where fold tree f's (fold step f + 1's) opened
+// coset and Merkle path start; at f = nQueryFoldTrees, their totals.
+function foldCosetStart(STEPS, f) {
+    var start = 0;
+    for (var j = 0; j < f; j++) { start += foldCosetSize(STEPS, j + 1); }
+    return start;
 }
-function geo_slotC(STEPS, nq, j) {
-    if (j < nq) { return foldCosetSize(STEPS, j + 1); }
-    return 0;
+function foldPathStart(arity, lastLevels, STEPS, f) {
+    var start = 0;
+    for (var j = 0; j < f; j++) { start += foldPathLength(arity, lastLevels, STEPS, j + 1); }
+    return start;
 }
-function geo_slotM(arity, lastLevels, STEPS, nq, j) {
-    if (j < nq) { return foldPathLength(arity, lastLevels, STEPS, j + 1); }
-    return 0;
-}
+
 // The bits of fold step s + 1's domain, 0 past the last.
 function nextFoldDomainBits(STEPS, nSteps, s) {
     if (s + 1 < nSteps) { return STEPS[s + 1]; }

@@ -312,31 +312,6 @@ pub(crate) mod tests {
         assert!(err.to_string().contains("splitLinearHash"), "{err}");
     }
 
-    /// The library's query templates have 8 slots of each kind: past them it refuses.
-    #[test]
-    fn past_the_slot_caps_it_refuses() {
-        let refused =
-            |si: &Value| gen_stark_verifier_gl(None, si, &verifier_info(), &opts(HashFamily::Poseidon2)).unwrap_err();
-        let mut si = stark_info();
-        si["starkStruct"]["logDomainSizes"] = json!((8..=17).rev().collect::<Vec<u64>>());
-        assert!(refused(&si).to_string().contains("9 fold trees"), "{}", refused(&si));
-        // 3 stage trees, the fixed one and 5 custom commits.
-        let mut si = stark_info();
-        for c in 0..4 {
-            let pubs: Vec<Value> = (0..4).map(|i| json!({"idx": i})).collect();
-            si["customCommits"]
-                .as_array_mut()
-                .unwrap()
-                .push(json!({"name": format!("c{c}"), "publicValues": pubs, "stageWidths": [1]}));
-            si["customCommitsMap"]
-                .as_array_mut()
-                .unwrap()
-                .push(json!([{"name": "x", "stage": 0, "stagePos": 0, "stageId": 0, "dim": 1}]));
-            si["mapSectionsN"][format!("c{c}0")] = json!(1);
-        }
-        assert!(refused(&si).to_string().contains("9 L_0 trees"), "{}", refused(&si));
-    }
-
     /// A fold tree whose whole path is sent in clear has no siblings input (circom T3001 otherwise).
     #[test]
     fn empty_fold_tree_has_no_siblings() {

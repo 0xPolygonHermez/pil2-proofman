@@ -331,11 +331,6 @@ impl KeyData {
         };
 
         let (trees, const_tree) = l0_trees(si)?;
-        // The static query templates have 8 slots of each kind (stark_verifier.circom).
-        let opened = if stir.is_some() { 1 } else { nf };
-        if trees.len() > 8 || opened > 8 {
-            bail!("{} L_0 trees and {opened} fold trees: the verifier library opens at most 8 of each", trees.len());
-        }
         let mut s0 = vec![0];
         for t in &trees {
             s0.push(s0.last().unwrap() + t.width);

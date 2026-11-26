@@ -8,12 +8,8 @@ include "deep.circom";
 include "merkle.circom";
 
 /*
-    FRI checks of one query. `TreeSelector` (tree/treeselector<4|8>.circom) comes from the generated
-    verifier's includes.
-
-    The generated `QueryBatch<suffix>` instantiates these per tree and per fold step, one component
-    array each: circom resolves the signals of an array mixing template instances through a map at
-    run time, so trees and steps (different shapes) never share an array.
+    FRI checks of one query (stark_verifier.circom's QueryFoldStep runs them per fold step).
+    `TreeSelector` (tree/treeselector<4|8>.circom) comes from the generated verifier's includes.
 */
 
 // One FRI folding step: the folded value at the query equals the next oracle's opened member.

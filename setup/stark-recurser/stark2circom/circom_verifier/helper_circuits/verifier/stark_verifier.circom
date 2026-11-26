@@ -118,14 +118,8 @@ template StarkVerifierGL(k) {
     var stir = key_stir(k);
     var stirM = key_stirM(k);
     var nTrees = key_nTrees(k);
-    var nOpenings = key_nOpenings(k);
-    var nPols = key_nPols(k);
     var verkeyInput = key_verkeyInput(k);
     var enableInput = key_enableInput(k);
-    var offAirgroupValues = key_offAirgroupValues(k);
-    var offAirValues = key_offAirValues(k);
-    var offEvals = key_offEvals(k);
-    var offFinal = key_offFinal(k);
     var offNonce = key_offNonce(k);
     var offBetas = key_offBetas(k);
     var offNonces = key_offNonces(k);
@@ -133,7 +127,6 @@ template StarkVerifierGL(k) {
     var STEPS[nSteps] = key_STEPS(k);
     var L0_TREE_START[nTrees + 1] = key_L0_TREE_START(k);
     var STIR_NUM_QUERIES[nonEmpty(stirM)] = key_STIR_NUM_QUERIES(k);
-    var ROOT_C[4] = key_ROOT_C(k);
     var OFF_ROOT[nStages + 1] = key_OFF_ROOT(k);
     var OFF_L0_VALUES[nTrees] = key_OFF_L0_VALUES(k);
     var OFF_L0_SIBLINGS[nTrees] = key_OFF_L0_SIBLINGS(k);
@@ -152,8 +145,7 @@ template StarkVerifierGL(k) {
     var lastSize = clearLevelNodes(arity, lastLevels);
     var F = finalPolSize(stir, nSteps, STEPS, key_stirFinalBits(k));
     var inCh = circuitType > 0 ? 1 : 0;
-    // Fold trees opened at the L_0 queries; STIR's only one there is T_0.
-    var nq = stir == 1 ? 1 : NF;
+    var nq = nQueryFoldTrees(nSteps);
 
     signal input proof[key_proofSize(k)];
     signal input publics[nPublics];
@@ -163,7 +155,7 @@ template StarkVerifierGL(k) {
     signal input enable[enableInput];
     signal output rootC[4];
 
-    if (verkeyInput == 1) { rootC <== rootCIn; } else { rootC <== ROOT_C; }
+    if (verkeyInput == 1) { rootC <== rootCIn; } else { rootC <== key_ROOT_C(k); }
     signal {binary} enabled;
     if (enableInput == 1) {
         enable[0] * (enable[0] - 1) === 0;
@@ -172,15 +164,15 @@ template StarkVerifierGL(k) {
         enabled <== 1;
     }
 
-    // The proof's small parts; the queries' data goes from the proof straight into the batches.
+    // The proof's small parts.
     signal evals[nEvals][3];
-    for (var i = 0; i < nEvals; i++) { for (var e = 0; e < 3; e++) { evals[i][e] <== proof[offEvals + 3 * i + e]; } }
+    for (var i = 0; i < nEvals; i++) { for (var e = 0; e < 3; e++) { evals[i][e] <== proof[key_offEvals(k) + 3 * i + e]; } }
     signal airvalues[nAirValues][3];
-    for (var i = 0; i < nAirValues; i++) { for (var e = 0; e < 3; e++) { airvalues[i][e] <== proof[offAirValues + 3 * i + e]; } }
+    for (var i = 0; i < nAirValues; i++) { for (var e = 0; e < 3; e++) { airvalues[i][e] <== proof[key_offAirValues(k) + 3 * i + e]; } }
     signal airgroupvalues[nAirgroupValues][3];
-    for (var i = 0; i < nAirgroupValues; i++) { for (var e = 0; e < 3; e++) { airgroupvalues[i][e] <== proof[offAirgroupValues + 3 * i + e]; } }
+    for (var i = 0; i < nAirgroupValues; i++) { for (var e = 0; e < 3; e++) { airgroupvalues[i][e] <== proof[key_offAirgroupValues(k) + 3 * i + e]; } }
     signal finalPol[F][3];
-    for (var i = 0; i < F; i++) { for (var e = 0; e < 3; e++) { finalPol[i][e] <== proof[offFinal + 3 * i + e]; } }
+    for (var i = 0; i < F; i++) { for (var e = 0; e < 3; e++) { finalPol[i][e] <== proof[key_offFinal(k) + 3 * i + e]; } }
     // Each L_0 tree's root (a stage root, rootC, or a custom commit's publics) and levels sent in clear.
     signal treeRoot[nTrees][4];
     for (var t = 0; t < nTrees; t++) {
@@ -210,6 +202,30 @@ template StarkVerifierGL(k) {
             for (var i = 0; i < 4; i++) {
                 if (lastLevels > 0) { foldLast[f][j][i] <== proof[OFF_FOLD_LAST_LEVELS[f] + 4 * j + i]; } else { foldLast[f][j][i] <== 0; }
             }
+        }
+    }
+
+    // Per L_0 query: every L_0 tree's row, flat at L0_TREE_START, and path; every fold tree's opened coset
+    // and path, flat at foldCosetStart / foldPathStart. The proof holds each tree's data query after query.
+    var nFoldCosetRows = foldCosetStart(STEPS, nq);
+    var nFoldPathLevels = foldPathStart(arity, lastLevels, STEPS, nq);
+    signal l0Values[nQueries][L0_TREE_START[nTrees]];
+    signal l0Siblings[nQueries][nTrees][L0][wordsPerLevel];
+    signal foldCosets[nQueries][nFoldCosetRows][3];
+    signal foldSiblings[nQueries][nFoldPathLevels][wordsPerLevel];
+    for (var g = 0; g < nQueries; g++) {
+        for (var t = 0; t < nTrees; t++) {
+            var width = L0_TREE_START[t + 1] - L0_TREE_START[t];
+            for (var i = 0; i < width; i++) { l0Values[g][L0_TREE_START[t] + i] <== proof[OFF_L0_VALUES[t] + g * width + i]; }
+            for (var l = 0; l < L0; l++) { for (var i = 0; i < wordsPerLevel; i++) { l0Siblings[g][t][l][i] <== proof[OFF_L0_SIBLINGS[t] + (g * L0 + l) * wordsPerLevel + i]; } }
+        }
+        for (var f = 0; f < nq; f++) {
+            var cosetSize = foldCosetSize(STEPS, f + 1);
+            var pathLevels = foldPathLength(arity, lastLevels, STEPS, f + 1);
+            var cosetStart = foldCosetStart(STEPS, f);
+            var pathStart = foldPathStart(arity, lastLevels, STEPS, f);
+            for (var c = 0; c < cosetSize; c++) { for (var e = 0; e < 3; e++) { foldCosets[g][cosetStart + c][e] <== proof[OFF_FOLD_VALUES[f] + (g * cosetSize + c) * 3 + e]; } }
+            for (var l = 0; l < pathLevels; l++) { for (var i = 0; i < wordsPerLevel; i++) { foldSiblings[g][pathStart + l][i] <== proof[OFF_FOLD_SIBLINGS[f] + (g * pathLevels + l) * wordsPerLevel + i]; } }
         }
     }
 
@@ -267,113 +283,60 @@ template StarkVerifierGL(k) {
     // challenges end with vc, xi, vf1, vf2.
     VerifyEvaluations(nBits, nRoots, key_firstRootDim(k), key_qDeg(k), key_qPolEv(k), nEvals)(transcript.challenges[nChallenges - 3], transcript.challenges[nChallenges - 4], roots, evals, enabled);
 
-    component deepConsts = DeepConstants(nOpenings, nPols, nEvals, key_OPENING_NUM_EVALS(k), key_EVAL_COLUMN(k));
+    component deepConsts = DeepConstants(key_nOpenings(k), key_nPols(k), nEvals, key_OPENING_NUM_EVALS(k), key_EVAL_COLUMN(k));
     deepConsts.vf[0] <== transcript.challenges[nChallenges - 2];
     deepConsts.vf[1] <== transcript.challenges[nChallenges - 1];
     deepConsts.evals <== evals;
 
-    // The L_0 queries in batches of batchSize, the rest in one tail batch.
+    // The L_0 queries in batches of batchSize, the rest in one tail batch: its own array, as circom
+    // resolves an array mixing template instances through a map at run time. Per batch its per-proof
+    // inputs, then its queries' data, so it starts as soon as it is wired.
     var nFull = nQueries \ batchSize;
     var nTail = nQueries - nFull * batchSize;
     component batch[nonEmpty(nFull)];
     component tail[1];
-    // Per batch: its per-proof inputs, then its queries' data, so it starts as soon as it is wired.
-    var W[8];
-    var C[8];
-    var M[8];
-    for (var j = 0; j < 8; j++) {
-        W[j] = geo_slotW(L0_TREE_START, nTrees, j);
-        C[j] = geo_slotC(STEPS, nq, j);
-        M[j] = geo_slotM(arity, lastLevels, STEPS, nq, j);
-    }
     for (var b = 0; b < nFull; b++) {
         batch[b] = QueryBatchGL(k, batchSize);
-        var n = batchSize;
-        var q0 = b * batchSize;
         batch[b].xi <== transcript.challenges[nChallenges - 3];
         batch[b].friConsts <== deepConsts.friConsts;
-        batch[b].last <== treeLast;
-        batch[b].root <== treeRoot;
+        batch[b].treeLast <== treeLast;
+        batch[b].treeRoot <== treeRoot;
         for (var f = 0; f < nq; f++) {
-            batch[b].flast[f] <== foldLast[f];
-            batch[b].froot[f] <== foldRoot[f];
+            batch[b].foldLast[f] <== foldLast[f];
+            batch[b].foldRoot[f] <== foldRoot[f];
             if (stir == 0) { batch[b].rFold[f] <== transcript.ldt[f]; }
         }
         if (stir == 0) { batch[b].finalPol <== finalPol; }
         batch[b].enable <== enabled;
-        for (var q = 0; q < n; q++) {
-            var g = q0 + q;
+        for (var q = 0; q < batchSize; q++) {
+            var g = b * batchSize + q;
             batch[b].queriesL0[q] <== transcript.queriesL0[g];
-            for (var t = 0; t < nTrees; t++) { for (var l = 0; l < L0; l++) { for (var i = 0; i < wordsPerLevel; i++) { batch[b].sibs[t][q][l][i] <== proof[OFF_L0_SIBLINGS[t] + (g * L0 + l) * wordsPerLevel + i]; } } }
-            for (var i = 0; i < W[0]; i++) { batch[b].v0[q][i][0] <== proof[OFF_L0_VALUES[0] + g * W[0] + i]; }
-            for (var i = 0; i < W[1]; i++) { batch[b].v1[q][i][0] <== proof[OFF_L0_VALUES[1] + g * W[1] + i]; }
-            for (var i = 0; i < W[2]; i++) { batch[b].v2[q][i][0] <== proof[OFF_L0_VALUES[2] + g * W[2] + i]; }
-            for (var i = 0; i < W[3]; i++) { batch[b].v3[q][i][0] <== proof[OFF_L0_VALUES[3] + g * W[3] + i]; }
-            for (var i = 0; i < W[4]; i++) { batch[b].v4[q][i][0] <== proof[OFF_L0_VALUES[4] + g * W[4] + i]; }
-            for (var i = 0; i < W[5]; i++) { batch[b].v5[q][i][0] <== proof[OFF_L0_VALUES[5] + g * W[5] + i]; }
-            for (var i = 0; i < W[6]; i++) { batch[b].v6[q][i][0] <== proof[OFF_L0_VALUES[6] + g * W[6] + i]; }
-            for (var i = 0; i < W[7]; i++) { batch[b].v7[q][i][0] <== proof[OFF_L0_VALUES[7] + g * W[7] + i]; }
-            for (var c = 0; c < C[0]; c++) { for (var e = 0; e < 3; e++) { batch[b].fv0[q][c][e] <== proof[OFF_FOLD_VALUES[0] + (g * C[0] + c) * 3 + e]; } }
-            for (var l = 0; l < M[0]; l++) { for (var i = 0; i < wordsPerLevel; i++) { batch[b].fs0[q][l][i] <== proof[OFF_FOLD_SIBLINGS[0] + (g * M[0] + l) * wordsPerLevel + i]; } }
-            for (var c = 0; c < C[1]; c++) { for (var e = 0; e < 3; e++) { batch[b].fv1[q][c][e] <== proof[OFF_FOLD_VALUES[1] + (g * C[1] + c) * 3 + e]; } }
-            for (var l = 0; l < M[1]; l++) { for (var i = 0; i < wordsPerLevel; i++) { batch[b].fs1[q][l][i] <== proof[OFF_FOLD_SIBLINGS[1] + (g * M[1] + l) * wordsPerLevel + i]; } }
-            for (var c = 0; c < C[2]; c++) { for (var e = 0; e < 3; e++) { batch[b].fv2[q][c][e] <== proof[OFF_FOLD_VALUES[2] + (g * C[2] + c) * 3 + e]; } }
-            for (var l = 0; l < M[2]; l++) { for (var i = 0; i < wordsPerLevel; i++) { batch[b].fs2[q][l][i] <== proof[OFF_FOLD_SIBLINGS[2] + (g * M[2] + l) * wordsPerLevel + i]; } }
-            for (var c = 0; c < C[3]; c++) { for (var e = 0; e < 3; e++) { batch[b].fv3[q][c][e] <== proof[OFF_FOLD_VALUES[3] + (g * C[3] + c) * 3 + e]; } }
-            for (var l = 0; l < M[3]; l++) { for (var i = 0; i < wordsPerLevel; i++) { batch[b].fs3[q][l][i] <== proof[OFF_FOLD_SIBLINGS[3] + (g * M[3] + l) * wordsPerLevel + i]; } }
-            for (var c = 0; c < C[4]; c++) { for (var e = 0; e < 3; e++) { batch[b].fv4[q][c][e] <== proof[OFF_FOLD_VALUES[4] + (g * C[4] + c) * 3 + e]; } }
-            for (var l = 0; l < M[4]; l++) { for (var i = 0; i < wordsPerLevel; i++) { batch[b].fs4[q][l][i] <== proof[OFF_FOLD_SIBLINGS[4] + (g * M[4] + l) * wordsPerLevel + i]; } }
-            for (var c = 0; c < C[5]; c++) { for (var e = 0; e < 3; e++) { batch[b].fv5[q][c][e] <== proof[OFF_FOLD_VALUES[5] + (g * C[5] + c) * 3 + e]; } }
-            for (var l = 0; l < M[5]; l++) { for (var i = 0; i < wordsPerLevel; i++) { batch[b].fs5[q][l][i] <== proof[OFF_FOLD_SIBLINGS[5] + (g * M[5] + l) * wordsPerLevel + i]; } }
-            for (var c = 0; c < C[6]; c++) { for (var e = 0; e < 3; e++) { batch[b].fv6[q][c][e] <== proof[OFF_FOLD_VALUES[6] + (g * C[6] + c) * 3 + e]; } }
-            for (var l = 0; l < M[6]; l++) { for (var i = 0; i < wordsPerLevel; i++) { batch[b].fs6[q][l][i] <== proof[OFF_FOLD_SIBLINGS[6] + (g * M[6] + l) * wordsPerLevel + i]; } }
-            for (var c = 0; c < C[7]; c++) { for (var e = 0; e < 3; e++) { batch[b].fv7[q][c][e] <== proof[OFF_FOLD_VALUES[7] + (g * C[7] + c) * 3 + e]; } }
-            for (var l = 0; l < M[7]; l++) { for (var i = 0; i < wordsPerLevel; i++) { batch[b].fs7[q][l][i] <== proof[OFF_FOLD_SIBLINGS[7] + (g * M[7] + l) * wordsPerLevel + i]; } }
+            batch[b].l0Values[q] <== l0Values[g];
+            batch[b].l0Siblings[q] <== l0Siblings[g];
+            if (nFoldCosetRows > 0) { batch[b].foldCosets[q] <== foldCosets[g]; }
+            if (nFoldPathLevels > 0) { batch[b].foldSiblings[q] <== foldSiblings[g]; }
         }
     }
     if (nTail > 0) {
         tail[0] = QueryBatchGL(k, nTail);
-        var n = nTail;
-        var q0 = nFull * batchSize;
         tail[0].xi <== transcript.challenges[nChallenges - 3];
         tail[0].friConsts <== deepConsts.friConsts;
-        tail[0].last <== treeLast;
-        tail[0].root <== treeRoot;
+        tail[0].treeLast <== treeLast;
+        tail[0].treeRoot <== treeRoot;
         for (var f = 0; f < nq; f++) {
-            tail[0].flast[f] <== foldLast[f];
-            tail[0].froot[f] <== foldRoot[f];
+            tail[0].foldLast[f] <== foldLast[f];
+            tail[0].foldRoot[f] <== foldRoot[f];
             if (stir == 0) { tail[0].rFold[f] <== transcript.ldt[f]; }
         }
         if (stir == 0) { tail[0].finalPol <== finalPol; }
         tail[0].enable <== enabled;
-        for (var q = 0; q < n; q++) {
-            var g = q0 + q;
+        for (var q = 0; q < nTail; q++) {
+            var g = nFull * batchSize + q;
             tail[0].queriesL0[q] <== transcript.queriesL0[g];
-            for (var t = 0; t < nTrees; t++) { for (var l = 0; l < L0; l++) { for (var i = 0; i < wordsPerLevel; i++) { tail[0].sibs[t][q][l][i] <== proof[OFF_L0_SIBLINGS[t] + (g * L0 + l) * wordsPerLevel + i]; } } }
-            for (var i = 0; i < W[0]; i++) { tail[0].v0[q][i][0] <== proof[OFF_L0_VALUES[0] + g * W[0] + i]; }
-            for (var i = 0; i < W[1]; i++) { tail[0].v1[q][i][0] <== proof[OFF_L0_VALUES[1] + g * W[1] + i]; }
-            for (var i = 0; i < W[2]; i++) { tail[0].v2[q][i][0] <== proof[OFF_L0_VALUES[2] + g * W[2] + i]; }
-            for (var i = 0; i < W[3]; i++) { tail[0].v3[q][i][0] <== proof[OFF_L0_VALUES[3] + g * W[3] + i]; }
-            for (var i = 0; i < W[4]; i++) { tail[0].v4[q][i][0] <== proof[OFF_L0_VALUES[4] + g * W[4] + i]; }
-            for (var i = 0; i < W[5]; i++) { tail[0].v5[q][i][0] <== proof[OFF_L0_VALUES[5] + g * W[5] + i]; }
-            for (var i = 0; i < W[6]; i++) { tail[0].v6[q][i][0] <== proof[OFF_L0_VALUES[6] + g * W[6] + i]; }
-            for (var i = 0; i < W[7]; i++) { tail[0].v7[q][i][0] <== proof[OFF_L0_VALUES[7] + g * W[7] + i]; }
-            for (var c = 0; c < C[0]; c++) { for (var e = 0; e < 3; e++) { tail[0].fv0[q][c][e] <== proof[OFF_FOLD_VALUES[0] + (g * C[0] + c) * 3 + e]; } }
-            for (var l = 0; l < M[0]; l++) { for (var i = 0; i < wordsPerLevel; i++) { tail[0].fs0[q][l][i] <== proof[OFF_FOLD_SIBLINGS[0] + (g * M[0] + l) * wordsPerLevel + i]; } }
-            for (var c = 0; c < C[1]; c++) { for (var e = 0; e < 3; e++) { tail[0].fv1[q][c][e] <== proof[OFF_FOLD_VALUES[1] + (g * C[1] + c) * 3 + e]; } }
-            for (var l = 0; l < M[1]; l++) { for (var i = 0; i < wordsPerLevel; i++) { tail[0].fs1[q][l][i] <== proof[OFF_FOLD_SIBLINGS[1] + (g * M[1] + l) * wordsPerLevel + i]; } }
-            for (var c = 0; c < C[2]; c++) { for (var e = 0; e < 3; e++) { tail[0].fv2[q][c][e] <== proof[OFF_FOLD_VALUES[2] + (g * C[2] + c) * 3 + e]; } }
-            for (var l = 0; l < M[2]; l++) { for (var i = 0; i < wordsPerLevel; i++) { tail[0].fs2[q][l][i] <== proof[OFF_FOLD_SIBLINGS[2] + (g * M[2] + l) * wordsPerLevel + i]; } }
-            for (var c = 0; c < C[3]; c++) { for (var e = 0; e < 3; e++) { tail[0].fv3[q][c][e] <== proof[OFF_FOLD_VALUES[3] + (g * C[3] + c) * 3 + e]; } }
-            for (var l = 0; l < M[3]; l++) { for (var i = 0; i < wordsPerLevel; i++) { tail[0].fs3[q][l][i] <== proof[OFF_FOLD_SIBLINGS[3] + (g * M[3] + l) * wordsPerLevel + i]; } }
-            for (var c = 0; c < C[4]; c++) { for (var e = 0; e < 3; e++) { tail[0].fv4[q][c][e] <== proof[OFF_FOLD_VALUES[4] + (g * C[4] + c) * 3 + e]; } }
-            for (var l = 0; l < M[4]; l++) { for (var i = 0; i < wordsPerLevel; i++) { tail[0].fs4[q][l][i] <== proof[OFF_FOLD_SIBLINGS[4] + (g * M[4] + l) * wordsPerLevel + i]; } }
-            for (var c = 0; c < C[5]; c++) { for (var e = 0; e < 3; e++) { tail[0].fv5[q][c][e] <== proof[OFF_FOLD_VALUES[5] + (g * C[5] + c) * 3 + e]; } }
-            for (var l = 0; l < M[5]; l++) { for (var i = 0; i < wordsPerLevel; i++) { tail[0].fs5[q][l][i] <== proof[OFF_FOLD_SIBLINGS[5] + (g * M[5] + l) * wordsPerLevel + i]; } }
-            for (var c = 0; c < C[6]; c++) { for (var e = 0; e < 3; e++) { tail[0].fv6[q][c][e] <== proof[OFF_FOLD_VALUES[6] + (g * C[6] + c) * 3 + e]; } }
-            for (var l = 0; l < M[6]; l++) { for (var i = 0; i < wordsPerLevel; i++) { tail[0].fs6[q][l][i] <== proof[OFF_FOLD_SIBLINGS[6] + (g * M[6] + l) * wordsPerLevel + i]; } }
-            for (var c = 0; c < C[7]; c++) { for (var e = 0; e < 3; e++) { tail[0].fv7[q][c][e] <== proof[OFF_FOLD_VALUES[7] + (g * C[7] + c) * 3 + e]; } }
-            for (var l = 0; l < M[7]; l++) { for (var i = 0; i < wordsPerLevel; i++) { tail[0].fs7[q][l][i] <== proof[OFF_FOLD_SIBLINGS[7] + (g * M[7] + l) * wordsPerLevel + i]; } }
+            tail[0].l0Values[q] <== l0Values[g];
+            tail[0].l0Siblings[q] <== l0Siblings[g];
+            if (nFoldCosetRows > 0) { tail[0].foldCosets[q] <== foldCosets[g]; }
+            if (nFoldPathLevels > 0) { tail[0].foldSiblings[q] <== foldSiblings[g]; }
         }
     }
 
@@ -430,14 +393,15 @@ template StarkVerifierGL(k) {
 }
 
 /*
-    One batch of queries: per L_0 tree and per fold tree (STIR: T_0) a component array of a single
-    template instance (circom resolves an array mixing instances through a map at run time), DEEP and
-    (FRI) every folding step. Slots v<j>/fv<j>/fs<j> past the key's trees and steps are empty.
+    One batch of n L_0 queries, the unit of parallel witness computation. Per query: every L_0 tree's
+    row against its tree (QueryL0TreeOpening), DEEP, and every fold step (QueryFoldStep; STIR: T_0's
+    opening only). A query's data comes flat: its L_0 rows at L0_TREE_START, its fold-tree cosets and
+    paths at foldCosetStart / foldPathStart. The per-tree and per-step arrays mix template instances, which
+    circom resolves through a map at run time: each takes the query's data whole, one store per input.
 */
 template parallel QueryBatchGL(k, n) {
     var arity = key_arity(k);
     var lastLevels = key_lastLevels(k);
-    var nBitsExt = key_nBitsExt(k);
     var nSteps = key_nSteps(k);
     var stir = key_stir(k);
     var nTrees = key_nTrees(k);
@@ -449,196 +413,140 @@ template parallel QueryBatchGL(k, n) {
     var wordsPerLevel = siblingWords(arity);
     var lastSize = clearLevelNodes(arity, lastLevels);
     var fri = 1 - stir;
-    var nq = stir == 1 ? 1 : nSteps - 1;
-    assert(nTrees <= 8 && nq <= 8);
-    var zeroSib[1][wordsPerLevel];
-    for (var i = 0; i < wordsPerLevel; i++) { zeroSib[0][i] = 0; }
+    var nq = nQueryFoldTrees(nSteps);
 
     signal input {binary} queriesL0[n][STEPS[0]];
     signal input xi[3];
     signal input friConsts[2 + nPols + 2 * nOpenings][3];
-    signal input sibs[nTrees][n][L0][wordsPerLevel];
-    signal input last[nTrees][lastSize][4];
-    signal input root[nTrees][4];
-    signal input flast[nq][lastSize][4];
-    signal input froot[nq][4];
+    signal input treeLast[nTrees][lastSize][4];
+    signal input treeRoot[nTrees][4];
+    signal input foldLast[nq][lastSize][4];
+    signal input foldRoot[nq][4];
     signal input rFold[nq * fri][3];
     signal input finalPol[fri * lastDomainSize(nSteps, STEPS)][3];
     signal input {binary} enable;
 
-    signal input v0[n][geo_slotW(L0_TREE_START, nTrees, 0)][1];
-    signal input v1[n][geo_slotW(L0_TREE_START, nTrees, 1)][1];
-    signal input v2[n][geo_slotW(L0_TREE_START, nTrees, 2)][1];
-    signal input v3[n][geo_slotW(L0_TREE_START, nTrees, 3)][1];
-    signal input v4[n][geo_slotW(L0_TREE_START, nTrees, 4)][1];
-    signal input v5[n][geo_slotW(L0_TREE_START, nTrees, 5)][1];
-    signal input v6[n][geo_slotW(L0_TREE_START, nTrees, 6)][1];
-    signal input v7[n][geo_slotW(L0_TREE_START, nTrees, 7)][1];
-    signal input fv0[n][geo_slotC(STEPS, nq, 0)][3];
-    signal input fv1[n][geo_slotC(STEPS, nq, 1)][3];
-    signal input fv2[n][geo_slotC(STEPS, nq, 2)][3];
-    signal input fv3[n][geo_slotC(STEPS, nq, 3)][3];
-    signal input fv4[n][geo_slotC(STEPS, nq, 4)][3];
-    signal input fv5[n][geo_slotC(STEPS, nq, 5)][3];
-    signal input fv6[n][geo_slotC(STEPS, nq, 6)][3];
-    signal input fv7[n][geo_slotC(STEPS, nq, 7)][3];
-    signal input fs0[n][geo_slotM(arity, lastLevels, STEPS, nq, 0)][wordsPerLevel];
-    signal input fs1[n][geo_slotM(arity, lastLevels, STEPS, nq, 1)][wordsPerLevel];
-    signal input fs2[n][geo_slotM(arity, lastLevels, STEPS, nq, 2)][wordsPerLevel];
-    signal input fs3[n][geo_slotM(arity, lastLevels, STEPS, nq, 3)][wordsPerLevel];
-    signal input fs4[n][geo_slotM(arity, lastLevels, STEPS, nq, 4)][wordsPerLevel];
-    signal input fs5[n][geo_slotM(arity, lastLevels, STEPS, nq, 5)][wordsPerLevel];
-    signal input fs6[n][geo_slotM(arity, lastLevels, STEPS, nq, 6)][wordsPerLevel];
-    signal input fs7[n][geo_slotM(arity, lastLevels, STEPS, nq, 7)][wordsPerLevel];
+    signal input l0Values[n][L0_TREE_START[nTrees]];
+    signal input l0Siblings[n][nTrees][L0][wordsPerLevel];
+    signal input foldCosets[n][foldCosetStart(STEPS, nq)][3];
+    signal input foldSiblings[n][foldPathStart(arity, lastLevels, STEPS, nq)][wordsPerLevel];
 
-    component keys0[n];
+    component l0Keys[n];
+    component l0Opening[n][nTrees];
     component deep[n];
+    component foldStep[n][nonEmpty(nq)];
     for (var q = 0; q < n; q++) {
         // One key split per query, shared by the L_0 trees.
-        keys0[q] = QueryKeys(arity, L0 + lastLevels, STEPS[0], STEPS[0]);
-        keys0[q].queries <== queriesL0[q];
+        l0Keys[q] = QueryKeys(arity, L0 + lastLevels, STEPS[0], STEPS[0]);
+        l0Keys[q].queries <== queriesL0[q];
+        for (var t = 0; t < nTrees; t++) {
+            l0Opening[q][t] = QueryL0TreeOpening(k, t);
+            l0Opening[q][t].keys <== l0Keys[q].keys;
+            l0Opening[q][t].l0Values <== l0Values[q];
+            l0Opening[q][t].siblings <== l0Siblings[q][t];
+            l0Opening[q][t].last <== treeLast[t];
+            l0Opening[q][t].root <== treeRoot[t];
+            l0Opening[q][t].enable <== enable;
+        }
+
         deep[q] = DeepQuery(nOpenings, nPols, key_nColGroups(k), key_nSums(k), STEPS[0], nextFoldDomainBits(STEPS, nSteps, 0), L0_TREE_START[nTrees], key_OPENING_ROOT(k), key_SUMS(k), key_COLS(k));
         deep[q].queriesL0 <== queriesL0[q];
         deep[q].xi <== xi;
         deep[q].friConsts <== friConsts;
-        if (nq > 0) { deep[q].s1_vals <== fv0[q]; } else { deep[q].s1_vals <== finalPol; }
+        deep[q].s0_vals <== l0Values[q];
+        // f_0 lands on fold tree 0's coset, or on finalPol when nothing folds.
+        if (nq > 0) {
+            for (var c = 0; c < foldCosetSize(STEPS, 1); c++) { deep[q].s1_vals[c] <== foldCosets[q][c]; }
+        } else {
+            deep[q].s1_vals <== finalPol;
+        }
         deep[q].enable <== enable;
 
-        if (nTrees > 0) {
-            VerifyTreeOpening(1, L0_TREE_START[0 + 1] - L0_TREE_START[0], arity, lastLevels, L0, nBitsExt)(keys0[q].keys, v0[q], sibs[0][q], last[0], root[0], enable);
-            for (var i = 0; i < L0_TREE_START[0 + 1] - L0_TREE_START[0]; i++) { deep[q].s0_vals[L0_TREE_START[0] + i] <== v0[q][i][0]; }
+        for (var f = 0; f < nq; f++) {
+            foldStep[q][f] = QueryFoldStep(k, f + 1);
+            foldStep[q][f].queriesL0 <== queriesL0[q];
+            foldStep[q][f].foldCosets <== foldCosets[q];
+            if (foldPathStart(arity, lastLevels, STEPS, nq) > 0) { foldStep[q][f].foldSiblings <== foldSiblings[q]; }
+            foldStep[q][f].last <== foldLast[f];
+            foldStep[q][f].root <== foldRoot[f];
+            if (fri == 1) { foldStep[q][f].rFold[0] <== rFold[f]; }
+            if (fri == 1 && f == nq - 1) { foldStep[q][f].finalPol <== finalPol; }
+            foldStep[q][f].enable <== enable;
         }
-        if (nTrees > 1) {
-            VerifyTreeOpening(1, L0_TREE_START[1 + 1] - L0_TREE_START[1], arity, lastLevels, L0, nBitsExt)(keys0[q].keys, v1[q], sibs[1][q], last[1], root[1], enable);
-            for (var i = 0; i < L0_TREE_START[1 + 1] - L0_TREE_START[1]; i++) { deep[q].s0_vals[L0_TREE_START[1] + i] <== v1[q][i][0]; }
+    }
+}
+
+// L_0 tree t's row at one query against the tree: the row is t's columns of the query's L_0 values.
+template QueryL0TreeOpening(k, t) {
+    var arity = key_arity(k);
+    var lastLevels = key_lastLevels(k);
+    var nSteps = key_nSteps(k);
+    var nTrees = key_nTrees(k);
+    var STEPS[nSteps] = key_STEPS(k);
+    var L0_TREE_START[nTrees + 1] = key_L0_TREE_START(k);
+    var L0 = l0PathLength(arity, lastLevels, STEPS);
+    var width = L0_TREE_START[t + 1] - L0_TREE_START[t];
+
+    signal input {binary} keys[L0 + lastLevels][log2Arity(arity)];
+    signal input l0Values[L0_TREE_START[nTrees]];
+    signal input siblings[L0][siblingWords(arity)];
+    signal input last[clearLevelNodes(arity, lastLevels)][4];
+    signal input root[4];
+    signal input {binary} enable;
+
+    signal row[width][1];
+    for (var i = 0; i < width; i++) { row[i][0] <== l0Values[L0_TREE_START[t] + i]; }
+    VerifyTreeOpening(1, width, arity, lastLevels, L0, key_nBitsExt(k))(keys, row, siblings, last, root, enable);
+}
+
+/*
+    Fold step s >= 1 at one query: fold tree s - 1's coset (f_{s-1} around the query) against the tree
+    and, FRI only, that coset folded with rFold equals its member in the next fold tree's coset, or in
+    finalPol after the last step. Reads its cosets out of the query's flat fold data.
+*/
+template QueryFoldStep(k, s) {
+    var arity = key_arity(k);
+    var lastLevels = key_lastLevels(k);
+    var nSteps = key_nSteps(k);
+    var STEPS[nSteps] = key_STEPS(k);
+    var nq = nQueryFoldTrees(nSteps);
+    var wordsPerLevel = siblingWords(arity);
+    var fri = 1 - key_stir(k);
+    var cosetSize = foldCosetSize(STEPS, s);
+    var pathLevels = foldPathLength(arity, lastLevels, STEPS, s);
+    var nextBits = nextFoldDomainBits(STEPS, nSteps, s);
+    var foldsIntoFinalPol = fri == 1 && s == nq ? 1 : 0;
+
+    signal input {binary} queriesL0[STEPS[0]];
+    signal input foldCosets[foldCosetStart(STEPS, nq)][3];
+    signal input foldSiblings[foldPathStart(arity, lastLevels, STEPS, nq)][wordsPerLevel];
+    signal input last[clearLevelNodes(arity, lastLevels)][4];
+    signal input root[4];
+    signal input rFold[fri][3];
+    signal input finalPol[foldsIntoFinalPol * lastDomainSize(nSteps, STEPS)][3];
+    signal input {binary} enable;
+
+    signal coset[cosetSize][3];
+    for (var c = 0; c < cosetSize; c++) { coset[c] <== foldCosets[foldCosetStart(STEPS, s - 1) + c]; }
+    signal {binary} keys[pathLevels + lastLevels][log2Arity(arity)] <== QueryKeys(arity, pathLevels + lastLevels, STEPS[s], STEPS[0])(queriesL0);
+    if (pathLevels > 0) {
+        signal siblings[pathLevels][wordsPerLevel];
+        for (var l = 0; l < pathLevels; l++) { siblings[l] <== foldSiblings[foldPathStart(arity, lastLevels, STEPS, s - 1) + l]; }
+        VerifyTreeOpening(3, cosetSize, arity, lastLevels, pathLevels, STEPS[s])(keys, coset, siblings, last, root, enable);
+    } else {
+        // The whole path is sent in clear: VerifyTreeOpening's Empty variant ignores its one siblings row.
+        var noSiblings[1][wordsPerLevel];
+        for (var i = 0; i < wordsPerLevel; i++) { noSiblings[0][i] = 0; }
+        VerifyTreeOpening(3, cosetSize, arity, lastLevels, 0, STEPS[s])(keys, coset, noSiblings, last, root, enable);
+    }
+
+    if (fri == 1) {
+        signal nextCoset[1 << (STEPS[s] - nextBits)][3];
+        if (foldsIntoFinalPol == 1) {
+            nextCoset <== finalPol;
+        } else {
+            for (var c = 0; c < 1 << (STEPS[s] - nextBits); c++) { nextCoset[c] <== foldCosets[foldCosetStart(STEPS, s) + c]; }
         }
-        if (nTrees > 2) {
-            VerifyTreeOpening(1, L0_TREE_START[2 + 1] - L0_TREE_START[2], arity, lastLevels, L0, nBitsExt)(keys0[q].keys, v2[q], sibs[2][q], last[2], root[2], enable);
-            for (var i = 0; i < L0_TREE_START[2 + 1] - L0_TREE_START[2]; i++) { deep[q].s0_vals[L0_TREE_START[2] + i] <== v2[q][i][0]; }
-        }
-        if (nTrees > 3) {
-            VerifyTreeOpening(1, L0_TREE_START[3 + 1] - L0_TREE_START[3], arity, lastLevels, L0, nBitsExt)(keys0[q].keys, v3[q], sibs[3][q], last[3], root[3], enable);
-            for (var i = 0; i < L0_TREE_START[3 + 1] - L0_TREE_START[3]; i++) { deep[q].s0_vals[L0_TREE_START[3] + i] <== v3[q][i][0]; }
-        }
-        if (nTrees > 4) {
-            VerifyTreeOpening(1, L0_TREE_START[4 + 1] - L0_TREE_START[4], arity, lastLevels, L0, nBitsExt)(keys0[q].keys, v4[q], sibs[4][q], last[4], root[4], enable);
-            for (var i = 0; i < L0_TREE_START[4 + 1] - L0_TREE_START[4]; i++) { deep[q].s0_vals[L0_TREE_START[4] + i] <== v4[q][i][0]; }
-        }
-        if (nTrees > 5) {
-            VerifyTreeOpening(1, L0_TREE_START[5 + 1] - L0_TREE_START[5], arity, lastLevels, L0, nBitsExt)(keys0[q].keys, v5[q], sibs[5][q], last[5], root[5], enable);
-            for (var i = 0; i < L0_TREE_START[5 + 1] - L0_TREE_START[5]; i++) { deep[q].s0_vals[L0_TREE_START[5] + i] <== v5[q][i][0]; }
-        }
-        if (nTrees > 6) {
-            VerifyTreeOpening(1, L0_TREE_START[6 + 1] - L0_TREE_START[6], arity, lastLevels, L0, nBitsExt)(keys0[q].keys, v6[q], sibs[6][q], last[6], root[6], enable);
-            for (var i = 0; i < L0_TREE_START[6 + 1] - L0_TREE_START[6]; i++) { deep[q].s0_vals[L0_TREE_START[6] + i] <== v6[q][i][0]; }
-        }
-        if (nTrees > 7) {
-            VerifyTreeOpening(1, L0_TREE_START[7 + 1] - L0_TREE_START[7], arity, lastLevels, L0, nBitsExt)(keys0[q].keys, v7[q], sibs[7][q], last[7], root[7], enable);
-            for (var i = 0; i < L0_TREE_START[7 + 1] - L0_TREE_START[7]; i++) { deep[q].s0_vals[L0_TREE_START[7] + i] <== v7[q][i][0]; }
-        }
-        if (nq > 0) {
-            var ml = foldPathLength(arity, lastLevels, STEPS, 1);
-            if (ml > 0) {
-                VerifyTreeOpening(3, foldCosetSize(STEPS, 1), arity, lastLevels, ml, STEPS[1])(QueryKeys(arity, ml + lastLevels, STEPS[1], STEPS[0])(queriesL0[q]), fv0[q], fs0[q], flast[0], froot[0], enable);
-            } else {
-                VerifyTreeOpening(3, foldCosetSize(STEPS, 1), arity, lastLevels, 0, STEPS[1])(QueryKeys(arity, lastLevels, STEPS[1], STEPS[0])(queriesL0[q]), fv0[q], zeroSib, flast[0], froot[0], enable);
-            }
-            if (fri == 1 && nq > 1) {
-                VerifyFRIFold(STEPS[0], STEPS[1], nextFoldDomainBits(STEPS, nSteps, 1), foldCosetShiftInv(nBitsExt, STEPS, 1), STEPS[0])(queriesL0[q], rFold[0], fv0[q], fv1[q], enable);
-            } else if (fri == 1) {
-                VerifyFRIFold(STEPS[0], STEPS[1], 0, foldCosetShiftInv(nBitsExt, STEPS, 1), STEPS[0])(queriesL0[q], rFold[0], fv0[q], finalPol, enable);
-            }
-        }
-        if (nq > 1) {
-            var ml = foldPathLength(arity, lastLevels, STEPS, 2);
-            if (ml > 0) {
-                VerifyTreeOpening(3, foldCosetSize(STEPS, 2), arity, lastLevels, ml, STEPS[2])(QueryKeys(arity, ml + lastLevels, STEPS[2], STEPS[0])(queriesL0[q]), fv1[q], fs1[q], flast[1], froot[1], enable);
-            } else {
-                VerifyTreeOpening(3, foldCosetSize(STEPS, 2), arity, lastLevels, 0, STEPS[2])(QueryKeys(arity, lastLevels, STEPS[2], STEPS[0])(queriesL0[q]), fv1[q], zeroSib, flast[1], froot[1], enable);
-            }
-            if (fri == 1 && nq > 2) {
-                VerifyFRIFold(STEPS[1], STEPS[2], nextFoldDomainBits(STEPS, nSteps, 2), foldCosetShiftInv(nBitsExt, STEPS, 2), STEPS[0])(queriesL0[q], rFold[1], fv1[q], fv2[q], enable);
-            } else if (fri == 1) {
-                VerifyFRIFold(STEPS[1], STEPS[2], 0, foldCosetShiftInv(nBitsExt, STEPS, 2), STEPS[0])(queriesL0[q], rFold[1], fv1[q], finalPol, enable);
-            }
-        }
-        if (nq > 2) {
-            var ml = foldPathLength(arity, lastLevels, STEPS, 3);
-            if (ml > 0) {
-                VerifyTreeOpening(3, foldCosetSize(STEPS, 3), arity, lastLevels, ml, STEPS[3])(QueryKeys(arity, ml + lastLevels, STEPS[3], STEPS[0])(queriesL0[q]), fv2[q], fs2[q], flast[2], froot[2], enable);
-            } else {
-                VerifyTreeOpening(3, foldCosetSize(STEPS, 3), arity, lastLevels, 0, STEPS[3])(QueryKeys(arity, lastLevels, STEPS[3], STEPS[0])(queriesL0[q]), fv2[q], zeroSib, flast[2], froot[2], enable);
-            }
-            if (fri == 1 && nq > 3) {
-                VerifyFRIFold(STEPS[2], STEPS[3], nextFoldDomainBits(STEPS, nSteps, 3), foldCosetShiftInv(nBitsExt, STEPS, 3), STEPS[0])(queriesL0[q], rFold[2], fv2[q], fv3[q], enable);
-            } else if (fri == 1) {
-                VerifyFRIFold(STEPS[2], STEPS[3], 0, foldCosetShiftInv(nBitsExt, STEPS, 3), STEPS[0])(queriesL0[q], rFold[2], fv2[q], finalPol, enable);
-            }
-        }
-        if (nq > 3) {
-            var ml = foldPathLength(arity, lastLevels, STEPS, 4);
-            if (ml > 0) {
-                VerifyTreeOpening(3, foldCosetSize(STEPS, 4), arity, lastLevels, ml, STEPS[4])(QueryKeys(arity, ml + lastLevels, STEPS[4], STEPS[0])(queriesL0[q]), fv3[q], fs3[q], flast[3], froot[3], enable);
-            } else {
-                VerifyTreeOpening(3, foldCosetSize(STEPS, 4), arity, lastLevels, 0, STEPS[4])(QueryKeys(arity, lastLevels, STEPS[4], STEPS[0])(queriesL0[q]), fv3[q], zeroSib, flast[3], froot[3], enable);
-            }
-            if (fri == 1 && nq > 4) {
-                VerifyFRIFold(STEPS[3], STEPS[4], nextFoldDomainBits(STEPS, nSteps, 4), foldCosetShiftInv(nBitsExt, STEPS, 4), STEPS[0])(queriesL0[q], rFold[3], fv3[q], fv4[q], enable);
-            } else if (fri == 1) {
-                VerifyFRIFold(STEPS[3], STEPS[4], 0, foldCosetShiftInv(nBitsExt, STEPS, 4), STEPS[0])(queriesL0[q], rFold[3], fv3[q], finalPol, enable);
-            }
-        }
-        if (nq > 4) {
-            var ml = foldPathLength(arity, lastLevels, STEPS, 5);
-            if (ml > 0) {
-                VerifyTreeOpening(3, foldCosetSize(STEPS, 5), arity, lastLevels, ml, STEPS[5])(QueryKeys(arity, ml + lastLevels, STEPS[5], STEPS[0])(queriesL0[q]), fv4[q], fs4[q], flast[4], froot[4], enable);
-            } else {
-                VerifyTreeOpening(3, foldCosetSize(STEPS, 5), arity, lastLevels, 0, STEPS[5])(QueryKeys(arity, lastLevels, STEPS[5], STEPS[0])(queriesL0[q]), fv4[q], zeroSib, flast[4], froot[4], enable);
-            }
-            if (fri == 1 && nq > 5) {
-                VerifyFRIFold(STEPS[4], STEPS[5], nextFoldDomainBits(STEPS, nSteps, 5), foldCosetShiftInv(nBitsExt, STEPS, 5), STEPS[0])(queriesL0[q], rFold[4], fv4[q], fv5[q], enable);
-            } else if (fri == 1) {
-                VerifyFRIFold(STEPS[4], STEPS[5], 0, foldCosetShiftInv(nBitsExt, STEPS, 5), STEPS[0])(queriesL0[q], rFold[4], fv4[q], finalPol, enable);
-            }
-        }
-        if (nq > 5) {
-            var ml = foldPathLength(arity, lastLevels, STEPS, 6);
-            if (ml > 0) {
-                VerifyTreeOpening(3, foldCosetSize(STEPS, 6), arity, lastLevels, ml, STEPS[6])(QueryKeys(arity, ml + lastLevels, STEPS[6], STEPS[0])(queriesL0[q]), fv5[q], fs5[q], flast[5], froot[5], enable);
-            } else {
-                VerifyTreeOpening(3, foldCosetSize(STEPS, 6), arity, lastLevels, 0, STEPS[6])(QueryKeys(arity, lastLevels, STEPS[6], STEPS[0])(queriesL0[q]), fv5[q], zeroSib, flast[5], froot[5], enable);
-            }
-            if (fri == 1 && nq > 6) {
-                VerifyFRIFold(STEPS[5], STEPS[6], nextFoldDomainBits(STEPS, nSteps, 6), foldCosetShiftInv(nBitsExt, STEPS, 6), STEPS[0])(queriesL0[q], rFold[5], fv5[q], fv6[q], enable);
-            } else if (fri == 1) {
-                VerifyFRIFold(STEPS[5], STEPS[6], 0, foldCosetShiftInv(nBitsExt, STEPS, 6), STEPS[0])(queriesL0[q], rFold[5], fv5[q], finalPol, enable);
-            }
-        }
-        if (nq > 6) {
-            var ml = foldPathLength(arity, lastLevels, STEPS, 7);
-            if (ml > 0) {
-                VerifyTreeOpening(3, foldCosetSize(STEPS, 7), arity, lastLevels, ml, STEPS[7])(QueryKeys(arity, ml + lastLevels, STEPS[7], STEPS[0])(queriesL0[q]), fv6[q], fs6[q], flast[6], froot[6], enable);
-            } else {
-                VerifyTreeOpening(3, foldCosetSize(STEPS, 7), arity, lastLevels, 0, STEPS[7])(QueryKeys(arity, lastLevels, STEPS[7], STEPS[0])(queriesL0[q]), fv6[q], zeroSib, flast[6], froot[6], enable);
-            }
-            if (fri == 1 && nq > 7) {
-                VerifyFRIFold(STEPS[6], STEPS[7], nextFoldDomainBits(STEPS, nSteps, 7), foldCosetShiftInv(nBitsExt, STEPS, 7), STEPS[0])(queriesL0[q], rFold[6], fv6[q], fv7[q], enable);
-            } else if (fri == 1) {
-                VerifyFRIFold(STEPS[6], STEPS[7], 0, foldCosetShiftInv(nBitsExt, STEPS, 7), STEPS[0])(queriesL0[q], rFold[6], fv6[q], finalPol, enable);
-            }
-        }
-        if (nq > 7) {
-            var ml = foldPathLength(arity, lastLevels, STEPS, 8);
-            if (ml > 0) {
-                VerifyTreeOpening(3, foldCosetSize(STEPS, 8), arity, lastLevels, ml, STEPS[8])(QueryKeys(arity, ml + lastLevels, STEPS[8], STEPS[0])(queriesL0[q]), fv7[q], fs7[q], flast[7], froot[7], enable);
-            } else {
-                VerifyTreeOpening(3, foldCosetSize(STEPS, 8), arity, lastLevels, 0, STEPS[8])(QueryKeys(arity, lastLevels, STEPS[8], STEPS[0])(queriesL0[q]), fv7[q], zeroSib, flast[7], froot[7], enable);
-            }
-            if (fri == 1 && nq > 8) {
-                VerifyFRIFold(STEPS[7], STEPS[8], nextFoldDomainBits(STEPS, nSteps, 8), foldCosetShiftInv(nBitsExt, STEPS, 8), STEPS[0])(queriesL0[q], rFold[7], fv7[q], finalPol, enable);
-            } else if (fri == 1) {
-                VerifyFRIFold(STEPS[7], STEPS[8], 0, foldCosetShiftInv(nBitsExt, STEPS, 8), STEPS[0])(queriesL0[q], rFold[7], fv7[q], finalPol, enable);
-            }
-        }
+        VerifyFRIFold(STEPS[s - 1], STEPS[s], nextBits, foldCosetShiftInv(key_nBitsExt(k), STEPS, s), STEPS[0])(queriesL0, rFold[0], coset, nextCoset, enable);
     }
 }

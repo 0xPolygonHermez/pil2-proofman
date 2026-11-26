@@ -510,12 +510,8 @@ template StarkVerifierBN128(k) {
     var nChallenges = key_nChallenges(k);
     var nSteps = key_nSteps(k);
     var nTrees = key_nTrees(k);
-    var nOpenings = key_nOpenings(k);
-    var nPols = key_nPols(k);
     var verkeyInput = key_verkeyInput(k);
     var enableInput = key_enableInput(k);
-    var offEvals = key_offEvals(k);
-    var offFinal = key_offFinal(k);
     var offNonce = key_offNonce(k);
     var STEPS[nSteps] = key_STEPS(k);
     var L0_TREE_START[nTrees + 1] = key_L0_TREE_START(k);
@@ -554,9 +550,9 @@ template StarkVerifierBN128(k) {
     }
 
     signal evals[nEvals][3];
-    for (var i = 0; i < nEvals; i++) { for (var e = 0; e < 3; e++) { evals[i][e] <== proof[offEvals + 3 * i + e]; } }
+    for (var i = 0; i < nEvals; i++) { for (var e = 0; e < 3; e++) { evals[i][e] <== proof[key_offEvals(k) + 3 * i + e]; } }
     signal finalPol[FS][3];
-    for (var i = 0; i < FS; i++) { for (var e = 0; e < 3; e++) { finalPol[i][e] <== proof[offFinal + 3 * i + e]; } }
+    for (var i = 0; i < FS; i++) { for (var e = 0; e < 3; e++) { finalPol[i][e] <== proof[key_offFinal(k) + 3 * i + e]; } }
     signal stageRoot[nStages + 1][rw];
     for (var s = 0; s <= nStages; s++) { for (var i = 0; i < rw; i++) { stageRoot[s][i] <== proof[OFF_ROOT[s] + i]; } }
     signal treeRoot[nTrees][rw];
@@ -623,12 +619,12 @@ template StarkVerifierBN128(k) {
     ce.publics <== publicsGL;
     QuotientCheckBN128(key_qDeg(k), key_qPolEv(k), nEvals)(zh.xN, ce.evalP, evalsGL, enabled);
 
-    component deepConsts = DeepConstantsBN128(nOpenings, nPols, nEvals, key_OPENING_NUM_EVALS(k), key_EVAL_COLUMN(k));
+    component deepConsts = DeepConstantsBN128(key_nOpenings(k), key_nPols(k), nEvals, key_OPENING_NUM_EVALS(k), key_EVAL_COLUMN(k));
     deepConsts.vf[0] <== challenges[nChallenges - 2];
     deepConsts.vf[1] <== challenges[nChallenges - 1];
     deepConsts.evals <== evalsGL;
 
-    // Per query; the levels sent in clear once.
+    // Per query (the proof holds each tree's data query after query); the levels sent in clear once.
     component query[nQueries];
     for (var g = 0; g < nQueries; g++) {
         query[g] = VerifySingleQueryBN128(k);
@@ -638,36 +634,23 @@ template StarkVerifierBN128(k) {
         query[g].rFold <== rFold;
         query[g].finalPol <== finalPolGL;
         query[g].enable <== enabled;
-        query[g].last <== treeLast;
-        query[g].root <== treeRoot;
-        query[g].flast <== foldLast;
-        query[g].froot <== foldRoot;
-        for (var t = 0; t < nTrees; t++) { for (var l = 0; l < L0; l++) { for (var i = 0; i < sw; i++) { query[g].sibs[t][l][i] <== proof[OFF_L0_SIBLINGS[t] + (g * L0 + l) * sw + i]; } } }
-
-        for (var i = 0; i < geo_slotW(L0_TREE_START, nTrees, 0); i++) { query[g].v0[i] <== proof[OFF_L0_VALUES[0] + g * geo_slotW(L0_TREE_START, nTrees, 0) + i]; }
-        for (var i = 0; i < geo_slotW(L0_TREE_START, nTrees, 1); i++) { query[g].v1[i] <== proof[OFF_L0_VALUES[1] + g * geo_slotW(L0_TREE_START, nTrees, 1) + i]; }
-        for (var i = 0; i < geo_slotW(L0_TREE_START, nTrees, 2); i++) { query[g].v2[i] <== proof[OFF_L0_VALUES[2] + g * geo_slotW(L0_TREE_START, nTrees, 2) + i]; }
-        for (var i = 0; i < geo_slotW(L0_TREE_START, nTrees, 3); i++) { query[g].v3[i] <== proof[OFF_L0_VALUES[3] + g * geo_slotW(L0_TREE_START, nTrees, 3) + i]; }
-        for (var i = 0; i < geo_slotW(L0_TREE_START, nTrees, 4); i++) { query[g].v4[i] <== proof[OFF_L0_VALUES[4] + g * geo_slotW(L0_TREE_START, nTrees, 4) + i]; }
-        for (var i = 0; i < geo_slotW(L0_TREE_START, nTrees, 5); i++) { query[g].v5[i] <== proof[OFF_L0_VALUES[5] + g * geo_slotW(L0_TREE_START, nTrees, 5) + i]; }
-        for (var i = 0; i < geo_slotW(L0_TREE_START, nTrees, 6); i++) { query[g].v6[i] <== proof[OFF_L0_VALUES[6] + g * geo_slotW(L0_TREE_START, nTrees, 6) + i]; }
-        for (var i = 0; i < geo_slotW(L0_TREE_START, nTrees, 7); i++) { query[g].v7[i] <== proof[OFF_L0_VALUES[7] + g * geo_slotW(L0_TREE_START, nTrees, 7) + i]; }
-        for (var i = 0; i < 3 * geo_slotC(STEPS, NF, 0); i++) { query[g].fv0[i] <== proof[OFF_FOLD_VALUES[0] + g * 3 * geo_slotC(STEPS, NF, 0) + i]; }
-        for (var l = 0; l < geo_slotM(arity, lastLevels, STEPS, NF, 0); l++) { for (var i = 0; i < sw; i++) { query[g].fs0[l][i] <== proof[OFF_FOLD_SIBLINGS[0] + (g * geo_slotM(arity, lastLevels, STEPS, NF, 0) + l) * sw + i]; } }
-        for (var i = 0; i < 3 * geo_slotC(STEPS, NF, 1); i++) { query[g].fv1[i] <== proof[OFF_FOLD_VALUES[1] + g * 3 * geo_slotC(STEPS, NF, 1) + i]; }
-        for (var l = 0; l < geo_slotM(arity, lastLevels, STEPS, NF, 1); l++) { for (var i = 0; i < sw; i++) { query[g].fs1[l][i] <== proof[OFF_FOLD_SIBLINGS[1] + (g * geo_slotM(arity, lastLevels, STEPS, NF, 1) + l) * sw + i]; } }
-        for (var i = 0; i < 3 * geo_slotC(STEPS, NF, 2); i++) { query[g].fv2[i] <== proof[OFF_FOLD_VALUES[2] + g * 3 * geo_slotC(STEPS, NF, 2) + i]; }
-        for (var l = 0; l < geo_slotM(arity, lastLevels, STEPS, NF, 2); l++) { for (var i = 0; i < sw; i++) { query[g].fs2[l][i] <== proof[OFF_FOLD_SIBLINGS[2] + (g * geo_slotM(arity, lastLevels, STEPS, NF, 2) + l) * sw + i]; } }
-        for (var i = 0; i < 3 * geo_slotC(STEPS, NF, 3); i++) { query[g].fv3[i] <== proof[OFF_FOLD_VALUES[3] + g * 3 * geo_slotC(STEPS, NF, 3) + i]; }
-        for (var l = 0; l < geo_slotM(arity, lastLevels, STEPS, NF, 3); l++) { for (var i = 0; i < sw; i++) { query[g].fs3[l][i] <== proof[OFF_FOLD_SIBLINGS[3] + (g * geo_slotM(arity, lastLevels, STEPS, NF, 3) + l) * sw + i]; } }
-        for (var i = 0; i < 3 * geo_slotC(STEPS, NF, 4); i++) { query[g].fv4[i] <== proof[OFF_FOLD_VALUES[4] + g * 3 * geo_slotC(STEPS, NF, 4) + i]; }
-        for (var l = 0; l < geo_slotM(arity, lastLevels, STEPS, NF, 4); l++) { for (var i = 0; i < sw; i++) { query[g].fs4[l][i] <== proof[OFF_FOLD_SIBLINGS[4] + (g * geo_slotM(arity, lastLevels, STEPS, NF, 4) + l) * sw + i]; } }
-        for (var i = 0; i < 3 * geo_slotC(STEPS, NF, 5); i++) { query[g].fv5[i] <== proof[OFF_FOLD_VALUES[5] + g * 3 * geo_slotC(STEPS, NF, 5) + i]; }
-        for (var l = 0; l < geo_slotM(arity, lastLevels, STEPS, NF, 5); l++) { for (var i = 0; i < sw; i++) { query[g].fs5[l][i] <== proof[OFF_FOLD_SIBLINGS[5] + (g * geo_slotM(arity, lastLevels, STEPS, NF, 5) + l) * sw + i]; } }
-        for (var i = 0; i < 3 * geo_slotC(STEPS, NF, 6); i++) { query[g].fv6[i] <== proof[OFF_FOLD_VALUES[6] + g * 3 * geo_slotC(STEPS, NF, 6) + i]; }
-        for (var l = 0; l < geo_slotM(arity, lastLevels, STEPS, NF, 6); l++) { for (var i = 0; i < sw; i++) { query[g].fs6[l][i] <== proof[OFF_FOLD_SIBLINGS[6] + (g * geo_slotM(arity, lastLevels, STEPS, NF, 6) + l) * sw + i]; } }
-        for (var i = 0; i < 3 * geo_slotC(STEPS, NF, 7); i++) { query[g].fv7[i] <== proof[OFF_FOLD_VALUES[7] + g * 3 * geo_slotC(STEPS, NF, 7) + i]; }
-        for (var l = 0; l < geo_slotM(arity, lastLevels, STEPS, NF, 7); l++) { for (var i = 0; i < sw; i++) { query[g].fs7[l][i] <== proof[OFF_FOLD_SIBLINGS[7] + (g * geo_slotM(arity, lastLevels, STEPS, NF, 7) + l) * sw + i]; } }
+        query[g].treeLast <== treeLast;
+        query[g].treeRoot <== treeRoot;
+        query[g].foldLast <== foldLast;
+        query[g].foldRoot <== foldRoot;
+        for (var t = 0; t < nTrees; t++) {
+            var width = L0_TREE_START[t + 1] - L0_TREE_START[t];
+            for (var i = 0; i < width; i++) { query[g].l0Values[L0_TREE_START[t] + i] <== proof[OFF_L0_VALUES[t] + g * width + i]; }
+            for (var l = 0; l < L0; l++) { for (var i = 0; i < sw; i++) { query[g].l0Siblings[t][l][i] <== proof[OFF_L0_SIBLINGS[t] + (g * L0 + l) * sw + i]; } }
+        }
+        for (var f = 0; f < NF; f++) {
+            var cosetSize = foldCosetSize(STEPS, f + 1);
+            var pathLevels = foldPathLength(arity, lastLevels, STEPS, f + 1);
+            var cosetStart = foldCosetStart(STEPS, f);
+            var pathStart = foldPathStart(arity, lastLevels, STEPS, f);
+            for (var c = 0; c < cosetSize; c++) { for (var e = 0; e < 3; e++) { query[g].foldCosets[cosetStart + c][e] <== proof[OFF_FOLD_VALUES[f] + (g * cosetSize + c) * 3 + e]; } }
+            for (var l = 0; l < pathLevels; l++) { for (var i = 0; i < sw; i++) { query[g].foldSiblings[pathStart + l][i] <== proof[OFF_FOLD_SIBLINGS[f] + (g * pathLevels + l) * sw + i]; } }
+        }
     }
     if (lastLevels > 0) {
         for (var t = 0; t < nTrees; t++) { BN128RootCheck(lastLevels, arity, STEPS[0])(treeLast[t], treeRoot[t], enabled); }
@@ -676,11 +659,13 @@ template StarkVerifierBN128(k) {
     VerifyFinalPolBN128(STEPS[nSteps - 1], finalPolDegreeBound(nBits, nBitsExt, nSteps, STEPS))(finalPolGL, enabled);
 }
 
-// One query: its L_0 rows and fold-tree cosets against their trees, DEEP, every folding step.
+/*
+    One query: every L_0 tree's row and fold tree's coset, reduced, against their trees; DEEP; every
+    folding step (QueryFoldStepBN128). Its data comes flat: the L_0 rows at L0_TREE_START, the fold-tree
+    cosets and paths at foldCosetStart / foldPathStart.
+*/
 template parallel VerifySingleQueryBN128(k) {
     var q = 0xFFFFFFFFFFFFFFFF;
-    var nBits = key_nBits(k);
-    var nBitsExt = key_nBitsExt(k);
     var arity = key_arity(k);
     var lastLevels = key_lastLevels(k);
     var nSteps = key_nSteps(k);
@@ -694,9 +679,7 @@ template parallel VerifySingleQueryBN128(k) {
     var sw = bn_sibW(arity);
     var L0 = l0PathLength(arity, lastLevels, STEPS);
     var lastSize = clearLevelNodes(arity, lastLevels);
-    assert(nTrees <= 8 && NF <= 8);
-    var zeroSib[1][sw];
-    for (var i = 0; i < sw; i++) { zeroSib[0][i] = 0; }
+    var nFoldCosetRows = foldCosetStart(STEPS, NF);
 
     signal input {binary} queriesL0[STEPS[0]];
     signal input {maxNum} xi[3];
@@ -704,222 +687,110 @@ template parallel VerifySingleQueryBN128(k) {
     signal input {maxNum} rFold[nonEmpty(NF)][3];
     signal input {maxNum} finalPol[lastDomainSize(nSteps, STEPS)][3];
     signal input {binary} enable;
-    signal input sibs[nTrees][L0][sw];
-    signal input last[nTrees][lastSize][rw];
-    signal input root[nTrees][rw];
-    signal input flast[NF][lastSize][rw];
-    signal input froot[NF][rw];
+    signal input treeLast[nTrees][lastSize][rw];
+    signal input treeRoot[nTrees][rw];
+    signal input foldLast[NF][lastSize][rw];
+    signal input foldRoot[NF][rw];
 
-    signal input v0[geo_slotW(L0_TREE_START, nTrees, 0)];
-    signal input v1[geo_slotW(L0_TREE_START, nTrees, 1)];
-    signal input v2[geo_slotW(L0_TREE_START, nTrees, 2)];
-    signal input v3[geo_slotW(L0_TREE_START, nTrees, 3)];
-    signal input v4[geo_slotW(L0_TREE_START, nTrees, 4)];
-    signal input v5[geo_slotW(L0_TREE_START, nTrees, 5)];
-    signal input v6[geo_slotW(L0_TREE_START, nTrees, 6)];
-    signal input v7[geo_slotW(L0_TREE_START, nTrees, 7)];
-    signal input fv0[3 * geo_slotC(STEPS, NF, 0)];
-    signal input fv1[3 * geo_slotC(STEPS, NF, 1)];
-    signal input fv2[3 * geo_slotC(STEPS, NF, 2)];
-    signal input fv3[3 * geo_slotC(STEPS, NF, 3)];
-    signal input fv4[3 * geo_slotC(STEPS, NF, 4)];
-    signal input fv5[3 * geo_slotC(STEPS, NF, 5)];
-    signal input fv6[3 * geo_slotC(STEPS, NF, 6)];
-    signal input fv7[3 * geo_slotC(STEPS, NF, 7)];
-    signal input fs0[geo_slotM(arity, lastLevels, STEPS, NF, 0)][sw];
-    signal input fs1[geo_slotM(arity, lastLevels, STEPS, NF, 1)][sw];
-    signal input fs2[geo_slotM(arity, lastLevels, STEPS, NF, 2)][sw];
-    signal input fs3[geo_slotM(arity, lastLevels, STEPS, NF, 3)][sw];
-    signal input fs4[geo_slotM(arity, lastLevels, STEPS, NF, 4)][sw];
-    signal input fs5[geo_slotM(arity, lastLevels, STEPS, NF, 5)][sw];
-    signal input fs6[geo_slotM(arity, lastLevels, STEPS, NF, 6)][sw];
-    signal input fs7[geo_slotM(arity, lastLevels, STEPS, NF, 7)][sw];
+    signal input l0Values[L0_TREE_START[nTrees]];
+    signal input l0Siblings[nTrees][L0][sw];
+    signal input foldCosets[nFoldCosetRows][3];
+    signal input foldSiblings[foldPathStart(arity, lastLevels, STEPS, NF)][sw];
 
-    // The L_0 rows, reduced, flat in tree order (L0_TREE_START); every row reduced before any tree is opened.
+    // Every L_0 row and fold-tree coset reduced before any tree is opened.
     signal {maxNum} leaves[L0_TREE_START[nTrees]];
     leaves.maxNum = q;
-    for (var i = 0; i < geo_slotW(L0_TREE_START, nTrees, 0); i++) { leaves[L0_TREE_START[0] + i] <== LessThan64Bits()(v0[i]); }
-    for (var i = 0; i < geo_slotW(L0_TREE_START, nTrees, 1); i++) { leaves[L0_TREE_START[1] + i] <== LessThan64Bits()(v1[i]); }
-    for (var i = 0; i < geo_slotW(L0_TREE_START, nTrees, 2); i++) { leaves[L0_TREE_START[2] + i] <== LessThan64Bits()(v2[i]); }
-    for (var i = 0; i < geo_slotW(L0_TREE_START, nTrees, 3); i++) { leaves[L0_TREE_START[3] + i] <== LessThan64Bits()(v3[i]); }
-    for (var i = 0; i < geo_slotW(L0_TREE_START, nTrees, 4); i++) { leaves[L0_TREE_START[4] + i] <== LessThan64Bits()(v4[i]); }
-    for (var i = 0; i < geo_slotW(L0_TREE_START, nTrees, 5); i++) { leaves[L0_TREE_START[5] + i] <== LessThan64Bits()(v5[i]); }
-    for (var i = 0; i < geo_slotW(L0_TREE_START, nTrees, 6); i++) { leaves[L0_TREE_START[6] + i] <== LessThan64Bits()(v6[i]); }
-    for (var i = 0; i < geo_slotW(L0_TREE_START, nTrees, 7); i++) { leaves[L0_TREE_START[7] + i] <== LessThan64Bits()(v7[i]); }
-    if (nTrees > 0) {
-        signal l0[L0_TREE_START[0 + 1] - L0_TREE_START[0]][1];
-        for (var i = 0; i < L0_TREE_START[0 + 1] - L0_TREE_START[0]; i++) { l0[i][0] <== leaves[L0_TREE_START[0] + i]; }
-        BN128Open(1, L0_TREE_START[0 + 1] - L0_TREE_START[0], arity, lastLevels, L0, STEPS[0], STEPS[0])(queriesL0, l0, sibs[0], last[0], root[0], enable);
-    }
-    if (nTrees > 1) {
-        signal l1[L0_TREE_START[1 + 1] - L0_TREE_START[1]][1];
-        for (var i = 0; i < L0_TREE_START[1 + 1] - L0_TREE_START[1]; i++) { l1[i][0] <== leaves[L0_TREE_START[1] + i]; }
-        BN128Open(1, L0_TREE_START[1 + 1] - L0_TREE_START[1], arity, lastLevels, L0, STEPS[0], STEPS[0])(queriesL0, l1, sibs[1], last[1], root[1], enable);
-    }
-    if (nTrees > 2) {
-        signal l2[L0_TREE_START[2 + 1] - L0_TREE_START[2]][1];
-        for (var i = 0; i < L0_TREE_START[2 + 1] - L0_TREE_START[2]; i++) { l2[i][0] <== leaves[L0_TREE_START[2] + i]; }
-        BN128Open(1, L0_TREE_START[2 + 1] - L0_TREE_START[2], arity, lastLevels, L0, STEPS[0], STEPS[0])(queriesL0, l2, sibs[2], last[2], root[2], enable);
-    }
-    if (nTrees > 3) {
-        signal l3[L0_TREE_START[3 + 1] - L0_TREE_START[3]][1];
-        for (var i = 0; i < L0_TREE_START[3 + 1] - L0_TREE_START[3]; i++) { l3[i][0] <== leaves[L0_TREE_START[3] + i]; }
-        BN128Open(1, L0_TREE_START[3 + 1] - L0_TREE_START[3], arity, lastLevels, L0, STEPS[0], STEPS[0])(queriesL0, l3, sibs[3], last[3], root[3], enable);
-    }
-    if (nTrees > 4) {
-        signal l4[L0_TREE_START[4 + 1] - L0_TREE_START[4]][1];
-        for (var i = 0; i < L0_TREE_START[4 + 1] - L0_TREE_START[4]; i++) { l4[i][0] <== leaves[L0_TREE_START[4] + i]; }
-        BN128Open(1, L0_TREE_START[4 + 1] - L0_TREE_START[4], arity, lastLevels, L0, STEPS[0], STEPS[0])(queriesL0, l4, sibs[4], last[4], root[4], enable);
-    }
-    if (nTrees > 5) {
-        signal l5[L0_TREE_START[5 + 1] - L0_TREE_START[5]][1];
-        for (var i = 0; i < L0_TREE_START[5 + 1] - L0_TREE_START[5]; i++) { l5[i][0] <== leaves[L0_TREE_START[5] + i]; }
-        BN128Open(1, L0_TREE_START[5 + 1] - L0_TREE_START[5], arity, lastLevels, L0, STEPS[0], STEPS[0])(queriesL0, l5, sibs[5], last[5], root[5], enable);
-    }
-    if (nTrees > 6) {
-        signal l6[L0_TREE_START[6 + 1] - L0_TREE_START[6]][1];
-        for (var i = 0; i < L0_TREE_START[6 + 1] - L0_TREE_START[6]; i++) { l6[i][0] <== leaves[L0_TREE_START[6] + i]; }
-        BN128Open(1, L0_TREE_START[6 + 1] - L0_TREE_START[6], arity, lastLevels, L0, STEPS[0], STEPS[0])(queriesL0, l6, sibs[6], last[6], root[6], enable);
-    }
-    if (nTrees > 7) {
-        signal l7[L0_TREE_START[7 + 1] - L0_TREE_START[7]][1];
-        for (var i = 0; i < L0_TREE_START[7 + 1] - L0_TREE_START[7]; i++) { l7[i][0] <== leaves[L0_TREE_START[7] + i]; }
-        BN128Open(1, L0_TREE_START[7 + 1] - L0_TREE_START[7], arity, lastLevels, L0, STEPS[0], STEPS[0])(queriesL0, l7, sibs[7], last[7], root[7], enable);
+    for (var i = 0; i < L0_TREE_START[nTrees]; i++) { leaves[i] <== LessThan64Bits()(l0Values[i]); }
+    signal {maxNum} cosets[nFoldCosetRows][3];
+    cosets.maxNum = q;
+    for (var c = 0; c < nFoldCosetRows; c++) { for (var e = 0; e < 3; e++) { cosets[c][e] <== LessThan64Bits()(foldCosets[c][e]); } }
+
+    // The per-tree and per-step arrays mix template instances, resolved through a map at run time.
+    component l0Opening[nTrees];
+    for (var t = 0; t < nTrees; t++) {
+        var width = L0_TREE_START[t + 1] - L0_TREE_START[t];
+        l0Opening[t] = BN128Open(1, width, arity, lastLevels, L0, STEPS[0], STEPS[0]);
+        l0Opening[t].queries <== queriesL0;
+        for (var i = 0; i < width; i++) { l0Opening[t].values[i][0] <== leaves[L0_TREE_START[t] + i]; }
+        l0Opening[t].siblings <== l0Siblings[t];
+        l0Opening[t].last <== treeLast[t];
+        l0Opening[t].root <== treeRoot[t];
+        l0Opening[t].enable <== enable;
     }
 
-    // Fold tree f's opened coset, reduced; its Merkle path.
-    signal {maxNum} fp0[geo_slotC(STEPS, NF, 0)][3];
-    fp0.maxNum = q;
-    for (var c = 0; c < geo_slotC(STEPS, NF, 0); c++) { for (var e = 0; e < 3; e++) { fp0[c][e] <== LessThan64Bits()(fv0[c * 3 + e]); } }
+    // f_0 lands on fold tree 0's coset, or on finalPol when nothing folds.
     if (NF > 0) {
-        var ml = foldPathLength(arity, lastLevels, STEPS, 1);
-        if (ml > 0) {
-            BN128Open(3, foldCosetSize(STEPS, 1), arity, lastLevels, ml, STEPS[1], STEPS[0])(queriesL0, fp0, fs0, flast[0], froot[0], enable);
-        } else {
-            BN128Open(3, foldCosetSize(STEPS, 1), arity, lastLevels, 0, STEPS[1], STEPS[0])(queriesL0, fp0, zeroSib, flast[0], froot[0], enable);
-        }
-    }
-    signal {maxNum} fp1[geo_slotC(STEPS, NF, 1)][3];
-    fp1.maxNum = q;
-    for (var c = 0; c < geo_slotC(STEPS, NF, 1); c++) { for (var e = 0; e < 3; e++) { fp1[c][e] <== LessThan64Bits()(fv1[c * 3 + e]); } }
-    if (NF > 1) {
-        var ml = foldPathLength(arity, lastLevels, STEPS, 2);
-        if (ml > 0) {
-            BN128Open(3, foldCosetSize(STEPS, 2), arity, lastLevels, ml, STEPS[2], STEPS[0])(queriesL0, fp1, fs1, flast[1], froot[1], enable);
-        } else {
-            BN128Open(3, foldCosetSize(STEPS, 2), arity, lastLevels, 0, STEPS[2], STEPS[0])(queriesL0, fp1, zeroSib, flast[1], froot[1], enable);
-        }
-    }
-    signal {maxNum} fp2[geo_slotC(STEPS, NF, 2)][3];
-    fp2.maxNum = q;
-    for (var c = 0; c < geo_slotC(STEPS, NF, 2); c++) { for (var e = 0; e < 3; e++) { fp2[c][e] <== LessThan64Bits()(fv2[c * 3 + e]); } }
-    if (NF > 2) {
-        var ml = foldPathLength(arity, lastLevels, STEPS, 3);
-        if (ml > 0) {
-            BN128Open(3, foldCosetSize(STEPS, 3), arity, lastLevels, ml, STEPS[3], STEPS[0])(queriesL0, fp2, fs2, flast[2], froot[2], enable);
-        } else {
-            BN128Open(3, foldCosetSize(STEPS, 3), arity, lastLevels, 0, STEPS[3], STEPS[0])(queriesL0, fp2, zeroSib, flast[2], froot[2], enable);
-        }
-    }
-    signal {maxNum} fp3[geo_slotC(STEPS, NF, 3)][3];
-    fp3.maxNum = q;
-    for (var c = 0; c < geo_slotC(STEPS, NF, 3); c++) { for (var e = 0; e < 3; e++) { fp3[c][e] <== LessThan64Bits()(fv3[c * 3 + e]); } }
-    if (NF > 3) {
-        var ml = foldPathLength(arity, lastLevels, STEPS, 4);
-        if (ml > 0) {
-            BN128Open(3, foldCosetSize(STEPS, 4), arity, lastLevels, ml, STEPS[4], STEPS[0])(queriesL0, fp3, fs3, flast[3], froot[3], enable);
-        } else {
-            BN128Open(3, foldCosetSize(STEPS, 4), arity, lastLevels, 0, STEPS[4], STEPS[0])(queriesL0, fp3, zeroSib, flast[3], froot[3], enable);
-        }
-    }
-    signal {maxNum} fp4[geo_slotC(STEPS, NF, 4)][3];
-    fp4.maxNum = q;
-    for (var c = 0; c < geo_slotC(STEPS, NF, 4); c++) { for (var e = 0; e < 3; e++) { fp4[c][e] <== LessThan64Bits()(fv4[c * 3 + e]); } }
-    if (NF > 4) {
-        var ml = foldPathLength(arity, lastLevels, STEPS, 5);
-        if (ml > 0) {
-            BN128Open(3, foldCosetSize(STEPS, 5), arity, lastLevels, ml, STEPS[5], STEPS[0])(queriesL0, fp4, fs4, flast[4], froot[4], enable);
-        } else {
-            BN128Open(3, foldCosetSize(STEPS, 5), arity, lastLevels, 0, STEPS[5], STEPS[0])(queriesL0, fp4, zeroSib, flast[4], froot[4], enable);
-        }
-    }
-    signal {maxNum} fp5[geo_slotC(STEPS, NF, 5)][3];
-    fp5.maxNum = q;
-    for (var c = 0; c < geo_slotC(STEPS, NF, 5); c++) { for (var e = 0; e < 3; e++) { fp5[c][e] <== LessThan64Bits()(fv5[c * 3 + e]); } }
-    if (NF > 5) {
-        var ml = foldPathLength(arity, lastLevels, STEPS, 6);
-        if (ml > 0) {
-            BN128Open(3, foldCosetSize(STEPS, 6), arity, lastLevels, ml, STEPS[6], STEPS[0])(queriesL0, fp5, fs5, flast[5], froot[5], enable);
-        } else {
-            BN128Open(3, foldCosetSize(STEPS, 6), arity, lastLevels, 0, STEPS[6], STEPS[0])(queriesL0, fp5, zeroSib, flast[5], froot[5], enable);
-        }
-    }
-    signal {maxNum} fp6[geo_slotC(STEPS, NF, 6)][3];
-    fp6.maxNum = q;
-    for (var c = 0; c < geo_slotC(STEPS, NF, 6); c++) { for (var e = 0; e < 3; e++) { fp6[c][e] <== LessThan64Bits()(fv6[c * 3 + e]); } }
-    if (NF > 6) {
-        var ml = foldPathLength(arity, lastLevels, STEPS, 7);
-        if (ml > 0) {
-            BN128Open(3, foldCosetSize(STEPS, 7), arity, lastLevels, ml, STEPS[7], STEPS[0])(queriesL0, fp6, fs6, flast[6], froot[6], enable);
-        } else {
-            BN128Open(3, foldCosetSize(STEPS, 7), arity, lastLevels, 0, STEPS[7], STEPS[0])(queriesL0, fp6, zeroSib, flast[6], froot[6], enable);
-        }
-    }
-    signal {maxNum} fp7[geo_slotC(STEPS, NF, 7)][3];
-    fp7.maxNum = q;
-    for (var c = 0; c < geo_slotC(STEPS, NF, 7); c++) { for (var e = 0; e < 3; e++) { fp7[c][e] <== LessThan64Bits()(fv7[c * 3 + e]); } }
-    if (NF > 7) {
-        var ml = foldPathLength(arity, lastLevels, STEPS, 8);
-        if (ml > 0) {
-            BN128Open(3, foldCosetSize(STEPS, 8), arity, lastLevels, ml, STEPS[8], STEPS[0])(queriesL0, fp7, fs7, flast[7], froot[7], enable);
-        } else {
-            BN128Open(3, foldCosetSize(STEPS, 8), arity, lastLevels, 0, STEPS[8], STEPS[0])(queriesL0, fp7, zeroSib, flast[7], froot[7], enable);
-        }
-    }
-
-    if (NF > 0) {
-        DeepQueryBN128(nOpenings, nPols, key_nColGroups(k), key_nSums(k), STEPS[0], STEPS[1], L0_TREE_START[nTrees], nBits, key_OPENING_EXPONENT(k), key_SUMS(k), key_COLS(k))(queriesL0, xi, friConsts, leaves, fp0, enable);
+        signal {maxNum} firstCoset[foldCosetSize(STEPS, 1)][3];
+        firstCoset.maxNum = cosets.maxNum;
+        for (var c = 0; c < foldCosetSize(STEPS, 1); c++) { firstCoset[c] <== cosets[c]; }
+        DeepQueryBN128(nOpenings, nPols, key_nColGroups(k), key_nSums(k), STEPS[0], STEPS[1], L0_TREE_START[nTrees], key_nBits(k), key_OPENING_EXPONENT(k), key_SUMS(k), key_COLS(k))(queriesL0, xi, friConsts, leaves, firstCoset, enable);
     } else {
-        DeepQueryBN128(nOpenings, nPols, key_nColGroups(k), key_nSums(k), STEPS[0], 0, L0_TREE_START[nTrees], nBits, key_OPENING_EXPONENT(k), key_SUMS(k), key_COLS(k))(queriesL0, xi, friConsts, leaves, finalPol, enable);
+        DeepQueryBN128(nOpenings, nPols, key_nColGroups(k), key_nSums(k), STEPS[0], 0, L0_TREE_START[nTrees], key_nBits(k), key_OPENING_EXPONENT(k), key_SUMS(k), key_COLS(k))(queriesL0, xi, friConsts, leaves, finalPol, enable);
     }
-    if (NF > 1) {
-        VerifyFRIBN128(STEPS[0], STEPS[1], STEPS[2], nBitsExt, STEPS[0])(queriesL0, rFold[0], fp0, fp1, enable);
-    } else if (NF == 1) {
-        VerifyFRIBN128(STEPS[0], STEPS[1], 0, nBitsExt, STEPS[0])(queriesL0, rFold[0], fp0, finalPol, enable);
+
+    component foldStep[nonEmpty(NF)];
+    for (var f = 0; f < NF; f++) {
+        foldStep[f] = QueryFoldStepBN128(k, f + 1);
+        foldStep[f].queriesL0 <== queriesL0;
+        foldStep[f].cosets <== cosets;
+        if (foldPathStart(arity, lastLevels, STEPS, NF) > 0) { foldStep[f].foldSiblings <== foldSiblings; }
+        foldStep[f].last <== foldLast[f];
+        foldStep[f].root <== foldRoot[f];
+        foldStep[f].rFold <== rFold[f];
+        if (f == NF - 1) { foldStep[f].finalPol <== finalPol; }
+        foldStep[f].enable <== enable;
     }
-    if (NF > 2) {
-        VerifyFRIBN128(STEPS[1], STEPS[2], STEPS[3], nBitsExt, STEPS[0])(queriesL0, rFold[1], fp1, fp2, enable);
-    } else if (NF == 2) {
-        VerifyFRIBN128(STEPS[1], STEPS[2], 0, nBitsExt, STEPS[0])(queriesL0, rFold[1], fp1, finalPol, enable);
+}
+
+/*
+    Fold step s >= 1 at one query (QueryFoldStep, emulated): fold tree s - 1's reduced coset against the
+    tree, and that coset folded with rFold equals its member in the next fold tree's coset, or in finalPol
+    after the last step.
+*/
+template QueryFoldStepBN128(k, s) {
+    var arity = key_arity(k);
+    var lastLevels = key_lastLevels(k);
+    var nSteps = key_nSteps(k);
+    var STEPS[nSteps] = key_STEPS(k);
+    var NF = nSteps - 1;
+    var rw = bn_rootW();
+    var sw = bn_sibW(arity);
+    var cosetSize = foldCosetSize(STEPS, s);
+    var pathLevels = foldPathLength(arity, lastLevels, STEPS, s);
+    var nextBits = nextFoldDomainBits(STEPS, nSteps, s);
+    var nextCosetSize = 1 << (STEPS[s] - nextBits);
+    var foldsIntoFinalPol = s == NF ? 1 : 0;
+
+    signal input {binary} queriesL0[STEPS[0]];
+    signal input {maxNum} cosets[foldCosetStart(STEPS, NF)][3];
+    signal input foldSiblings[foldPathStart(arity, lastLevels, STEPS, NF)][sw];
+    signal input last[clearLevelNodes(arity, lastLevels)][rw];
+    signal input root[rw];
+    signal input {maxNum} rFold[3];
+    signal input {maxNum} finalPol[foldsIntoFinalPol * lastDomainSize(nSteps, STEPS)][3];
+    signal input {binary} enable;
+
+    signal {maxNum} coset[cosetSize][3];
+    coset.maxNum = cosets.maxNum;
+    for (var c = 0; c < cosetSize; c++) { coset[c] <== cosets[foldCosetStart(STEPS, s - 1) + c]; }
+    if (pathLevels > 0) {
+        signal siblings[pathLevels][sw];
+        for (var l = 0; l < pathLevels; l++) { siblings[l] <== foldSiblings[foldPathStart(arity, lastLevels, STEPS, s - 1) + l]; }
+        BN128Open(3, cosetSize, arity, lastLevels, pathLevels, STEPS[s], STEPS[0])(queriesL0, coset, siblings, last, root, enable);
+    } else {
+        // The whole path is sent in clear: the opening ignores its one siblings row.
+        var noSiblings[1][sw];
+        for (var i = 0; i < sw; i++) { noSiblings[0][i] = 0; }
+        BN128Open(3, cosetSize, arity, lastLevels, 0, STEPS[s], STEPS[0])(queriesL0, coset, noSiblings, last, root, enable);
     }
-    if (NF > 3) {
-        VerifyFRIBN128(STEPS[2], STEPS[3], STEPS[4], nBitsExt, STEPS[0])(queriesL0, rFold[2], fp2, fp3, enable);
-    } else if (NF == 3) {
-        VerifyFRIBN128(STEPS[2], STEPS[3], 0, nBitsExt, STEPS[0])(queriesL0, rFold[2], fp2, finalPol, enable);
+
+    signal {maxNum} nextCoset[nextCosetSize][3];
+    if (foldsIntoFinalPol == 1) {
+        nextCoset.maxNum = finalPol.maxNum;
+        nextCoset <== finalPol;
+    } else {
+        nextCoset.maxNum = cosets.maxNum;
+        for (var c = 0; c < nextCosetSize; c++) { nextCoset[c] <== cosets[foldCosetStart(STEPS, s) + c]; }
     }
-    if (NF > 4) {
-        VerifyFRIBN128(STEPS[3], STEPS[4], STEPS[5], nBitsExt, STEPS[0])(queriesL0, rFold[3], fp3, fp4, enable);
-    } else if (NF == 4) {
-        VerifyFRIBN128(STEPS[3], STEPS[4], 0, nBitsExt, STEPS[0])(queriesL0, rFold[3], fp3, finalPol, enable);
-    }
-    if (NF > 5) {
-        VerifyFRIBN128(STEPS[4], STEPS[5], STEPS[6], nBitsExt, STEPS[0])(queriesL0, rFold[4], fp4, fp5, enable);
-    } else if (NF == 5) {
-        VerifyFRIBN128(STEPS[4], STEPS[5], 0, nBitsExt, STEPS[0])(queriesL0, rFold[4], fp4, finalPol, enable);
-    }
-    if (NF > 6) {
-        VerifyFRIBN128(STEPS[5], STEPS[6], STEPS[7], nBitsExt, STEPS[0])(queriesL0, rFold[5], fp5, fp6, enable);
-    } else if (NF == 6) {
-        VerifyFRIBN128(STEPS[5], STEPS[6], 0, nBitsExt, STEPS[0])(queriesL0, rFold[5], fp5, finalPol, enable);
-    }
-    if (NF > 7) {
-        VerifyFRIBN128(STEPS[6], STEPS[7], STEPS[8], nBitsExt, STEPS[0])(queriesL0, rFold[6], fp6, fp7, enable);
-    } else if (NF == 7) {
-        VerifyFRIBN128(STEPS[6], STEPS[7], 0, nBitsExt, STEPS[0])(queriesL0, rFold[6], fp6, finalPol, enable);
-    }
-    if (NF > 8) {
-        VerifyFRIBN128(STEPS[7], STEPS[8], STEPS[9], nBitsExt, STEPS[0])(queriesL0, rFold[7], fp7, finalPol, enable);
-    } else if (NF == 8) {
-        VerifyFRIBN128(STEPS[7], STEPS[8], 0, nBitsExt, STEPS[0])(queriesL0, rFold[7], fp7, finalPol, enable);
-    }
+    VerifyFRIBN128(STEPS[s - 1], STEPS[s], nextBits, key_nBitsExt(k), STEPS[0])(queriesL0, rFold, coset, nextCoset, enable);
 }
