@@ -233,9 +233,9 @@ template DeepConstantsBN128(nOpenings, nPols, nEvals, OPENING_NUM_EVALS, EVAL_CO
 /*
     f_0 at one query x of L_0 against fold tree 1's opened coset (deep.circom's DeepQuery, emulated):
     x from repeated GLMul as the former templated verifier did, the same grouped sum
-    (lib_params.rs: OPENING_EXPONENT, SUMS, COLS), a base-field leaf lifted with GLC3 where it meets an extension.
+    (lib_params.rs: OPENING_EXPONENT, PREFIX_SUMS, COLUMN_GROUPS), a base-field leaf lifted with GLC3 where it meets an extension.
 */
-template DeepQueryBN128(nOpenings, nPols, nColGroups, nSums, bits0, nextBits, s0Width, nBits, OPENING_EXPONENT, SUMS, COLS) {
+template DeepQueryBN128(nOpenings, nPols, nColumnGroups, nPrefixSums, bits0, nextBits, s0Width, nBits, OPENING_EXPONENT, PREFIX_SUMS, COLUMN_GROUPS) {
     var n = nOpenings;
     var nextStep = bits0 - nextBits;
 
@@ -283,7 +283,7 @@ template DeepQueryBN128(nOpenings, nPols, nColGroups, nSums, bits0, nextBits, s0
     }
 
     // In deep.rs's op order (as the former templated verifier emitted it): A_r = vf1^{e_r} * xDivXSubXi[r] (e = 0
-    // for the last opening); per column group its new prefix sums of A (SUMS), its columns' products,
+    // for the last opening); per column group its new prefix sums of A (PREFIX_SUMS), its columns' products,
     // their sum S_G and S_G * sum A; then the groups' sum.
     component aMul[n];
     for (var r = 0; r < n - 1; r++) {
@@ -291,32 +291,32 @@ template DeepQueryBN128(nOpenings, nPols, nColGroups, nSums, bits0, nextBits, s0
         aMul[r].ina <== friConsts[2 + nPols + r];
         aMul[r].inb <== xDivXSubXi[r];
     }
-    // COLS per group: its A source, #columns, (column, leaf, dim)... A column's term is colMul[c] (c > 0),
+    // COLUMN_GROUPS per group: its A source, #columns, (column, leaf, dim)... A column's term is colMul[c] (c > 0),
     // else its leaf: an extension inline, a base one lifted (lift0). The running S_G is a column's term
     // (sKind 0: leaf, 1: lift0, 2: colMul[c]) or colSum[c] (3).
-    component aSum[nonEmpty(nSums)];
+    component aSum[nonEmpty(nPrefixSums)];
     component colLift[nPols];
     component colMul[nPols];
     component colSum[nPols];
     component lift0[1];
-    component term[nColGroups];
+    component term[nColumnGroups];
     var kNext = 0;
     var p = 0;
-    for (var g = 0; g < nColGroups; g++) {
-        var src = COLS[p];
-        var nCols = COLS[p + 1];
+    for (var g = 0; g < nColumnGroups; g++) {
+        var src = COLUMN_GROUPS[p];
+        var nCols = COLUMN_GROUPS[p + 1];
         for (var k = kNext; k <= src - n; k++) {
-            var s0 = SUMS[2 * k];
-            var rj = SUMS[2 * k + 1];
+            var s0 = PREFIX_SUMS[2 * k];
+            var rj = PREFIX_SUMS[2 * k + 1];
             aSum[k] = GLCAdd();
             if (s0 >= n) { aSum[k].ina <== aSum[s0 - n].out; } else if (s0 == n - 1) { aSum[k].ina <== xDivXSubXi[s0]; } else { aSum[k].ina <== aMul[s0].out; }
             if (rj == n - 1) { aSum[k].inb <== xDivXSubXi[rj]; } else { aSum[k].inb <== aMul[rj].out; }
             kNext = k + 1;
         }
         for (var i = 0; i < nCols; i++) {
-            var c = COLS[p + 2 + 3 * i];
-            var off = COLS[p + 3 + 3 * i];
-            var dim = COLS[p + 4 + 3 * i];
+            var c = COLUMN_GROUPS[p + 2 + 3 * i];
+            var off = COLUMN_GROUPS[p + 3 + 3 * i];
+            var dim = COLUMN_GROUPS[p + 4 + 3 * i];
             if (c > 0) {
                 colMul[c] = GLCMul();
                 colMul[c].ina <== friConsts[2 + c];
@@ -335,9 +335,9 @@ template DeepQueryBN128(nOpenings, nPols, nColGroups, nSums, bits0, nextBits, s0
         var sKind = 0;
         var sIdx = 0;
         for (var i = 0; i < nCols; i++) {
-            var c = COLS[p + 2 + 3 * i];
-            var off = COLS[p + 3 + 3 * i];
-            var dim = COLS[p + 4 + 3 * i];
+            var c = COLUMN_GROUPS[p + 2 + 3 * i];
+            var off = COLUMN_GROUPS[p + 3 + 3 * i];
+            var dim = COLUMN_GROUPS[p + 4 + 3 * i];
             var tKind = c > 0 ? 2 : (dim == 1 ? 1 : 0);
             var tIdx = c == 0 ? off : c;
             if (i == 0) {
@@ -364,8 +364,8 @@ template DeepQueryBN128(nOpenings, nPols, nColGroups, nSums, bits0, nextBits, s0
         if (sKind == 3) { term[g].ina <== colSum[sIdx].out; }
         if (src >= n) { term[g].inb <== aSum[src - n].out; } else if (src == n - 1) { term[g].inb <== xDivXSubXi[src]; } else { term[g].inb <== aMul[src].out; }
     }
-    component termSum[nColGroups];
-    for (var g = 1; g < nColGroups; g++) {
+    component termSum[nColumnGroups];
+    for (var g = 1; g < nColumnGroups; g++) {
         termSum[g] = GLCAdd();
         if (g == 1) { termSum[g].ina <== term[0].out; } else { termSum[g].ina <== termSum[g - 1].out; }
         termSum[g].inb <== term[g].out;
@@ -381,8 +381,8 @@ template DeepQueryBN128(nOpenings, nPols, nColGroups, nSums, bits0, nextBits, s0
         kSub[r] = GLCSub();
         if (r > 0) {
             kSub[r].ina <== kSub[r - 1].out;
-        } else if (nColGroups > 1) {
-            kSub[r].ina <== termSum[nColGroups - 1].out;
+        } else if (nColumnGroups > 1) {
+            kSub[r].ina <== termSum[nColumnGroups - 1].out;
         } else {
             kSub[r].ina <== term[0].out;
         }
@@ -502,16 +502,16 @@ template StarkVerifierBN128(k) {
     var STEPS[nSteps] = key_STEPS(k);
     var L0_TREE_START[nTrees + 1] = key_L0_TREE_START(k);
     var ROOT_C[4] = key_ROOT_C(k);
-    var OFF_ROOT[nStages + 1] = key_OFF_ROOT(k);
+    var OFF_STAGE_ROOT[nStages + 1] = key_OFF_STAGE_ROOT(k);
     var OFF_L0_VALUES[nTrees] = key_OFF_L0_VALUES(k);
     var OFF_L0_SIBLINGS[nTrees] = key_OFF_L0_SIBLINGS(k);
     var OFF_L0_LAST_LEVELS[nTrees] = key_OFF_L0_LAST_LEVELS(k);
-    var TREE_ROOT[nTrees] = key_TREE_ROOT(k);
-    var NF = nSteps - 1;
-    var OFF_FOLD_ROOT[nonEmpty(NF)] = key_OFF_FOLD_ROOT(k);
-    var OFF_FOLD_VALUES[nonEmpty(NF)] = key_OFF_FOLD_VALUES(k);
-    var OFF_FOLD_SIBLINGS[nonEmpty(NF)] = key_OFF_FOLD_SIBLINGS(k);
-    var OFF_FOLD_LAST_LEVELS[nonEmpty(NF)] = key_OFF_FOLD_LAST_LEVELS(k);
+    var OFF_L0_ROOT[nTrees] = key_OFF_L0_ROOT(k);
+    var nFoldTrees = nSteps - 1;
+    var OFF_FOLD_ROOT[nonEmpty(nFoldTrees)] = key_OFF_FOLD_ROOT(k);
+    var OFF_FOLD_VALUES[nonEmpty(nFoldTrees)] = key_OFF_FOLD_VALUES(k);
+    var OFF_FOLD_SIBLINGS[nonEmpty(nFoldTrees)] = key_OFF_FOLD_SIBLINGS(k);
+    var OFF_FOLD_LAST_LEVELS[nonEmpty(nFoldTrees)] = key_OFF_FOLD_LAST_LEVELS(k);
     var rw = bn_rootW();
     var sw = bn_sibW(arity);
     var L0 = l0PathLength(arity, lastLevels, STEPS);
@@ -539,12 +539,12 @@ template StarkVerifierBN128(k) {
     signal evals[nEvals][3] <== ProofRows(P, key_offEvals(k), nEvals, 3)(proof);
     signal finalPol[FS][3] <== ProofRows(P, key_offFinal(k), FS, 3)(proof);
     signal stageRoot[nStages + 1][rw];
-    for (var s = 0; s <= nStages; s++) { for (var i = 0; i < rw; i++) { stageRoot[s][i] <== proof[OFF_ROOT[s] + i]; } }
+    for (var s = 0; s <= nStages; s++) { for (var i = 0; i < rw; i++) { stageRoot[s][i] <== proof[OFF_STAGE_ROOT[s] + i]; } }
     signal treeRoot[nTrees][rw];
     signal treeLast[nTrees][lastSize][rw];
     for (var t = 0; t < nTrees; t++) {
         for (var i = 0; i < rw; i++) {
-            if (TREE_ROOT[t] >= 0) { treeRoot[t][i] <== proof[TREE_ROOT[t] + i]; } else { treeRoot[t][i] <== rootC[i]; }
+            if (OFF_L0_ROOT[t] >= 0) { treeRoot[t][i] <== proof[OFF_L0_ROOT[t] + i]; } else { treeRoot[t][i] <== rootC[i]; }
         }
         for (var j = 0; j < lastSize; j++) {
             for (var i = 0; i < rw; i++) {
@@ -552,9 +552,9 @@ template StarkVerifierBN128(k) {
             }
         }
     }
-    signal foldRoot[NF][rw];
-    signal foldLast[NF][lastSize][rw];
-    for (var f = 0; f < NF; f++) {
+    signal foldRoot[nFoldTrees][rw];
+    signal foldLast[nFoldTrees][lastSize][rw];
+    for (var f = 0; f < nFoldTrees; f++) {
         for (var i = 0; i < rw; i++) { foldRoot[f][i] <== proof[OFF_FOLD_ROOT[f] + i]; }
         for (var j = 0; j < lastSize; j++) {
             for (var i = 0; i < rw; i++) {
@@ -569,7 +569,7 @@ template StarkVerifierBN128(k) {
     signal {maxNum} finalPolGL[FS][3] <== GLVals3(FS)(finalPol);
 
     // The GL verifier's transcript over this key's engine; its challenges reduced Goldilocks values.
-    component transcript = StarkVerifierTranscript(nStages, nPublics, 0, 0, nEvals, nChallenges, nSteps, STEPS, 0, 0, 0, [0], key_hashCommits(k), 0, nQueries, key_powBits(k), key_CH(k), [0], [0]);
+    component transcript = StarkVerifierTranscript(nStages, nPublics, 0, 0, nEvals, nChallenges, nSteps, STEPS, 0, 0, 0, [0], key_hashCommits(k), 0, nQueries, key_powBits(k), key_CHALLENGES_PER_STAGE(k), [0], [0]);
     transcript.globalChallenge <== [0, 0, 0];
     if (nPublics > 0) { transcript.publics <== publicsGL; } else { transcript.publics <== [0]; }
     transcript.rootC <== rootC;
@@ -577,7 +577,7 @@ template StarkVerifierBN128(k) {
     transcript.airvalues <== [[0, 0, 0]];
     transcript.airgroupvalues <== [[0, 0, 0]];
     transcript.evals <== evalsGL;
-    if (NF > 0) { transcript.foldRoots <== foldRoot; } else { transcript.foldRoots <== zeroRoot; }
+    if (nFoldTrees > 0) { transcript.foldRoots <== foldRoot; } else { transcript.foldRoots <== zeroRoot; }
     transcript.betas <== [[0, 0, 0]];
     transcript.hints <== [[0, 0, 0]];
     transcript.finalPol <== finalPolGL;
@@ -592,10 +592,10 @@ template StarkVerifierBN128(k) {
     signal {maxNum} vf[2][3];
     vf.maxNum = max64();
     vf <== transcript.vf;
-    signal {maxNum} rFold[nonEmpty(NF)][3];
+    signal {maxNum} rFold[nonEmpty(nFoldTrees)][3];
     rFold.maxNum = max64();
-    if (NF > 0) {
-        for (var f = 0; f < NF; f++) { rFold[f] <== transcript.ldt[ldt_rFold(0, f)]; }
+    if (nFoldTrees > 0) {
+        for (var f = 0; f < nFoldTrees; f++) { rFold[f] <== transcript.ldt[ldt_rFold(0, f)]; }
     } else {
         rFold[0] <== [0, 0, 0];
     }
@@ -633,7 +633,7 @@ template StarkVerifierBN128(k) {
             for (var i = 0; i < width; i++) { query[g].l0Values[L0_TREE_START[t] + i] <== proof[OFF_L0_VALUES[t] + g * width + i]; }
             for (var l = 0; l < L0; l++) { for (var i = 0; i < sw; i++) { query[g].l0Siblings[t][l][i] <== proof[OFF_L0_SIBLINGS[t] + (g * L0 + l) * sw + i]; } }
         }
-        for (var f = 0; f < NF; f++) {
+        for (var f = 0; f < nFoldTrees; f++) {
             var cosetSize = foldCosetSize(STEPS, f + 1);
             var pathLevels = foldPathLength(arity, lastLevels, STEPS, f + 1);
             var cosetStart = foldCosetStart(STEPS, f);
@@ -644,7 +644,7 @@ template StarkVerifierBN128(k) {
     }
     if (lastLevels > 0) {
         for (var t = 0; t < nTrees; t++) { BN128RootCheck(lastLevels, arity, STEPS[0])(treeLast[t], treeRoot[t], enabled); }
-        for (var f = 0; f < NF; f++) { BN128RootCheck(lastLevels, arity, STEPS[f + 1])(foldLast[f], foldRoot[f], enabled); }
+        for (var f = 0; f < nFoldTrees; f++) { BN128RootCheck(lastLevels, arity, STEPS[f + 1])(foldLast[f], foldRoot[f], enabled); }
     }
     VerifyFinalPolBN128(STEPS[nSteps - 1], finalPolDegreeBound(nBits, nBitsExt, nSteps, STEPS))(finalPolGL, enabled);
 }
@@ -663,28 +663,28 @@ template parallel VerifySingleQueryBN128(k) {
     var nPols = key_nPols(k);
     var STEPS[nSteps] = key_STEPS(k);
     var L0_TREE_START[nTrees + 1] = key_L0_TREE_START(k);
-    var NF = nSteps - 1;
+    var nFoldTrees = nSteps - 1;
     var rw = bn_rootW();
     var sw = bn_sibW(arity);
     var L0 = l0PathLength(arity, lastLevels, STEPS);
     var lastSize = clearLevelNodes(arity, lastLevels);
-    var nFoldCosetRows = foldCosetStart(STEPS, NF);
+    var nFoldCosetRows = foldCosetStart(STEPS, nFoldTrees);
 
     signal input {binary} queriesL0[STEPS[0]];
     signal input {maxNum} xi[3];
     signal input {maxNum} friConsts[2 + nPols + 2 * nOpenings][3];
-    signal input {maxNum} rFold[nonEmpty(NF)][3];
+    signal input {maxNum} rFold[nonEmpty(nFoldTrees)][3];
     signal input {maxNum} finalPol[lastDomainSize(nSteps, STEPS)][3];
     signal input {binary} enable;
     signal input treeLast[nTrees][lastSize][rw];
     signal input treeRoot[nTrees][rw];
-    signal input foldLast[NF][lastSize][rw];
-    signal input foldRoot[NF][rw];
+    signal input foldLast[nFoldTrees][lastSize][rw];
+    signal input foldRoot[nFoldTrees][rw];
 
     signal input l0Values[L0_TREE_START[nTrees]];
     signal input l0Siblings[nTrees][L0][sw];
     signal input foldCosets[nFoldCosetRows][3];
-    signal input foldSiblings[foldPathStart(arity, lastLevels, STEPS, NF)][sw];
+    signal input foldSiblings[foldPathStart(arity, lastLevels, STEPS, nFoldTrees)][sw];
 
     // Every L_0 row and fold-tree coset reduced before any tree is opened.
     signal {maxNum} leaves[L0_TREE_START[nTrees]];
@@ -708,25 +708,25 @@ template parallel VerifySingleQueryBN128(k) {
     }
 
     // f_0 lands on fold tree 0's coset, or on finalPol when nothing folds.
-    if (NF > 0) {
+    if (nFoldTrees > 0) {
         signal {maxNum} firstCoset[foldCosetSize(STEPS, 1)][3];
         firstCoset.maxNum = cosets.maxNum;
         for (var c = 0; c < foldCosetSize(STEPS, 1); c++) { firstCoset[c] <== cosets[c]; }
-        DeepQueryBN128(nOpenings, nPols, key_nColGroups(k), key_nSums(k), STEPS[0], STEPS[1], L0_TREE_START[nTrees], key_nBits(k), key_OPENING_EXPONENT(k), key_SUMS(k), key_COLS(k))(queriesL0, xi, friConsts, leaves, firstCoset, enable);
+        DeepQueryBN128(nOpenings, nPols, key_nColumnGroups(k), key_nPrefixSums(k), STEPS[0], STEPS[1], L0_TREE_START[nTrees], key_nBits(k), key_OPENING_EXPONENT(k), key_PREFIX_SUMS(k), key_COLUMN_GROUPS(k))(queriesL0, xi, friConsts, leaves, firstCoset, enable);
     } else {
-        DeepQueryBN128(nOpenings, nPols, key_nColGroups(k), key_nSums(k), STEPS[0], 0, L0_TREE_START[nTrees], key_nBits(k), key_OPENING_EXPONENT(k), key_SUMS(k), key_COLS(k))(queriesL0, xi, friConsts, leaves, finalPol, enable);
+        DeepQueryBN128(nOpenings, nPols, key_nColumnGroups(k), key_nPrefixSums(k), STEPS[0], 0, L0_TREE_START[nTrees], key_nBits(k), key_OPENING_EXPONENT(k), key_PREFIX_SUMS(k), key_COLUMN_GROUPS(k))(queriesL0, xi, friConsts, leaves, finalPol, enable);
     }
 
-    component foldStep[nonEmpty(NF)];
-    for (var f = 0; f < NF; f++) {
+    component foldStep[nonEmpty(nFoldTrees)];
+    for (var f = 0; f < nFoldTrees; f++) {
         foldStep[f] = QueryFoldStepBN128(k, f + 1);
         foldStep[f].queriesL0 <== queriesL0;
         foldStep[f].cosets <== cosets;
-        if (foldPathStart(arity, lastLevels, STEPS, NF) > 0) { foldStep[f].foldSiblings <== foldSiblings; }
+        if (foldPathStart(arity, lastLevels, STEPS, nFoldTrees) > 0) { foldStep[f].foldSiblings <== foldSiblings; }
         foldStep[f].last <== foldLast[f];
         foldStep[f].root <== foldRoot[f];
         foldStep[f].rFold <== rFold[f];
-        if (f == NF - 1) { foldStep[f].finalPol <== finalPol; }
+        if (f == nFoldTrees - 1) { foldStep[f].finalPol <== finalPol; }
         foldStep[f].enable <== enable;
     }
 }
@@ -741,18 +741,18 @@ template QueryFoldStepBN128(k, s) {
     var lastLevels = key_lastLevels(k);
     var nSteps = key_nSteps(k);
     var STEPS[nSteps] = key_STEPS(k);
-    var NF = nSteps - 1;
+    var nFoldTrees = nSteps - 1;
     var rw = bn_rootW();
     var sw = bn_sibW(arity);
     var cosetSize = foldCosetSize(STEPS, s);
     var pathLevels = foldPathLength(arity, lastLevels, STEPS, s);
     var nextBits = nextFoldDomainBits(STEPS, nSteps, s);
     var nextCosetSize = 1 << (STEPS[s] - nextBits);
-    var foldsIntoFinalPol = s == NF ? 1 : 0;
+    var foldsIntoFinalPol = s == nFoldTrees ? 1 : 0;
 
     signal input {binary} queriesL0[STEPS[0]];
-    signal input {maxNum} cosets[foldCosetStart(STEPS, NF)][3];
-    signal input foldSiblings[foldPathStart(arity, lastLevels, STEPS, NF)][sw];
+    signal input {maxNum} cosets[foldCosetStart(STEPS, nFoldTrees)][3];
+    signal input foldSiblings[foldPathStart(arity, lastLevels, STEPS, nFoldTrees)][sw];
     signal input last[clearLevelNodes(arity, lastLevels)][rw];
     signal input root[rw];
     signal input {maxNum} rFold[3];

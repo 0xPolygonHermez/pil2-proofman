@@ -76,19 +76,19 @@ template TranscriptHash(n) {
               round's query challenge
 
     challengesMap is in draw order (lib_params.rs checks it), so the squeezes fill `challenges` in
-    order, then `ldt` (proof_shape.circom's ldt_* name its entries). CH[s] counts stage s's challenges,
+    order, then `ldt` (proof_shape.circom's ldt_* name its entries). CHALLENGES_PER_STAGE[s] counts stage s's challenges,
     AIR_VALUE_STAGE / AIRGROUP_VALUE_STAGE are the air(group) values' stages; circuitType > 0 starts from the global challenge (a
     basic air). queriesL0 are round 0's queries (FRI's only round).
 */
-template StarkVerifierTranscript(nStages, nPublics, nAirValues, nAirgroupValues, nEvals, nChallenges, nSteps, STEPS, stir, stirM, stirFinalBits, STIR_NUM_QUERIES, hashCommits, circuitType, nQueries, powBits, CH, AIR_VALUE_STAGE, AIRGROUP_VALUE_STAGE) {
+template StarkVerifierTranscript(nStages, nPublics, nAirValues, nAirgroupValues, nEvals, nChallenges, nSteps, STEPS, stir, stirM, stirFinalBits, STIR_NUM_QUERIES, hashCommits, circuitType, nQueries, powBits, CHALLENGES_PER_STAGE, AIR_VALUE_STAGE, AIRGROUP_VALUE_STAGE) {
     var nP = nPublics;
     var nAV = nAirValues;
     var nAGV = nAirgroupValues;
     var nEv = nEvals;
-    var NF = nFoldTrees(stir, nSteps, stirM);
+    var nFoldTrees = nFoldTrees(stir, nSteps, stirM);
     var F = finalPolSize(stir, nSteps, STEPS, stirFinalBits);
-    var nB = stir == 1 ? NF - 1 : 0;
-    var nH = stir_nHints(stir, NF, STIR_NUM_QUERIES);
+    var nB = stir == 1 ? nFoldTrees - 1 : 0;
+    var nH = stir_nHints(stir, nFoldTrees, STIR_NUM_QUERIES);
     var hc = hashCommits;
     var inCh = circuitType > 0 ? 1 : 0;
     var D = tr_digestW();
@@ -101,7 +101,7 @@ template StarkVerifierTranscript(nStages, nPublics, nAirValues, nAirgroupValues,
     signal input airvalues[nonEmpty(nAV)][3];
     signal input airgroupvalues[nonEmpty(nAGV)][3];
     signal input evals[nEv][3];
-    signal input foldRoots[nonEmpty(NF)][D];
+    signal input foldRoots[nonEmpty(nFoldTrees)][D];
     signal input betas[nonEmpty(nB)][3];
     signal input hints[nonEmpty(nH)][3];
     signal input finalPol[F][3];
@@ -113,7 +113,7 @@ template StarkVerifierTranscript(nStages, nPublics, nAirValues, nAirgroupValues,
     signal output vc[3];
     signal output xi[3];
     signal output vf[2][3];
-    signal output ldt[ldt_n(stir, NF)][3];
+    signal output ldt[ldt_n(stir, nFoldTrees)][3];
     signal output {binary} queriesL0[nQueries][STEPS[0]];
 
     // Stage-1 airgroup values use limb 0 only.
@@ -144,8 +144,8 @@ template StarkVerifierTranscript(nStages, nPublics, nAirValues, nAirgroupValues,
     }
 
     // The schedule: absorbed words in `src`, engine ops in `ops`; nSq squeezed triples.
-    var MAXIN = 3 * D + nP + D * nStages + 1 + 3 * nAV + 3 * nAGV + D + 3 * nEv + D * NF + 3 * nB + 3 * nH + 3 * F;
-    var MAXOPS = 8 + 5 * nStages + 3 * nChallenges + nAV + nAGV + 8 * NF + 8;
+    var MAXIN = 3 * D + nP + D * nStages + 1 + 3 * nAV + 3 * nAGV + D + 3 * nEv + D * nFoldTrees + 3 * nB + 3 * nH + 3 * F;
+    var MAXOPS = 8 + 5 * nStages + 3 * nChallenges + nAV + nAGV + 8 * nFoldTrees + 8;
     var src[MAXIN];
     var ops[2 * MAXOPS];
     var nIn = 0;
@@ -171,7 +171,7 @@ template StarkVerifierTranscript(nStages, nPublics, nAirValues, nAirgroupValues,
     }
 
     for (var s = 2; s <= nStages; s++) {
-        for (var j = 0; j < CH[s]; j++) {
+        for (var j = 0; j < CHALLENGES_PER_STAGE[s]; j++) {
             ops[2 * nOps] = 1; ops[2 * nOps + 1] = CW; nOps++; nSq++;
         }
         // A basic air's identity, absorbed once the shared stage-2 challenges are out.
@@ -220,7 +220,7 @@ template StarkVerifierTranscript(nStages, nPublics, nAirValues, nAirgroupValues,
     ops[2 * nOps] = 1; ops[2 * nOps + 1] = CW; nOps++; nSq++;
 
     // foldRoots[s] commits f_s; rFold[s] is drawn right after it (STIR: after rOut and beta for s >= 1).
-    for (var s = 0; s <= NF; s++) {
+    for (var s = 0; s <= nFoldTrees; s++) {
         if (s > 0) {
             ops[2 * nOps] = 1; ops[2 * nOps + 1] = CW; nOps++; nSq++;
         }
@@ -235,7 +235,7 @@ template StarkVerifierTranscript(nStages, nPublics, nAirValues, nAirgroupValues,
             ops[2 * nOps] = 0; ops[2 * nOps + 1] = 3 * hn; nOps++;
             ops[2 * nOps] = 1; ops[2 * nOps + 1] = CW; nOps++; nSq++;
         }
-        if (s < NF) {
+        if (s < nFoldTrees) {
             for (var i = 0; i < D; i++) { src[nIn] = foldRoots[s][i]; nIn++; }
             ops[2 * nOps] = 0; ops[2 * nOps + 1] = D; nOps++;
             if (stir == 1 && s >= 1) {
@@ -254,7 +254,7 @@ template StarkVerifierTranscript(nStages, nPublics, nAirValues, nAirgroupValues,
         }
     }
     ops[2 * nOps] = 1; ops[2 * nOps + 1] = CW; nOps++; nSq++;
-    assert(nSq == nChallenges + ldt_n(stir, NF));
+    assert(nSq == nChallenges + ldt_n(stir, nFoldTrees));
 
     component tr = TranscriptEngine(nIn, CW * nSq, nOps, ops);
     for (var i = 0; i < nIn; i++) { tr.in[i] <== src[i]; }
@@ -275,5 +275,5 @@ template StarkVerifierTranscript(nStages, nPublics, nAirValues, nAirgroupValues,
     vf[0] <== challenges[nChallenges - 2];
     vf[1] <== challenges[nChallenges - 1];
 
-    queriesL0 <== QueryBits(nQueries, STEPS[0], powBits, stir == 1 || powBits > 0 ? 1 : 0)(ldt[ldt_query(stir, NF, 0)], nonce, enable);
+    queriesL0 <== QueryBits(nQueries, STEPS[0], powBits, stir == 1 || powBits > 0 ? 1 : 0)(ldt[ldt_query(stir, nFoldTrees, 0)], nonce, enable);
 }

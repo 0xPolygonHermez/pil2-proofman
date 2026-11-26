@@ -62,17 +62,17 @@ function nFoldTrees(stir, nSteps, stirM) { return stir == 1 ? stirM : nSteps - 1
 // finalPol rows in the proof: FRI's evaluations over the last domain, STIR's coefficients.
 function finalPolSize(stir, nSteps, STEPS, stirFinalBits) { return stir == 1 ? 1 << stirFinalBits : lastDomainSize(nSteps, STEPS); }
 
-// The low-degree test's squeezes in draw order (transcript output ldt). FRI: rFold[0..nFolds), the query
+// The low-degree test's squeezes in draw order (transcript output ldt). FRI: rFold[0..nFoldTrees), the query
 // challenge. STIR: rFold[0], then per iteration i >= 1: rOut, rFold[i], rComb, query challenge of round
 // i - 1, rho; then the last round's query challenge.
-function ldt_n(stir, nFolds) { return stir == 1 ? 5 * nFolds - 3 : nFolds + 1; }
+function ldt_n(stir, nFoldTrees) { return stir == 1 ? 5 * nFoldTrees - 3 : nFoldTrees + 1; }
 function ldt_rFold(stir, i) { return stir == 1 && i > 0 ? 5 * i - 3 : i; }
 function ldt_rOut(j) { return 5 * j + 1; }
 function ldt_rComb(j) { return 5 * j + 3; }
 function ldt_rho(j) { return 5 * j + 5; }
-function ldt_query(stir, nFolds, r) {
-    if (stir == 0) { return nFolds; }
-    return r < nFolds - 1 ? 5 * r + 4 : 5 * nFolds - 4;
+function ldt_query(stir, nFoldTrees, r) {
+    if (stir == 0) { return nFoldTrees; }
+    return r < nFoldTrees - 1 ? 5 * r + 4 : 5 * nFoldTrees - 4;
 }
 
 // STIR round r (L = logDomainSizes, K = foldingFactors, T = numQueries).

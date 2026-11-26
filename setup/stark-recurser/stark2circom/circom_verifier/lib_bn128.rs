@@ -148,7 +148,7 @@ pub(crate) mod tests {
         );
         assert!(out.contains("    tmp_0 <== evals[0];\n    signal {maxNum} tmp_1[3];\n    tmp_1 <== GLCMul()(tmp_0, Zh);\n\n    evalP <== tmp_1;\n}"), "out:\n{out}");
         assert!(out.contains("function key_ROOT_C(k) { return [7, 0, 0, 0]; }"), "out:\n{out}");
-        assert!(out.contains("function key_OFF_ROOT(k) { return [0, 1, 2]; }"), "single-element roots:\n{out}");
+        assert!(out.contains("function key_OFF_STAGE_ROOT(k) { return [0, 1, 2]; }"), "single-element roots:\n{out}");
         let templates: Vec<&str> = out.lines().filter(|l| l.starts_with("template ")).collect();
         assert_eq!(templates, ["template ConstraintEval() {"], "{out}");
         let custom = render(&stark_info(true, 0)).unwrap();

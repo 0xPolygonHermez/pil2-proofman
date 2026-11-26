@@ -72,7 +72,7 @@ template BasicValues(k, circuitType, nAgg, nullable) {
     var nAV = key_nAirValues(k);
     var offAirValues = key_offAirValues(k);
     var offAirgroupValues = key_offAirgroupValues(k);
-    var OFF_ROOT[key_nStages(k) + 1] = key_OFF_ROOT(k);
+    var OFF_STAGE_ROOT[key_nStages(k) + 1] = key_OFF_STAGE_ROOT(k);
     var AGG[nonEmpty(nAgg)] = vadcop_AGG(vadcop_airgroupId());
 
     signal input rootC[4];
@@ -89,7 +89,7 @@ template BasicValues(k, circuitType, nAgg, nullable) {
     }
     component h = Stage1Hash(k, circuitType);
     h.rootC <== rootC;
-    for (var i = 0; i < 4; i++) { h.root1[i] <== proof[OFF_ROOT[0] + i]; }
+    for (var i = 0; i < 4; i++) { h.root1[i] <== proof[OFF_STAGE_ROOT[0] + i]; }
     if (nAV > 0) {
         for (var i = 0; i < nAV; i++) { for (var e = 0; e < 3; e++) { h.airvalues[i][e] <== proof[offAirValues + 3 * i + e]; } }
     } else {

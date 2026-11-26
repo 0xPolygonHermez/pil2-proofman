@@ -159,10 +159,10 @@ pub(crate) mod tests {
             &[
                 "function key_offAirgroupValues(k) { return 0; }",
                 "function key_offAirValues(k) { return -1; }",
-                "function key_OFF_ROOT(k) { return [3, 7, 11]; }",
+                "function key_OFF_STAGE_ROOT(k) { return [3, 7, 11]; }",
                 "function key_offEvals(k) { return 15; }",
-                "function key_TREE_ROOT(k) { return [3, 7, 11, -1, -2]; }",
-                "function key_TREE_PUB(k) { return [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 2, 3]; }",
+                "function key_OFF_L0_ROOT(k) { return [3, 7, 11, -1, -2]; }",
+                "function key_L0_ROOT_PUBLICS(k) { return [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 2, 3]; }",
                 "function key_ROOT_C(k) { return [0, 0, 0, 0]; }",
             ],
         );
@@ -218,12 +218,12 @@ pub(crate) mod tests {
             &[
                 "function key_nOpenings(k) { return 2; }",
                 "function key_nPols(k) { return 5; }",
-                "function key_nSums(k) { return 1; }",
+                "function key_nPrefixSums(k) { return 1; }",
                 "function key_L0_TREE_START(k) { return [0, 1, 4, 7, 8, 9]; }",
                 "function key_OPENING_NUM_EVALS(k) { return [3, 4]; }",
                 "function key_EVAL_COLUMN(k) { return [0, 1, 2, 0, 3, 2, 4]; }",
-                "function key_SUMS(k) { return [0, 1]; }",
-                "function key_COLS(k) { return [2, 2, 0, 0, 1, 2, 8, 1, 0, 1, 1, 1, 3, 1, 2, 3, 7, 1, 4, 4, 3]; }",
+                "function key_PREFIX_SUMS(k) { return [0, 1]; }",
+                "function key_COLUMN_GROUPS(k) { return [2, 2, 0, 0, 1, 2, 8, 1, 0, 1, 1, 1, 3, 1, 2, 3, 7, 1, 4, 4, 3]; }",
             ],
         );
     }
@@ -288,12 +288,12 @@ pub(crate) mod tests {
                 "function key_STEPS(k) { return [17, 14]; }",
                 "function key_STIR_NUM_QUERIES(k) { return [10, 6]; }",
                 "function key_stirFinalBits(k) { return 10; }",
-                "function key_nFolds(k) { return 2; }",
+                "function key_stirM(k) { return 2; }",
                 "function key_offNonce(k) { return -1; }",
             ],
         );
         assert!(!out.contains("function key_offBetas(k) { return -1; }"), "{out}");
-        assert!(!out.contains("function key_OFF_ANS(k) { return [-1]; }"), "{out}");
+        assert!(!out.contains("function key_OFF_ANS_COEFFS(k) { return [-1]; }"), "{out}");
     }
 
     #[test]

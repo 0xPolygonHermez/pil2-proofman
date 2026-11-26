@@ -18,7 +18,7 @@ include "query_point.circom";
     K_o = sum_{c in o} vf2^c * eval(c, o), c being a column's first appearance in evMap.
 
     friConsts = [vf1, vf2, vf2^0..vf2^{nPols-1}, vf1^{e_o} per opening, K_o per opening]. The grouping
-    arrives precomputed (lib_params.rs): OPENING_NUM_EVALS / EVAL_COLUMN per opening, SUMS and COLS per column group.
+    arrives precomputed (lib_params.rs): OPENING_NUM_EVALS / EVAL_COLUMN per opening, PREFIX_SUMS and COLUMN_GROUPS per column group.
 */
 
 // The query-independent DEEP terms, once per proof.
@@ -93,7 +93,7 @@ template DeepConstants(nOpenings, nPols, nEvals, OPENING_NUM_EVALS, EVAL_COLUMN)
     (s0_vals, already checked against their Merkle roots), matched against the member of fold tree
     1's opened coset that x corresponds to (selected by the query bits above nextStepBits).
 */
-template DeepQuery(nOpenings, nPols, nColGroups, nSums, bits0, nextBits, s0Width, OPENING_ROOT, SUMS, COLS) {
+template DeepQuery(nOpenings, nPols, nColumnGroups, nPrefixSums, bits0, nextBits, s0Width, OPENING_ROOT, PREFIX_SUMS, COLUMN_GROUPS) {
     var n = nOpenings;
     var nextStep = bits0 - nextBits;
 
@@ -126,11 +126,11 @@ template DeepQuery(nOpenings, nPols, nColGroups, nSums, bits0, nextBits, s0Width
         }
     }
 
-    // Shared prefix sums of A: SUMS[k] = (source, rank), a source s < n being a[s], else aSum[s - n].
-    signal aSum[nonEmpty(nSums)][3];
-    for (var k = 0; k < nSums; k++) {
-        var src = SUMS[2 * k];
-        var rj = SUMS[2 * k + 1];
+    // Shared prefix sums of A: PREFIX_SUMS[k] = (source, rank), a source s < n being a[s], else aSum[s - n].
+    signal aSum[nonEmpty(nPrefixSums)][3];
+    for (var k = 0; k < nPrefixSums; k++) {
+        var src = PREFIX_SUMS[2 * k];
+        var rj = PREFIX_SUMS[2 * k + 1];
         var prev[3];
         if (src < n) {
             for (var e = 0; e < 3; e++) { prev[e] = a[src][e]; }
@@ -141,17 +141,17 @@ template DeepQuery(nOpenings, nPols, nColGroups, nSums, bits0, nextBits, s0Width
     }
 
     // S_G * sum A per group: a base-field column 0 alone keeps S_G in the base field.
-    // COLS per group: the source of its A sum, its column count, then (column, s0 offset, dim) per column.
+    // COLUMN_GROUPS per group: the source of its A sum, its column count, then (column, s0 offset, dim) per column.
     // VERIFY-CONSTRAINTS: leaves read straight from s0_vals (today through MapValues' signal copies).
     signal colMul[nPols][3];
     signal colSum[nPols][3];
-    signal term[nColGroups][3];
-    signal termSum[nColGroups][3];
+    signal term[nColumnGroups][3];
+    signal termSum[nColumnGroups][3];
     var res[3];
     var p = 0;
-    for (var g = 0; g < nColGroups; g++) {
-        var src = COLS[p];
-        var nCols = COLS[p + 1];
+    for (var g = 0; g < nColumnGroups; g++) {
+        var src = COLUMN_GROUPS[p];
+        var nCols = COLUMN_GROUPS[p + 1];
         p += 2;
         var accA[3];
         if (src < n) {
@@ -162,9 +162,9 @@ template DeepQuery(nOpenings, nPols, nColGroups, nSums, bits0, nextBits, s0Width
         var s[3];
         var sDim = 3;
         for (var i = 0; i < nCols; i++) {
-            var c = COLS[p];
-            var off = COLS[p + 1];
-            var dim = COLS[p + 2];
+            var c = COLUMN_GROUPS[p];
+            var off = COLUMN_GROUPS[p + 1];
+            var dim = COLUMN_GROUPS[p + 2];
             p += 3;
             var t[3];
             var tDim = 3;
