@@ -4,6 +4,7 @@ pragma custom_templates;
 include "cmul.circom";
 include "cinv.circom";
 include "proof_shape.circom";
+include "proof_rows.circom";
 include "transcript.circom";
 include "deep.circom";
 include "fri.circom";
@@ -164,14 +165,11 @@ template StarkVerifierGL(k) {
     }
 
     // The proof's small parts.
-    signal evals[nEvals][3];
-    for (var i = 0; i < nEvals; i++) { for (var e = 0; e < 3; e++) { evals[i][e] <== proof[key_offEvals(k) + 3 * i + e]; } }
-    signal airvalues[nAirValues][3];
-    for (var i = 0; i < nAirValues; i++) { for (var e = 0; e < 3; e++) { airvalues[i][e] <== proof[key_offAirValues(k) + 3 * i + e]; } }
-    signal airgroupvalues[nAirgroupValues][3];
-    for (var i = 0; i < nAirgroupValues; i++) { for (var e = 0; e < 3; e++) { airgroupvalues[i][e] <== proof[key_offAirgroupValues(k) + 3 * i + e]; } }
-    signal finalPol[F][3];
-    for (var i = 0; i < F; i++) { for (var e = 0; e < 3; e++) { finalPol[i][e] <== proof[key_offFinal(k) + 3 * i + e]; } }
+    var P = key_proofSize(k);
+    signal evals[nEvals][3] <== ProofRows(P, key_offEvals(k), nEvals, 3)(proof);
+    signal airvalues[nAirValues][3] <== ProofRows(P, key_offAirValues(k), nAirValues, 3)(proof);
+    signal airgroupvalues[nAirgroupValues][3] <== ProofRows(P, key_offAirgroupValues(k), nAirgroupValues, 3)(proof);
+    signal finalPol[F][3] <== ProofRows(P, key_offFinal(k), F, 3)(proof);
     // Each L_0 tree's root (a stage root, rootC, or a custom commit's publics) and levels sent in clear.
     signal treeRoot[nTrees][4];
     for (var t = 0; t < nTrees; t++) {

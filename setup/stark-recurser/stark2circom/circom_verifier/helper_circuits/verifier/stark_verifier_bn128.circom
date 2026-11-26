@@ -2,6 +2,7 @@ pragma circom 2.1.0;
 pragma custom_templates;
 
 include "proof_shape.circom";
+include "proof_rows.circom";
 include "transcript.circom";
 
 /*
@@ -49,7 +50,7 @@ template GLVals(n) {
     signal input in[n];
     signal output {maxNum} out[n];
 
-    out.maxNum = 0xFFFFFFFFFFFFFFFF;
+    out.maxNum = max64();
     for (var i = 0; i < n; i++) { out[i] <== LessThan64Bits()(in[i]); }
 }
 
@@ -57,13 +58,20 @@ template GLVals3(n) {
     signal input in[n][3];
     signal output {maxNum} out[n][3];
 
-    out.maxNum = 0xFFFFFFFFFFFFFFFF;
+    out.maxNum = max64();
     for (var i = 0; i < n; i++) {
         for (var e = 0; e < 3; e++) { out[i][e] <== LessThan64Bits()(in[i][e]); }
     }
 }
 
 // Goldilocks power and inverse, for constants computed at compile time.
+function gl_pow(base, e) {
+    var p = 0xFFFFFFFF00000001;
+    var r = 1;
+    for (var i = 0; i < e; i++) { r = (r * base) % p; }
+    return r;
+}
+
 // 1 / shift^(2^(nBitsExt - prevBits)) (and times w[prevBits] for e1): the fold step's coset offsets.
 function bn_e0(nBitsExt, prevBits) {
     var p = 0xFFFFFFFF00000001;
@@ -81,14 +89,13 @@ function bn_e1(nBitsExt, prevBits) {
 
 // xi^(2^(i+1)) up to xi^N, and Zh = 1 / (xi^N - 1).
 template ZhBN128(nBits) {
-    var q = 0xFFFFFFFFFFFFFFFF;
 
     signal input {maxNum} xi[3];
     signal output {maxNum} Zh[3];
     signal output {maxNum} xN[3];
 
     signal {maxNum} zMul[nBits][3];
-    zMul.maxNum = q;
+    zMul.maxNum = max64();
     for (var i = 0; i < nBits; i++) {
         if (i == 0) {
             zMul[i] <== GLCMul()(xi, xi);
@@ -108,7 +115,6 @@ template ZhBN128(nBits) {
 
 // C(xi) (the generated ConstraintEval, already times its zerofier) equals Q(xi) = sum_i xi^(i N) Q_i(xi).
 template QuotientCheckBN128(qDeg, qPolEv, nEvals) {
-    var q = 0xFFFFFFFFFFFFFFFF;
 
     signal input {maxNum} xN[3];
     signal input {maxNum} evalP[3];
@@ -119,9 +125,9 @@ template QuotientCheckBN128(qDeg, qPolEv, nEvals) {
     signal {maxNum} qStep[nonEmpty(qDeg - 1)][3];
     signal {maxNum} qAcc[qDeg][3];
 
-    qStep.maxNum = q;
-    qAcc.maxNum = qDeg * q;
-    xAcc.maxNum = q;
+    qStep.maxNum = max64();
+    qAcc.maxNum = qDeg * max64();
+    xAcc.maxNum = max64();
 
     for (var i = 0; i < qDeg; i++) {
         if (i == 0) {
@@ -148,7 +154,6 @@ template QuotientCheckBN128(qDeg, qPolEv, nEvals) {
 */
 template DeepConstantsBN128(nOpenings, nPols, nEvals, OPENING_NUM_EVALS, EVAL_COLUMN) {
     var n = nOpenings;
-    var q = 0xFFFFFFFFFFFFFFFF;
 
     signal input {maxNum} vf[2][3];
     signal input {maxNum} evals[nEvals][3];
@@ -198,8 +203,8 @@ template DeepConstantsBN128(nOpenings, nPols, nEvals, OPENING_NUM_EVALS, EVAL_CO
         k0 += OPENING_NUM_EVALS[r];
     }
 
-    // A sum exceeds q and is reduced; a product or an input is already below it.
-    friConsts.maxNum = q;
+    // A sum exceeds max64() and is reduced; a product or an input is already below it.
+    friConsts.maxNum = max64();
     friConsts[0] <== vf[0];
     friConsts[1] <== vf[1];
     for (var c = 0; c < nPols; c++) {
@@ -227,13 +232,12 @@ template DeepConstantsBN128(nOpenings, nPols, nEvals, OPENING_NUM_EVALS, EVAL_CO
 
 /*
     f_0 at one query x of L_0 against fold tree 1's opened coset (deep.circom's DeepQuery, emulated):
-    x and every x - g^o xi from repeated GLMul as the former templated verifier did, the same grouped sum
+    x from repeated GLMul as the former templated verifier did, the same grouped sum
     (lib_params.rs: OPENING_EXPONENT, SUMS, COLS), a base-field leaf lifted with GLC3 where it meets an extension.
 */
 template DeepQueryBN128(nOpenings, nPols, nColGroups, nSums, bits0, nextBits, s0Width, nBits, OPENING_EXPONENT, SUMS, COLS) {
     var n = nOpenings;
     var nextStep = bits0 - nextBits;
-    var q = 0xFFFFFFFFFFFFFFFF;
 
     signal input {binary} queriesL0[bits0];
     signal input {maxNum} xi[3];
@@ -244,13 +248,13 @@ template DeepQueryBN128(nOpenings, nPols, nColGroups, nSums, bits0, nextBits, s0
 
     // x = shift * w^i from the query bits.
     signal {maxNum} xacc[bits0 - 1];
-    xacc.maxNum = q;
+    xacc.maxNum = max64();
     signal {maxNum} ina;
     signal {maxNum} inb;
-    ina.maxNum = q;
-    inb.maxNum = q;
+    ina.maxNum = max64();
+    inb.maxNum = max64();
     signal {maxNum} inp[nonEmpty(bits0 - 2)];
-    inp.maxNum = q;
+    inp.maxNum = max64();
     ina <== queriesL0[0] * (domainShift() * roots(bits0) - domainShift()) + domainShift();
     inb <== queriesL0[1] * (roots(bits0 - 1) - 1) + 1;
     xacc[0] <== GLMul()(ina, inb);
@@ -260,38 +264,22 @@ template DeepQueryBN128(nOpenings, nPols, nColGroups, nSums, bits0, nextBits, s0
     }
     signal {maxNum} X[3] <== GLC3()(xacc[bits0 - 2]);
 
-    // g^o by |o| GLMul steps from 1, then 1 / (x - g^o xi), per opening with evaluations (rank r).
-    var nW = 0;
-    for (var r = 0; r < n; r++) { if (OPENING_EXPONENT[r] != 0) { nW += (OPENING_EXPONENT[r] < 0 ? -OPENING_EXPONENT[r] : OPENING_EXPONENT[r]) + 1; } }
-    signal {maxNum} root <== GLConst(roots(nBits))();
-    signal {maxNum} invroot <== GLConst(invroots(nBits))();
-    signal {maxNum} w[nonEmpty(nW)];
-    w.maxNum = q;
+    // 1 / (x - g^o xi) per opening with evaluations (rank r), g = roots(nBits) and g^o a constant.
     signal {maxNum} xDivXSubXi[n][3];
-    xDivXSubXi.maxNum = q;
-    component wC[n];
-    component wMul[n];
-    component wSub[n];
-    var wo = 0;
+    xDivXSubXi.maxNum = max64();
+    component gPowXi[n];
+    component xSubPoint[n];
     for (var r = 0; r < n; r++) {
         var o = OPENING_EXPONENT[r];
         if (o != 0) {
-            var a = o < 0 ? -o : o;
-            w[wo] <== 1;
-            for (var j = 0; j < a; j++) {
-                if (o > 0) { w[wo + j + 1] <== GLMul()(root, w[wo + j]); } else { w[wo + j + 1] <== GLMul()(invroot, w[wo + j]); }
-            }
-            wC[r] = GLC3();
-            wC[r].in <== w[wo + a];
-            wMul[r] = GLCMul();
-            wMul[r].ina <== xi;
-            wMul[r].inb <== wC[r].out;
-            wo += a + 1;
+            gPowXi[r] = GLCMul();
+            gPowXi[r].ina <== xi;
+            gPowXi[r].inb <== GLConst3(gl_pow(o > 0 ? roots(nBits) : invroots(nBits), o > 0 ? o : -o))();
         }
-        wSub[r] = GLCSub();
-        wSub[r].ina <== X;
-        if (o == 0) { wSub[r].inb <== xi; } else { wSub[r].inb <== wMul[r].out; }
-        xDivXSubXi[r] <== GLCInv()(wSub[r].out);
+        xSubPoint[r] = GLCSub();
+        xSubPoint[r].ina <== X;
+        if (o == 0) { xSubPoint[r].inb <== xi; } else { xSubPoint[r].inb <== gPowXi[r].out; }
+        xDivXSubXi[r] <== GLCInv()(xSubPoint[r].out);
     }
 
     // In deep.rs's op order (as the former templated verifier emitted it): A_r = vf1^{e_r} * xDivXSubXi[r] (e = 0
@@ -420,7 +408,6 @@ template DeepQueryBN128(nOpenings, nPols, nColGroups, nSums, bits0, nextBits, s0
 template VerifyFRIBN128(prevStepBits, currStepBits, nextStepBits, nBitsExt, nIn) {
     var nextStep = currStepBits - nextStepBits;
     var step = prevStepBits - currStepBits;
-    var q = 0xFFFFFFFFFFFFFFFF;
     var e0 = bn_e0(nBitsExt, prevStepBits);
     var e1 = bn_e1(nBitsExt, prevStepBits);
 
@@ -433,13 +420,13 @@ template VerifyFRIBN128(prevStepBits, currStepBits, nextStepBits, nBitsExt, nIn)
     signal {maxNum} s_X[3];
     if (currStepBits > 1) {
         signal {maxNum} s_sx[currStepBits - 1];
-        s_sx.maxNum = q;
+        s_sx.maxNum = max64();
         signal {maxNum} inp[nonEmpty(currStepBits - 2)];
-        inp.maxNum = q;
+        inp.maxNum = max64();
         signal {maxNum} ina;
         signal {maxNum} inb;
-        ina.maxNum = q;
-        inb.maxNum = q;
+        ina.maxNum = max64();
+        inb.maxNum = max64();
         ina <== queriesL0[0] * (e1 - e0) + e0;
         inb <== queriesL0[1] * (invroots(prevStepBits - 1) - 1) + 1;
         s_sx[0] <== GLMul()(ina, inb);
@@ -452,7 +439,7 @@ template VerifyFRIBN128(prevStepBits, currStepBits, nextStepBits, nBitsExt, nIn)
     } else {
         signal {maxNum} inp1 <== GLConst(e0)();
         signal {maxNum} inp2;
-        inp2.maxNum = q;
+        inp2.maxNum = max64();
         inp2 <== queriesL0[0] * (invroots(prevStepBits) - 1) + 1;
         signal {maxNum} mul <== GLMul()(inp1, inp2);
         s_X.maxNum = mul.maxNum;
@@ -498,7 +485,6 @@ template VerifyFinalPolBN128(nLastBits, maxDegSize) {
     the trees, the key's ConstraintEval checks the constraints.
 */
 template StarkVerifierBN128(k) {
-    var q = 0xFFFFFFFFFFFFFFFF;
     var nBits = key_nBits(k);
     var nBitsExt = key_nBitsExt(k);
     var arity = key_arity(k);
@@ -549,10 +535,9 @@ template StarkVerifierBN128(k) {
         enabled <== 1;
     }
 
-    signal evals[nEvals][3];
-    for (var i = 0; i < nEvals; i++) { for (var e = 0; e < 3; e++) { evals[i][e] <== proof[key_offEvals(k) + 3 * i + e]; } }
-    signal finalPol[FS][3];
-    for (var i = 0; i < FS; i++) { for (var e = 0; e < 3; e++) { finalPol[i][e] <== proof[key_offFinal(k) + 3 * i + e]; } }
+    var P = key_proofSize(k);
+    signal evals[nEvals][3] <== ProofRows(P, key_offEvals(k), nEvals, 3)(proof);
+    signal finalPol[FS][3] <== ProofRows(P, key_offFinal(k), FS, 3)(proof);
     signal stageRoot[nStages + 1][rw];
     for (var s = 0; s <= nStages; s++) { for (var i = 0; i < rw; i++) { stageRoot[s][i] <== proof[OFF_ROOT[s] + i]; } }
     signal treeRoot[nTrees][rw];
@@ -599,16 +584,16 @@ template StarkVerifierBN128(k) {
     if (offNonce >= 0) { transcript.nonce <== proof[offNonce]; } else { transcript.nonce <== 0; }
     transcript.enable <== enabled;
     signal {maxNum} challenges[nChallenges][3];
-    challenges.maxNum = q;
+    challenges.maxNum = max64();
     challenges <== transcript.challenges;
     signal {maxNum} xi[3];
-    xi.maxNum = q;
+    xi.maxNum = max64();
     xi <== transcript.xi;
     signal {maxNum} vf[2][3];
-    vf.maxNum = q;
+    vf.maxNum = max64();
     vf <== transcript.vf;
     signal {maxNum} rFold[nonEmpty(NF)][3];
-    rFold.maxNum = q;
+    rFold.maxNum = max64();
     if (NF > 0) {
         for (var f = 0; f < NF; f++) { rFold[f] <== transcript.ldt[ldt_rFold(0, f)]; }
     } else {
@@ -670,7 +655,6 @@ template StarkVerifierBN128(k) {
     cosets and paths at foldCosetStart / foldPathStart.
 */
 template parallel VerifySingleQueryBN128(k) {
-    var q = 0xFFFFFFFFFFFFFFFF;
     var arity = key_arity(k);
     var lastLevels = key_lastLevels(k);
     var nSteps = key_nSteps(k);
@@ -704,10 +688,10 @@ template parallel VerifySingleQueryBN128(k) {
 
     // Every L_0 row and fold-tree coset reduced before any tree is opened.
     signal {maxNum} leaves[L0_TREE_START[nTrees]];
-    leaves.maxNum = q;
+    leaves.maxNum = max64();
     for (var i = 0; i < L0_TREE_START[nTrees]; i++) { leaves[i] <== LessThan64Bits()(l0Values[i]); }
     signal {maxNum} cosets[nFoldCosetRows][3];
-    cosets.maxNum = q;
+    cosets.maxNum = max64();
     for (var c = 0; c < nFoldCosetRows; c++) { for (var e = 0; e < 3; e++) { cosets[c][e] <== LessThan64Bits()(foldCosets[c][e]); } }
 
     // The per-tree and per-step arrays mix template instances, resolved through a map at run time.

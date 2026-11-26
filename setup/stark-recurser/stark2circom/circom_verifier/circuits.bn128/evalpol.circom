@@ -12,7 +12,7 @@ template EvalPol(n) {
     signal output {maxNum} out[3];
 
     signal {maxNum} cmul[n-1][3];
-    cmul.maxNum = 0xFFFFFFFFFFFFFFFF;
+    cmul.maxNum = max64();
     
     for (var i=1; i<n; i++) {
         if (i==1) {

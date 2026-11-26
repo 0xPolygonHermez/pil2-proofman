@@ -4,6 +4,9 @@ pragma circom 2.1.0;
 // (LessThanGoldilocks, LessThan64Bits and the range check GLRangeBits).
 include "utils.circom";
 
+// The {maxNum} bound of a value range-checked to 64 bits (LessThan64Bits): every reduced value has it.
+function max64() { return 0xFFFFFFFFFFFFFFFF; }
+
 // Given an integer a, computes a % GL
 template GLNorm() {
     signal input {maxNum} in;
@@ -158,7 +161,7 @@ template GLCMulAdd() {
     muladd[1] <== m[1] -k[1]*p;
     muladd[2] <== m[2] -k[2]*p;
 
-    out.maxNum = 0xFFFFFFFFFFFFFFFF;
+    out.maxNum = max64();
 
     for (var i = 0; i<3; i++) {
         GLRangeBits(maxQuotientBits)(k[i]);
@@ -249,7 +252,7 @@ template GLCInv() {
     inv[1] <--  i2;
     inv[2] <--  i3;
 
-    out.maxNum = 0xFFFFFFFFFFFFFFFF;
+    out.maxNum = max64();
     out[0] <== LessThan64Bits()(inv[0]);
     out[1] <== LessThan64Bits()(inv[1]);
     out[2] <== LessThan64Bits()(inv[2]);
