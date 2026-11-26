@@ -1,54 +1,45 @@
 pragma circom 2.1.0;
 pragma custom_templates;
 
-include "mux1.circom";
 include "bitify.circom";
 include "cmul.circom";
 
 
-template AggregateAirgroupValues() {
-    signal input airgroupValueA[3];
-    signal input airgroupValueB[3];
-
-    signal input {binary} aggregationType; // 1 if aggregation is multiplication, 0 if aggregation is addition
-
-    signal output airgroupValueAB[3];
-
-    // Products are Fp³ products, as the prover aggregates them (global_hints.rs)
-    signal values[2][3];
-    values[0] <== [airgroupValueA[0] + airgroupValueB[0], airgroupValueA[1] + airgroupValueB[1], airgroupValueA[2] + airgroupValueB[2]];
-    values[1] <== CMul()(airgroupValueA, airgroupValueB);
-
-    // Either add or multiply the airgroupvalues according to the aggregation type and then return the result
-    airgroupValueAB <== MultiMux1(3)(values, aggregationType);
-}
-
-// What a null proof contributes: the identity of the aggregation, 0 for addition and 1 for multiplication
-template NullifyAirgroupValue() {
-    signal input airgroupValue[3];
-    signal input {binary} aggregationType;
-    signal input {binary} isNull;
-
+// Two airgroup values aggregated: an Fp³ product when isProduct (as the prover aggregates them,
+// global_hints.rs), a sum otherwise. isProduct is the airgroup's own type, known at compile time.
+template AggregateAirgroupValues(isProduct) {
+    signal input a[3];
+    signal input b[3];
     signal output out[3];
 
-    out[0] <== airgroupValue[0] + isNull * (aggregationType - airgroupValue[0]);
-    out[1] <== (1 - isNull) * airgroupValue[1];
-    out[2] <== (1 - isNull) * airgroupValue[2];
+    if (isProduct == 1) {
+        out <== CMul()(a, b);
+    } else {
+        out <== [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
+    }
 }
 
-template AggregateAirgroupValuesNull() {
-    signal input airgroupValueA[3];
-    signal input airgroupValueB[3];
-    signal input {binary} aggregationType; // 1 if aggregation is multiplication, 0 if aggregation is addition
-    signal input {binary} isNullA; // 1 if is circuit type A is 0 (null), 0 otherwise 
-    signal input {binary} isNullB; // 1 if is circuit type B is 0 (null), 0 otherwise 
+// What a null proof contributes: the aggregation's identity, 1 for a product and 0 for a sum.
+template NullifyAirgroupValue(isProduct) {
+    signal input value[3];
+    signal input {binary} isNull;
+    signal output out[3];
 
-    signal output airgroupValueAB[3];
+    out[0] <== value[0] + isNull * (isProduct - value[0]);
+    out[1] <== (1 - isNull) * value[1];
+    out[2] <== (1 - isNull) * value[2];
+}
 
-    signal valueA[3] <== NullifyAirgroupValue()(airgroupValueA, aggregationType, isNullA);
-    signal valueB[3] <== NullifyAirgroupValue()(airgroupValueB, aggregationType, isNullB);
+template AggregateAirgroupValuesNull(isProduct) {
+    signal input a[3];
+    signal input b[3];
+    signal input {binary} isNullA;
+    signal input {binary} isNullB;
+    signal output out[3];
 
-    airgroupValueAB <== AggregateAirgroupValues()(valueA, valueB, aggregationType);
+    signal valueA[3] <== NullifyAirgroupValue(isProduct)(a, isNullA);
+    signal valueB[3] <== NullifyAirgroupValue(isProduct)(b, isNullB);
+    out <== AggregateAirgroupValues(isProduct)(valueA, valueB);
 }
 
 template AggregateValues(n) {

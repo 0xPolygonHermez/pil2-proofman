@@ -77,9 +77,11 @@ template BasicValues(k, circuitType, nAgg, nullable) {
     stage1Hash <== h.out;
 }
 
-// The publics of a proof that carries vadcop values: sv, the run's publics and proof values, the global
-// challenge, then (rootCAt >= 0) the aggregation key.
-template VadcopPublics(nAgg, W, nPub, nPV, nOut, rootCAt) {
+// The publics of a proof of airgroup `airgroupId` that carries vadcop values: sv, the run's publics and
+// proof values, the global challenge, then (rootCAt >= 0) the aggregation key. Its aggregationTypes are
+// the airgroup's own (vd_AGG), not sv's: a proof only verifies if it was made with them, which binds
+// them even when no slot is verified (all null).
+template VadcopPublics(airgroupId, nAgg, W, nPub, nPV, nOut, rootCAt) {
     signal input sv[sv_size(nAgg, W)];
     signal input publics[nPub];
     signal input proofValues[nPV][3];
@@ -88,7 +90,15 @@ template VadcopPublics(nAgg, W, nPub, nPV, nOut, rootCAt) {
     signal output out[nOut];
 
     var n = sv_size(nAgg, W);
-    for (var i = 0; i < n; i++) { out[i] <== sv[i]; }
+    var AGG[geo_len1(nAgg)] = vd_AGG(airgroupId);
+    for (var i = 0; i < n; i++) {
+        if (i >= 2 && i < 2 + nAgg) {
+            out[i] <== AGG[i - 2];
+            _ <== sv[i];
+        } else {
+            out[i] <== sv[i];
+        }
+    }
     for (var i = 0; i < nPub; i++) { out[n + i] <== publics[i]; }
     for (var i = 0; i < nPV; i++) { for (var e = 0; e < 3; e++) { out[n + nPub + 3 * i + e] <== proofValues[i][e]; } }
     for (var e = 0; e < 3; e++) { out[n + nPub + 3 * nPV + e] <== globalChallenge[e]; }
@@ -125,7 +135,7 @@ template FoldHash(W, nullAware) {
 
 // n slots' values folded left to right; nullAware drops the slots flagged null.
 template FoldSlots(n, nAgg, W, nullAware) {
-    signal input {binary} aggTypes[nAgg];
+    var AGG[geo_len1(nAgg)] = vd_AGG(vd_airgroupId());
     signal input aggregatedProofs[n];
     signal input airgroupvalues[n][nAgg][3];
     signal input stage1Hash[n][W];
@@ -153,23 +163,23 @@ template FoldSlots(n, nAgg, W, nullAware) {
         for (var j = 1; j < n; j++) {
             if (nullAware == 1) {
                 if (j == 1 && j == n - 1) {
-                    outAirgroupvalues[i] <== AggregateAirgroupValuesNull()(airgroupvalues[0][i], airgroupvalues[1][i], aggTypes[i], isNull[0], isNull[1]);
+                    outAirgroupvalues[i] <== AggregateAirgroupValuesNull(AGG[i])(airgroupvalues[0][i], airgroupvalues[1][i], isNull[0], isNull[1]);
                 } else if (j == 1) {
-                    accAGV[0][i] <== AggregateAirgroupValuesNull()(airgroupvalues[0][i], airgroupvalues[1][i], aggTypes[i], isNull[0], isNull[1]);
+                    accAGV[0][i] <== AggregateAirgroupValuesNull(AGG[i])(airgroupvalues[0][i], airgroupvalues[1][i], isNull[0], isNull[1]);
                 } else if (j == n - 1) {
-                    outAirgroupvalues[i] <== AggregateAirgroupValuesNull()(accAGV[j - 2][i], airgroupvalues[j][i], aggTypes[i], prefNull[j - 2], isNull[j]);
+                    outAirgroupvalues[i] <== AggregateAirgroupValuesNull(AGG[i])(accAGV[j - 2][i], airgroupvalues[j][i], prefNull[j - 2], isNull[j]);
                 } else {
-                    accAGV[j - 1][i] <== AggregateAirgroupValuesNull()(accAGV[j - 2][i], airgroupvalues[j][i], aggTypes[i], prefNull[j - 2], isNull[j]);
+                    accAGV[j - 1][i] <== AggregateAirgroupValuesNull(AGG[i])(accAGV[j - 2][i], airgroupvalues[j][i], prefNull[j - 2], isNull[j]);
                 }
             } else {
                 if (j == 1 && j == n - 1) {
-                    outAirgroupvalues[i] <== AggregateAirgroupValues()(airgroupvalues[0][i], airgroupvalues[1][i], aggTypes[i]);
+                    outAirgroupvalues[i] <== AggregateAirgroupValues(AGG[i])(airgroupvalues[0][i], airgroupvalues[1][i]);
                 } else if (j == 1) {
-                    accAGV[0][i] <== AggregateAirgroupValues()(airgroupvalues[0][i], airgroupvalues[1][i], aggTypes[i]);
+                    accAGV[0][i] <== AggregateAirgroupValues(AGG[i])(airgroupvalues[0][i], airgroupvalues[1][i]);
                 } else if (j == n - 1) {
-                    outAirgroupvalues[i] <== AggregateAirgroupValues()(accAGV[j - 2][i], airgroupvalues[j][i], aggTypes[i]);
+                    outAirgroupvalues[i] <== AggregateAirgroupValues(AGG[i])(accAGV[j - 2][i], airgroupvalues[j][i]);
                 } else {
-                    accAGV[j - 1][i] <== AggregateAirgroupValues()(accAGV[j - 2][i], airgroupvalues[j][i], aggTypes[i]);
+                    accAGV[j - 1][i] <== AggregateAirgroupValues(AGG[i])(accAGV[j - 2][i], airgroupvalues[j][i]);
                 }
             }
         }
@@ -196,37 +206,14 @@ template FoldSlots(n, nAgg, W, nullAware) {
     if (n <= 2) { for (var i = 0; i < W; i++) { accHash[0][i] <== 0; } }
 }
 
-// aggregationTypes from slot 0, every slot required to agree (gated on its circuitType when gated).
-template AggTypesConsistency(n, nAgg, W, gated) {
-    signal input slots[n][sv_size(nAgg, W)];
-    signal output aggregationTypes[nAgg];
-
-    for (var i = 0; i < nAgg; i++) {
-        aggregationTypes[i] <== slots[0][2 + i];
-        for (var s = 1; s < n; s++) {
-            if (gated == 1) {
-                slots[s][0] * (slots[0][2 + i] - slots[s][2 + i]) === 0;
-            } else {
-                slots[0][2 + i] === slots[s][2 + i];
-            }
-        }
-    }
-}
-
-// The fold's outputs: the folded values, the types checked binary.
+// The fold's outputs: the folded values, and the airgroup's aggregation types.
 template FoldOutputs(n, nAgg, W, nullAware) {
-    signal input aggregationTypes[nAgg];
+    var AGG[geo_len1(nAgg)] = vd_AGG(vd_airgroupId());
     signal input slots[n][sv_size(nAgg, W)];
     signal input isNull[n * nullAware];
     signal output sv[sv_size(nAgg, W) - 1];
 
-    signal {binary} aggTypes[nAgg];
-    for (var i = 0; i < nAgg; i++) {
-        aggregationTypes[i] * (aggregationTypes[i] - 1) === 0;
-        aggTypes[i] <== aggregationTypes[i];
-    }
     component f = FoldSlots(n, nAgg, W, nullAware);
-    f.aggTypes <== aggTypes;
     for (var s = 0; s < n; s++) {
         f.aggregatedProofs[s] <== slots[s][1];
         for (var i = 0; i < nAgg; i++) { for (var e = 0; e < 3; e++) { f.airgroupvalues[s][i][e] <== slots[s][2 + nAgg + 3 * i + e]; } }
@@ -236,7 +223,7 @@ template FoldOutputs(n, nAgg, W, nullAware) {
     // sv without circuitType: aggregatedProofs, aggregationTypes, airgroupvalues, stage1Hash.
     sv[0] <== f.outAggregatedProofs;
     for (var i = 0; i < nAgg; i++) {
-        sv[1 + i] <== aggregationTypes[i];
+        sv[1 + i] <== AGG[i];
         for (var e = 0; e < 3; e++) { sv[1 + nAgg + 3 * i + e] <== f.outAirgroupvalues[i][e]; }
     }
     for (var i = 0; i < W; i++) { sv[1 + 4 * nAgg + i] <== f.outStage1Hash[i]; }
@@ -333,10 +320,14 @@ template Recursive1Compressed() {
     signal input rootCAgg[4];
     signal input proof[svd_proofSize(0)];
 
+    // The compressor minted the airgroup's types; this proof re-exposes exactly those.
+    var AGG[geo_len1(nAgg)] = vd_AGG(vd_airgroupId());
+    for (var i = 0; i < nAgg; i++) { sv_aggregationTypes[i] === AGG[i]; }
+
     component sV = StarkVerifierGL(0);
     sV.proof <== proof;
     for (var i = 0; i < svd_nProofValues(0); i++) { sV.proofvalues[i] <== proofValues[i]; }
-    component p = VadcopPublics(nAgg, W, nPub, nPV, svd_nPublics(0), -1);
+    component p = VadcopPublics(vd_airgroupId(), nAgg, W, nPub, nPV, svd_nPublics(0), -1);
     p.sv[0] <== sv_circuitType;
     p.sv[1] <== sv_aggregatedProofs;
     for (var i = 0; i < nAgg; i++) {
@@ -388,7 +379,7 @@ template Recursive1Batched(k, compressed) {
         for (var i = 0; i < svd_nProofValues(0); i++) { vs[s].proofvalues[i] <== proofValues[i]; }
         if (compressed == 1) {
             for (var i = 0; i < S; i++) { sv[s][i] <== slots[s][i]; }
-            pubs[s] = VadcopPublics(nAgg, W, nPub, nPV, svd_nPublics(0), -1);
+            pubs[s] = VadcopPublics(vd_airgroupId(), nAgg, W, nPub, nPV, svd_nPublics(0), -1);
             pubs[s].sv <== sv[s];
             pubs[s].publics <== publics;
             pubs[s].proofValues <== proofValues;
@@ -420,9 +411,7 @@ template Recursive1Batched(k, compressed) {
     }
     if (compressed == 1) { _ <== slotNull; }
 
-    signal aggregationTypes[nAgg] <== AggTypesConsistency(k, nAgg, W, compressed)(sv);
     component out = FoldOutputs(k, nAgg, W, 1);
-    out.aggregationTypes <== aggregationTypes;
     out.slots <== sv;
     out.isNull <== isNull;
     sv_aggregatedProofs <== out.sv[0];
@@ -467,7 +456,6 @@ template Recursive2(n) {
 
     signal sv[n][S];
     for (var s = 0; s < n; s++) { for (var i = 0; i < S; i++) { sv[s][i] <== slots[s][i]; } }
-    signal aggregationTypes[nAgg] <== AggTypesConsistency(n, nAgg, W, 0)(sv);
 
     component vs[n];
     component pubs[n];
@@ -476,7 +464,7 @@ template Recursive2(n) {
         vs[s] = parallel StarkVerifierGL(0);
         for (var i = 0; i < P; i++) { vs[s].proof[i] <== slots[s][S + i]; }
         for (var i = 0; i < svd_nProofValues(0); i++) { vs[s].proofvalues[i] <== proofValues[i]; }
-        pubs[s] = VadcopPublics(nAgg, W, nPub, nPV, nPubV, nPubV - 4);
+        pubs[s] = VadcopPublics(airgroupId, nAgg, W, nPub, nPV, nPubV, nPubV - 4);
         pubs[s].sv <== sv[s];
         pubs[s].publics <== publics;
         pubs[s].proofValues <== proofValues;
@@ -494,7 +482,6 @@ template Recursive2(n) {
 
     sv_circuitType <== circuitType;
     component out = FoldOutputs(n, nAgg, W, multiAir);
-    out.aggregationTypes <== aggregationTypes;
     out.slots <== sv;
     out.isNull <== isNull;
     sv_aggregatedProofs <== out.sv[0];

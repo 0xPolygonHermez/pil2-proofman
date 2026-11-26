@@ -49,7 +49,7 @@ template VadcopFinal(nAg) {
         vs[a] = StarkVerifierGL(a);
         for (var i = 0; i < svd_proofSize(a); i++) { vs[a].proof[i] <== airgroups[OFF[a] + S + i]; }
         for (var i = 0; i < svd_nProofValues(a); i++) { vs[a].proofvalues[i] <== proofValues[i]; }
-        pubs[a] = VadcopPublics(nAgg, W, nPub, nPV, nPubV, nPubV - 4);
+        pubs[a] = VadcopPublics(a, nAgg, W, nPub, nPV, nPubV, nPubV - 4);
         for (var i = 0; i < S; i++) { pubs[a].sv[i] <== airgroups[OFF[a] + i]; }
         pubs[a].publics <== publics;
         pubs[a].proofValues <== proofValues;
@@ -77,15 +77,8 @@ template VadcopFinal(nAg) {
             if (i >= nAgg) {
                 agv[a][i] <== [0, 0, 0];
             } else if (maskNull == 1) {
-                // The identity of the aggregation: 0 for a sum, 1 for a product.
                 var o = OFF[a] + 2 + nAgg + 3 * i;
-                if (AGG[i] == 1) {
-                    agv[a][i][0] <== airgroups[o] + isNull[a] * (1 - airgroups[o]);
-                } else {
-                    agv[a][i][0] <== (1 - isNull[a]) * airgroups[o];
-                }
-                agv[a][i][1] <== (1 - isNull[a]) * airgroups[o + 1];
-                agv[a][i][2] <== (1 - isNull[a]) * airgroups[o + 2];
+                agv[a][i] <== NullifyAirgroupValue(AGG[i])([airgroups[o], airgroups[o + 1], airgroups[o + 2]], isNull[a]);
             } else {
                 for (var e = 0; e < 3; e++) { agv[a][i][e] <== airgroups[OFF[a] + 2 + nAgg + 3 * i + e]; }
             }
