@@ -364,7 +364,7 @@ mod tests {
     use std::process::Command;
 
     use super::*;
-    use crate::stark2circom::circom_verifier::{gen_stark_verifier_bn128, Pil2CircomOptions};
+    use crate::stark2circom::circom_verifier::{gen_stark_verifier_bn128, gen_stark_verifier_bn128_blake3, Pil2CircomOptions};
     use crate::plonk2pil::r1cs::types::read_r1cs_from_bytes;
     use proofman_fields::Bn128;
     use serde_json::json;
@@ -577,25 +577,64 @@ mod tests {
         );
     }
 
-    /// The whole final circuit around a recursivef with custom trees, as setup-snark compiles it: the
-    /// static library, the key's data and constraints, the main's dispatch. circom checks the include
-    /// graph (CG04: `pragma custom_templates;` on every file on the way to a custom template), every
-    /// template call and signal access, and the r1cs has the custom gates of the Poseidon tree and of
-    /// the publics hash.
+    /// The whole final circuit around a recursivef, as setup-snark compiles it: the static library, the
+    /// key's data and constraints, the main's dispatch. circom checks the include graph (CG04:
+    /// `pragma custom_templates;` on every file on the way to a custom template), every template call
+    /// and signal access. Returns the r1cs, for its custom gates and its size.
     ///
     /// Needs circomlib, from `npm install` in `setup/pil2-stark`; without it the test says so and
-    /// passes.
-    #[test]
-    fn custom_final_compiles() {
+    /// passes (`None`).
+    fn compile_final(label: &str, verifier: &str, stark_info: &Value, vk_first: bool) -> Option<crate::plonk2pil::r1cs::types::R1csFile<Bn128>> {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let circomlib = root.join("setup/pil2-stark/node_modules/circomlib/circuits");
         if !circomlib.is_dir() {
             eprintln!("skipped: {} not present (npm install in setup/pil2-stark)", circomlib.display());
-            return;
+            return None;
         }
         let circom = root.join("setup/circom").join(if cfg!(target_os = "macos") { "circom_mac" } else { "circom" });
         let libraries = Path::new(env!("CARGO_MANIFEST_DIR")).join("stark2circom/circom_verifier");
+        let circuit =
+            gen_recursion_final(stark_info, &["recursivef.verifier.circom".to_string()], Some(&out_and_vk(vk_first)))
+                .unwrap();
 
+        let dir = std::env::temp_dir().join(format!("final_{label}_{}_{vk_first}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("recursivef.verifier.circom"), verifier).unwrap();
+        fs::write(dir.join("final.circom"), circuit).unwrap();
+
+        // The libraries of `snark_setup.rs`'s final compile, in its order.
+        let out = Command::new(&circom)
+            .arg(dir.join("final.circom"))
+            .args(["--O1", "--r1cs", "-o"])
+            .arg(&dir)
+            .arg("-l")
+            .arg(libraries.join("helper_circuits"))
+            .arg("-l")
+            .arg(libraries.join("circuits.bn128"))
+            .arg("-l")
+            .arg(&circomlib)
+            .output()
+            .unwrap_or_else(|e| panic!("run {}: {e}", circom.display()));
+        let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+        assert!(out.status.success(), "{label}: circom failed:\n{stderr}{}", String::from_utf8_lossy(&out.stdout));
+
+        let r1cs = read_r1cs_from_bytes::<Bn128>(&fs::read(dir.join("final.r1cs")).unwrap()).unwrap();
+        // Printed so a refactor of the library can compare sizes: `cargo test -- --nocapture compiles`.
+        eprintln!(
+            "BN128 final {label} vk_first={vk_first}: wires={} constraints={} custom_gate_uses={}",
+            r1cs.header.n_vars,
+            r1cs.header.n_constraints,
+            r1cs.custom_gates_uses.len()
+        );
+        let _ = fs::remove_dir_all(&dir);
+        Some(r1cs)
+    }
+
+    /// A recursivef with custom Poseidon trees: the r1cs has the custom gates of the Poseidon tree and
+    /// of the publics hash.
+    #[test]
+    fn custom_final_compiles() {
         let mut stark_info = recursivef_stark_info(true);
         stark_info["nPublics"] = json!(10);
         let verifier_info = json!({ "constraintDag": { "version": 1, "field": "gl", "extDim": 3, "nodes": [[5, 1, 0, 0]], "roots": [[0, 0, "c"]] } });
@@ -605,42 +644,36 @@ mod tests {
                 .unwrap();
         // FinalSnark binds the VK (vkPos >= 0) where it sits: first and last.
         for vk_first in [true, false] {
-            let circuit = gen_recursion_final(
-                &stark_info,
-                &["recursivef.verifier.circom".to_string()],
-                Some(&out_and_vk(vk_first)),
-            )
-            .unwrap();
-
-            let dir = std::env::temp_dir().join(format!("custom_final_{}_{vk_first}", std::process::id()));
-            let _ = fs::remove_dir_all(&dir);
-            fs::create_dir_all(&dir).unwrap();
-            fs::write(dir.join("recursivef.verifier.circom"), &verifier).unwrap();
-            fs::write(dir.join("final.circom"), circuit).unwrap();
-
-            // The libraries of `snark_setup.rs`'s final compile, in its order.
-            let out = Command::new(&circom)
-                .arg(dir.join("final.circom"))
-                .args(["--O1", "--r1cs", "-o"])
-                .arg(&dir)
-                .arg("-l")
-                .arg(libraries.join("helper_circuits"))
-                .arg("-l")
-                .arg(libraries.join("circuits.bn128"))
-                .arg("-l")
-                .arg(&circomlib)
-                .output()
-                .unwrap_or_else(|e| panic!("run {}: {e}", circom.display()));
-            let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
-            assert!(out.status.success(), "circom failed:\n{stderr}{}", String::from_utf8_lossy(&out.stdout));
-
-            let r1cs = read_r1cs_from_bytes::<Bn128>(&fs::read(dir.join("final.r1cs")).unwrap()).unwrap();
+            let Some(r1cs) = compile_final("custom", &verifier, &stark_info, vk_first) else { return };
             let mut names: Vec<String> = r1cs.custom_gates.iter().map(|g| g.template_name.clone()).collect();
             names.sort();
             names.dedup();
             assert!(names.contains(&"PoseidonT".to_string()) && names.contains(&"Num2Bytes".to_string()), "{names:?}");
-            let _ = fs::remove_dir_all(&dir);
         }
+    }
+
+    /// The other two BN128 verifiers compile too: a recursivef with plain (circomlib) Poseidon trees, and
+    /// one with blake3 trees over Goldilocks.
+    #[test]
+    fn plain_poseidon_and_blake3_finals_compile() {
+        let verifier_info = json!({ "constraintDag": { "version": 1, "field": "gl", "extDim": 3, "nodes": [[5, 1, 0, 0]], "roots": [[0, 0, "c"]] } });
+        let root_c = ["1".to_string(), "0".to_string(), "0".to_string(), "0".to_string()];
+
+        let mut plain = recursivef_stark_info(false);
+        plain["nPublics"] = json!(10);
+        let verifier =
+            gen_stark_verifier_bn128(Some(&root_c), &plain, &verifier_info, &Pil2CircomOptions::default()).unwrap();
+        if compile_final("poseidon", &verifier, &plain, true).is_none() {
+            return;
+        }
+
+        let mut blake3 = recursivef_stark_info(true);
+        blake3["nPublics"] = json!(10);
+        blake3["starkStruct"]["verificationHashType"] = json!("GL");
+        blake3["starkStruct"]["merkleTreeArity"] = json!(2);
+        let opts = Pil2CircomOptions { hash: proofman_common::hash_family::HashFamily::Blake3, ..Default::default() };
+        let verifier = gen_stark_verifier_bn128_blake3(Some(&root_c), &blake3, &verifier_info, &opts).unwrap();
+        compile_final("blake3", &verifier, &blake3, true);
     }
 }
 
