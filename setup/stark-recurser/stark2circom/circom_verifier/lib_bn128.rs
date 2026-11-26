@@ -143,8 +143,8 @@ pub(crate) mod tests {
             "out:\n{out}"
         );
         assert!(out.contains("    tmp_0 <== evals[0];\n    signal {maxNum} tmp_1[3];\n    tmp_1 <== GLCMul()(tmp_0, Zh);\n\n    evalP <== tmp_1;\n}"), "out:\n{out}");
-        assert!(out.contains("function sv_ROOT_C() { return [7, 0, 0, 0]; }"), "out:\n{out}");
-        assert!(out.contains("function sv_OFF_ROOT() { return [0, 1, 2]; }"), "single-element roots:\n{out}");
+        assert!(out.contains("function keyData_ROOT_C() { return [7, 0, 0, 0]; }"), "out:\n{out}");
+        assert!(out.contains("function keyData_OFF_ROOT() { return [0, 1, 2]; }"), "single-element roots:\n{out}");
         let templates: Vec<&str> = out.lines().filter(|l| l.starts_with("template ")).collect();
         assert_eq!(templates, ["template ConstraintEval() {"], "{out}");
         let custom = render(&stark_info(true, 0)).unwrap();
@@ -159,10 +159,10 @@ pub(crate) mod tests {
     #[test]
     fn last_levels_reach_the_data() {
         let out = render(&stark_info(false, 2)).unwrap();
-        assert!(out.contains("function sv_lastLevels() { return 2; }"), "out:\n{out}");
-        assert!(!out.contains("function sv_OFF_S0L() { return [-1, -1]; }"), "out:\n{out}");
+        assert!(out.contains("function keyData_lastLevels() { return 2; }"), "out:\n{out}");
+        assert!(!out.contains("function keyData_OFF_L0_LAST_LEVELS() { return [-1, -1]; }"), "out:\n{out}");
         let none = render(&stark_info(false, 0)).unwrap();
-        assert!(none.contains("function sv_OFF_S0L() { return [-1, -1]; }"), "out:\n{none}");
+        assert!(none.contains("function keyData_OFF_L0_LAST_LEVELS() { return [-1, -1]; }"), "out:\n{none}");
     }
 
     /// Custom trees of any arity (the sponge rate reads it), and a key with no fold step.
@@ -171,13 +171,13 @@ pub(crate) mod tests {
         let mut si = stark_info(true, 0);
         si["starkStruct"]["merkleTreeArity"] = json!(2);
         let out = render(&si).unwrap();
-        assert!(out.contains("function sv_arity() { return 2; }"), "out:\n{out}");
+        assert!(out.contains("function keyData_arity() { return 2; }"), "out:\n{out}");
         let mut si = stark_info(false, 0);
         si["starkStruct"]["logDomainSizes"] = json!([10]);
         si["starkStruct"]["logDegrees"] = json!([6]);
         si["starkStruct"]["foldingFactors"] = json!([]);
         let out = render(&si).unwrap();
-        assert!(out.contains("function sv_nSteps() { return 1; }"), "out:\n{out}");
+        assert!(out.contains("function keyData_nSteps() { return 1; }"), "out:\n{out}");
     }
 
     #[test]

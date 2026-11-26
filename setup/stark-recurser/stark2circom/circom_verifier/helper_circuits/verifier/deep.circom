@@ -4,7 +4,7 @@ pragma custom_templates;
 include "cmul.circom";
 include "cinv.circom";
 include "fft.circom";
-include "geometry.circom";
+include "proof_shape.circom";
 
 /*
     The DEEP polynomial f_0, grouped as the native provers and verifiers compute it (deep.rs's plan,
@@ -17,12 +17,12 @@ include "geometry.circom";
     K_o = sum_{c in o} vf2^c * eval(c, o), c being a column's first appearance in evMap.
 
     friConsts = [vf1, vf2, vf2^0..vf2^{nPols-1}, vf1^{e_o} per opening, K_o per opening]. The grouping
-    arrives precomputed (lib_params.rs): GROUP_LEN / REF_COL per opening, SUMS and COLS per column group.
+    arrives precomputed (lib_params.rs): OPENING_NUM_EVALS / EVAL_COLUMN per opening, SUMS and COLS per column group.
 */
 
 // The query-independent DEEP terms, once per proof.
-template DeepConstants(nGroups, nPols, nEvals, GROUP_LEN, REF_COL) {
-    var n = nGroups;
+template DeepConstants(nOpenings, nPols, nEvals, OPENING_NUM_EVALS, EVAL_COLUMN) {
+    var n = nOpenings;
 
     signal input vf[2][3];
     signal input evals[nEvals][3];
@@ -57,9 +57,9 @@ template DeepConstants(nGroups, nPols, nEvals, GROUP_LEN, REF_COL) {
     var k0 = 0;
     for (var r = 0; r < n; r++) {
         var acc[3];
-        for (var i = 0; i < GROUP_LEN[r]; i++) {
+        for (var i = 0; i < OPENING_NUM_EVALS[r]; i++) {
             var k = k0 + i;
-            var c = REF_COL[k];
+            var c = EVAL_COLUMN[k];
             var t[3];
             if (c == 0) {
                 for (var e = 0; e < 3; e++) { t[e] = evals[k][e]; }
@@ -75,7 +75,7 @@ template DeepConstants(nGroups, nPols, nEvals, GROUP_LEN, REF_COL) {
             }
         }
         for (var e = 0; e < 3; e++) { kVal[r][e] = acc[e]; }
-        k0 += GROUP_LEN[r];
+        k0 += OPENING_NUM_EVALS[r];
     }
 
     friConsts[0] <== vf[0];
@@ -92,19 +92,19 @@ template DeepConstants(nGroups, nPols, nEvals, GROUP_LEN, REF_COL) {
     (s0_vals, already checked against their Merkle roots), matched against the member of fold tree
     1's opened coset that x corresponds to (selected by the query bits above nextStepBits).
 */
-template DeepQuery(nGroups, nPols, nColGroups, nSums, bits0, nextBits, s0Width, OPEN_ROOT, SUMS, COLS) {
-    var n = nGroups;
+template DeepQuery(nOpenings, nPols, nColGroups, nSums, bits0, nextBits, s0Width, OPENING_ROOT, SUMS, COLS) {
+    var n = nOpenings;
     var nextStep = bits0 - nextBits;
 
     signal input {binary} queriesL0[bits0];
-    signal input challengeOut[3];
+    signal input xi[3];
     signal input friConsts[2 + nPols + 2 * n][3];
     signal input s0_vals[s0Width];
     signal input s1_vals[1 << nextStep][3];
     signal input {binary} enable;
 
     signal xacc[bits0];
-    xacc[0] <== queriesL0[0] * (geo_shift() * roots(bits0) - geo_shift()) + geo_shift();
+    xacc[0] <== queriesL0[0] * (domainShift() * roots(bits0) - domainShift()) + domainShift();
     for (var i = 1; i < bits0; i++) {
         xacc[i] <== xacc[i - 1] * (queriesL0[i] * (roots(bits0 - i) - 1) + 1);
     }
@@ -112,8 +112,8 @@ template DeepQuery(nGroups, nPols, nColGroups, nSums, bits0, nextBits, s0Width, 
     // 1 / (x - g^o z) per opening with evaluations.
     signal xDivXSubXi[n][3];
     for (var r = 0; r < n; r++) {
-        var root = OPEN_ROOT[r];
-        xDivXSubXi[r] <== CInv()([xacc[bits0 - 1] - root * challengeOut[0], - root * challengeOut[1], - root * challengeOut[2]]);
+        var root = OPENING_ROOT[r];
+        xDivXSubXi[r] <== CInv()([xacc[bits0 - 1] - root * xi[0], - root * xi[1], - root * xi[2]]);
     }
 
     // A_r = vf1^{e_r} * xDivXSubXi[r] (e = 0 for the last opening).
@@ -129,7 +129,7 @@ template DeepQuery(nGroups, nPols, nColGroups, nSums, bits0, nextBits, s0Width, 
     }
 
     // Shared prefix sums of A: SUMS[k] = (source, rank), a source s < n being a[s], else aSum[s - n].
-    signal aSum[geo_len1(nSums)][3];
+    signal aSum[nonEmpty(nSums)][3];
     for (var k = 0; k < nSums; k++) {
         var src = SUMS[2 * k];
         var rj = SUMS[2 * k + 1];

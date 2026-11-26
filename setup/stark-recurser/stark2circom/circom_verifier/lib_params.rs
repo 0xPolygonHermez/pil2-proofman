@@ -1,6 +1,6 @@
-//! The per-key data of the static verifier library: one `sv<sfx>_<name>()` function per [`FIELDS`] entry,
-//! read by the library as `svd_<name>(k)` through the compilation's [`dispatch`].
-//! Data only; FRI/STIR geometry is derived in circom (`verifier/geometry.circom`).
+//! The per-key data of the static verifier library: one `keyData<sfx>_<name>()` function per [`FIELDS`] entry,
+//! read by the library as `key_<name>(k)` through the compilation's [`dispatch`].
+//! Data only; FRI/STIR geometry is derived in circom (`verifier/proof_shape.circom`).
 
 use std::collections::HashMap;
 
@@ -73,7 +73,7 @@ fn a<T: ToString>(v: &[T]) -> Val {
     Val::A(v.iter().map(T::to_string).collect())
 }
 
-/// The data the static library reads as `svd_<name>(k)` (key `k` of the compilation), in emission order.
+/// The data the static library reads as `key_<name>(k)` (key `k` of the compilation), in emission order.
 /// The one declared table: `lib_params::tests` checks the library uses exactly these names.
 pub(crate) const FIELDS: &[&str] = &[
     "nBits",
@@ -101,46 +101,46 @@ pub(crate) const FIELDS: &[&str] = &[
     "stirM",
     "stirFinalBits",
     "nTrees",
-    "nGroups",
+    "nOpenings",
     "nPols",
     "nColGroups",
     "nSums",
     "verkeyInput",
     "enableInput",
     "proofSize",
-    "offAGV",
-    "offAV",
+    "offAirgroupValues",
+    "offAirValues",
     "offEvals",
     "offFinal",
     "offNonce",
     "offBetas",
     "offNonces",
     "STEPS",
-    "STIR_L",
-    "STIR_K",
-    "STIR_T",
-    "STIR_G",
-    "S0",
+    "STIR_LOG_DOMAIN_SIZES",
+    "STIR_FOLDING_FACTORS",
+    "STIR_NUM_QUERIES",
+    "STIR_GRINDING_BITS",
+    "L0_TREE_START",
     "CH",
-    "AV",
-    "AGV",
-    "OPEN_ROOT",
-    "GROUP_LEN",
-    "REF_COL",
+    "AIR_VALUE_STAGE",
+    "AIRGROUP_VALUE_STAGE",
+    "OPENING_ROOT",
+    "OPENING_NUM_EVALS",
+    "EVAL_COLUMN",
     "SUMS",
     "COLS",
-    "OPEN",
+    "OPENING_EXPONENT",
     "ROOT_C",
     "OFF_ROOT",
-    "OFF_S0V",
-    "OFF_S0S",
-    "OFF_S0L",
+    "OFF_L0_VALUES",
+    "OFF_L0_SIBLINGS",
+    "OFF_L0_LAST_LEVELS",
     "TREE_ROOT",
     "TREE_PUB",
-    "OFF_FROOT",
-    "OFF_FV",
-    "OFF_FS",
-    "OFF_FL",
+    "OFF_FOLD_ROOT",
+    "OFF_FOLD_VALUES",
+    "OFF_FOLD_SIBLINGS",
+    "OFF_FOLD_LAST_LEVELS",
     "OFF_ANS",
     "OFF_SHAKE",
     "nFolds",
@@ -406,46 +406,46 @@ impl KeyData {
             ("stirM", n(fl_stir)),
             ("stirFinalBits", n(stir.map_or(0, |s| *s.log_degrees.last().unwrap()))),
             ("nTrees", n(trees.len())),
-            ("nGroups", n(deep.n_groups)),
+            ("nOpenings", n(deep.n_groups)),
             ("nPols", n(deep.leaf.len())),
             ("nColGroups", n(deep.n_col_groups)),
             ("nSums", n(deep.sums.len() / 2)),
             ("verkeyInput", n(u64::from(o.verkey_input))),
             ("enableInput", n(u64::from(o.enable_input))),
             ("proofSize", n(off.size)),
-            ("offAGV", n(off.of("airgroupvalues"))),
-            ("offAV", n(off.of("airvalues"))),
+            ("offAirgroupValues", n(off.of("airgroupvalues"))),
+            ("offAirValues", n(off.of("airvalues"))),
             ("offEvals", n(off.of("evals"))),
             ("offFinal", n(off.of("finalPol"))),
             ("offNonce", n(off.of("nonce"))),
             ("offBetas", n(off.of("betas"))),
             ("offNonces", n(off.of("nonces"))),
             ("STEPS", a(&steps)),
-            ("STIR_L", a(&st(stir.map(|s| &s.log_domain_sizes)))),
-            ("STIR_K", a(&st(stir.map(|s| &s.folding_factors)))),
-            ("STIR_T", a(&st(stir.map(|s| &s.num_queries)))),
-            ("STIR_G", a(&st(stir.map(|s| &s.grinding_bits_queries)))),
-            ("S0", a(&s0)),
+            ("STIR_LOG_DOMAIN_SIZES", a(&st(stir.map(|s| &s.log_domain_sizes)))),
+            ("STIR_FOLDING_FACTORS", a(&st(stir.map(|s| &s.folding_factors)))),
+            ("STIR_NUM_QUERIES", a(&st(stir.map(|s| &s.num_queries)))),
+            ("STIR_GRINDING_BITS", a(&st(stir.map(|s| &s.grinding_bits_queries)))),
+            ("L0_TREE_START", a(&s0)),
             ("CH", a(&ch)),
-            ("AV", a(&stages(&si.airvalues_map))),
-            ("AGV", a(&stages(&si.airgroupvalues_map))),
-            ("OPEN_ROOT", a(&deep.open_root)),
-            ("GROUP_LEN", a(&deep.group_len)),
-            ("REF_COL", a(&deep.ref_col)),
+            ("AIR_VALUE_STAGE", a(&stages(&si.airvalues_map))),
+            ("AIRGROUP_VALUE_STAGE", a(&stages(&si.airgroupvalues_map))),
+            ("OPENING_ROOT", a(&deep.open_root)),
+            ("OPENING_NUM_EVALS", a(&deep.group_len)),
+            ("EVAL_COLUMN", a(&deep.ref_col)),
             ("SUMS", a(&deep.sums)),
             ("COLS", a(&deep.cols)),
-            ("OPEN", a(&deep.open)),
+            ("OPENING_EXPONENT", a(&deep.open)),
             ("ROOT_C", a(&root_c)),
             ("OFF_ROOT", a(&off.all((1..=q).map(|s| format!("root{s}"))))),
-            ("OFF_S0V", a(&s0_of("vals"))),
-            ("OFF_S0S", a(&s0_of("siblings"))),
-            ("OFF_S0L", a(&s0_of("last_levels"))),
+            ("OFF_L0_VALUES", a(&s0_of("vals"))),
+            ("OFF_L0_SIBLINGS", a(&s0_of("siblings"))),
+            ("OFF_L0_LAST_LEVELS", a(&s0_of("last_levels"))),
             ("TREE_ROOT", a(&tree_root)),
             ("TREE_PUB", a(&tree_pub)),
-            ("OFF_FROOT", a(&fold("root"))),
-            ("OFF_FV", a(&fold("vals"))),
-            ("OFF_FS", a(&fold("siblings"))),
-            ("OFF_FL", a(&fold("last_levels"))),
+            ("OFF_FOLD_ROOT", a(&fold("root"))),
+            ("OFF_FOLD_VALUES", a(&fold("vals"))),
+            ("OFF_FOLD_SIBLINGS", a(&fold("siblings"))),
+            ("OFF_FOLD_LAST_LEVELS", a(&fold("last_levels"))),
             ("OFF_ANS", a(&hints("ansCoeffs"))),
             ("OFF_SHAKE", a(&hints("shakeCoeffs"))),
             ("nFolds", n(nf)),
@@ -454,7 +454,7 @@ impl KeyData {
         Ok(KeyData { fields })
     }
 
-    /// `function sv{sfx}_<name>() { return <value>; }` per field (empty arrays padded to one entry).
+    /// `function keyData{sfx}_<name>() { return <value>; }` per field (empty arrays padded to one entry).
     pub fn functions(&self, sfx: &str) -> String {
         let mut out = String::new();
         for (name, v) in &self.fields {
@@ -463,22 +463,22 @@ impl KeyData {
                 Val::A(x) if x.is_empty() => "[0]".into(),
                 Val::A(x) => format!("[{}]", x.join(", ")),
             };
-            out += &format!("function sv{sfx}_{name}() {{ return {v}; }}\n");
+            out += &format!("function keyData{sfx}_{name}() {{ return {v}; }}\n");
         }
         out
     }
 }
 
-/// The compilation's `svd_<name>(k)`: field `name` of its k-th key, whose functions carry `sfxs[k]`.
+/// The compilation's `key_<name>(k)`: field `name` of its k-th key, whose functions carry `sfxs[k]`.
 pub(crate) fn dispatch(sfxs: &[String]) -> String {
     let mut out = String::new();
     for name in FIELDS {
         let mut body = String::new();
         for (k, s) in sfxs.iter().enumerate().take(sfxs.len().saturating_sub(1)) {
-            body += &format!("if (k == {k}) {{ return sv{s}_{name}(); }} ");
+            body += &format!("if (k == {k}) {{ return keyData{s}_{name}(); }} ");
         }
-        let last = sfxs.last().map_or(String::new(), |s| format!("return sv{s}_{name}();"));
-        out += &format!("function svd_{name}(k) {{ {body}{last} }}\n");
+        let last = sfxs.last().map_or(String::new(), |s| format!("return keyData{s}_{name}();"));
+        out += &format!("function key_{name}(k) {{ {body}{last} }}\n");
     }
     out
 }

@@ -1,7 +1,7 @@
 pragma circom 2.1.0;
 pragma custom_templates;
 
-include "geometry.circom";
+include "proof_shape.circom";
 include "transcript.circom";
 
 /*
@@ -67,14 +67,14 @@ template GLVals3(n) {
 // 1 / shift^(2^(nBitsExt - prevBits)) (and times w[prevBits] for e1): the fold step's coset offsets.
 function bn_e0(nBitsExt, prevBits) {
     var p = 0xFFFFFFFF00000001;
-    var e = geo_shift();
+    var e = domainShift();
     for (var i = 0; i < nBitsExt - prevBits; i++) { e = (e * e) % p; }
     return _inv1(e);
 }
 
 function bn_e1(nBitsExt, prevBits) {
     var p = 0xFFFFFFFF00000001;
-    var e = geo_shift();
+    var e = domainShift();
     for (var i = 0; i < nBitsExt - prevBits; i++) { e = (e * e) % p; }
     return _inv1((e * roots(prevBits)) % p);
 }
@@ -83,7 +83,7 @@ function bn_e1(nBitsExt, prevBits) {
 template ZhBN128(nBits) {
     var q = 0xFFFFFFFFFFFFFFFF;
 
-    signal input {maxNum} challengeOut[3];
+    signal input {maxNum} xi[3];
     signal output {maxNum} Zh[3];
     signal output {maxNum} xN[3];
 
@@ -91,7 +91,7 @@ template ZhBN128(nBits) {
     zMul.maxNum = q;
     for (var i = 0; i < nBits; i++) {
         if (i == 0) {
-            zMul[i] <== GLCMul()(challengeOut, challengeOut);
+            zMul[i] <== GLCMul()(xi, xi);
         } else {
             zMul[i] <== GLCMul()(zMul[i - 1], zMul[i - 1]);
         }
@@ -116,7 +116,7 @@ template QuotientCheckBN128(qDeg, qPolEv, nEvals) {
     signal input {binary} enable;
 
     signal {maxNum} xAcc[qDeg][3];
-    signal {maxNum} qStep[geo_len1(qDeg - 1)][3];
+    signal {maxNum} qStep[nonEmpty(qDeg - 1)][3];
     signal {maxNum} qAcc[qDeg][3];
 
     qStep.maxNum = q;
@@ -146,8 +146,8 @@ template QuotientCheckBN128(qDeg, qPolEv, nEvals) {
     The query-independent DEEP terms (deep.circom's DeepConstants, emulated): friConsts =
     [vf1, vf2, vf2^0..vf2^{nPols-1}, vf1^{e_o} per opening, K_o per opening], each reduced.
 */
-template DeepConstantsBN128(nGroups, nPols, nEvals, GROUP_LEN, REF_COL) {
-    var n = nGroups;
+template DeepConstantsBN128(nOpenings, nPols, nEvals, OPENING_NUM_EVALS, EVAL_COLUMN) {
+    var n = nOpenings;
     var q = 0xFFFFFFFFFFFFFFFF;
 
     signal input {maxNum} vf[2][3];
@@ -173,29 +173,29 @@ template DeepConstantsBN128(nGroups, nPols, nEvals, GROUP_LEN, REF_COL) {
     component kSum[nEvals];
     var k0 = 0;
     for (var r = 0; r < n; r++) {
-        for (var i = 0; i < GROUP_LEN[r]; i++) {
+        for (var i = 0; i < OPENING_NUM_EVALS[r]; i++) {
             var k = k0 + i;
-            var c = REF_COL[k];
+            var c = EVAL_COLUMN[k];
             if (c > 0) {
                 kMul[k] = GLCMul();
                 if (c == 1) { kMul[k].ina <== vf[1]; } else { kMul[k].ina <== p2[c].out; }
                 kMul[k].inb <== evals[k];
             }
         }
-        for (var i = 1; i < GROUP_LEN[r]; i++) {
+        for (var i = 1; i < OPENING_NUM_EVALS[r]; i++) {
             var k = k0 + i;
-            var c = REF_COL[k];
+            var c = EVAL_COLUMN[k];
             kSum[k] = GLCAdd();
             if (i > 1) {
                 kSum[k].ina <== kSum[k - 1].out;
-            } else if (REF_COL[k - 1] == 0) {
+            } else if (EVAL_COLUMN[k - 1] == 0) {
                 kSum[k].ina <== evals[k - 1];
             } else {
                 kSum[k].ina <== kMul[k - 1].out;
             }
             if (c == 0) { kSum[k].inb <== evals[k]; } else { kSum[k].inb <== kMul[k].out; }
         }
-        k0 += GROUP_LEN[r];
+        k0 += OPENING_NUM_EVALS[r];
     }
 
     // A sum exceeds q and is reduced; a product or an input is already below it.
@@ -213,30 +213,30 @@ template DeepConstantsBN128(nGroups, nPols, nEvals, GROUP_LEN, REF_COL) {
         if (e == 0) { friConsts[2 + nPols + r] <== [1, 0, 0]; }
         if (e == 1) { friConsts[2 + nPols + r] <== vf[0]; }
         if (e > 1) { friConsts[2 + nPols + r] <== p1[e].out; }
-        var kl = k0 + GROUP_LEN[r] - 1;
-        if (GROUP_LEN[r] > 1) {
+        var kl = k0 + OPENING_NUM_EVALS[r] - 1;
+        if (OPENING_NUM_EVALS[r] > 1) {
             friConsts[2 + nPols + n + r] <== GLCNorm()(kSum[kl].out);
-        } else if (REF_COL[kl] == 0) {
+        } else if (EVAL_COLUMN[kl] == 0) {
             friConsts[2 + nPols + n + r] <== evals[kl];
         } else {
             friConsts[2 + nPols + n + r] <== kMul[kl].out;
         }
-        k0 += GROUP_LEN[r];
+        k0 += OPENING_NUM_EVALS[r];
     }
 }
 
 /*
     f_0 at one query x of L_0 against fold tree 1's opened coset (deep.circom's DeepQuery, emulated):
     x and every x - g^o xi from repeated GLMul as the former templated verifier did, the same grouped sum
-    (lib_params.rs: OPEN, SUMS, COLS), a base-field leaf lifted with GLC3 where it meets an extension.
+    (lib_params.rs: OPENING_EXPONENT, SUMS, COLS), a base-field leaf lifted with GLC3 where it meets an extension.
 */
-template DeepQueryBN128(nGroups, nPols, nColGroups, nSums, bits0, nextBits, s0Width, nBits, OPEN, SUMS, COLS) {
-    var n = nGroups;
+template DeepQueryBN128(nOpenings, nPols, nColGroups, nSums, bits0, nextBits, s0Width, nBits, OPENING_EXPONENT, SUMS, COLS) {
+    var n = nOpenings;
     var nextStep = bits0 - nextBits;
     var q = 0xFFFFFFFFFFFFFFFF;
 
     signal input {binary} queriesL0[bits0];
-    signal input {maxNum} challengeOut[3];
+    signal input {maxNum} xi[3];
     signal input {maxNum} friConsts[2 + nPols + 2 * n][3];
     signal input {maxNum} leaves[s0Width];
     signal input {maxNum} s1_vals[1 << nextStep][3];
@@ -249,9 +249,9 @@ template DeepQueryBN128(nGroups, nPols, nColGroups, nSums, bits0, nextBits, s0Wi
     signal {maxNum} inb;
     ina.maxNum = q;
     inb.maxNum = q;
-    signal {maxNum} inp[geo_len1(bits0 - 2)];
+    signal {maxNum} inp[nonEmpty(bits0 - 2)];
     inp.maxNum = q;
-    ina <== queriesL0[0] * (geo_shift() * roots(bits0) - geo_shift()) + geo_shift();
+    ina <== queriesL0[0] * (domainShift() * roots(bits0) - domainShift()) + domainShift();
     inb <== queriesL0[1] * (roots(bits0 - 1) - 1) + 1;
     xacc[0] <== GLMul()(ina, inb);
     for (var i = 2; i < bits0; i++) {
@@ -262,10 +262,10 @@ template DeepQueryBN128(nGroups, nPols, nColGroups, nSums, bits0, nextBits, s0Wi
 
     // g^o by |o| GLMul steps from 1, then 1 / (x - g^o xi), per opening with evaluations (rank r).
     var nW = 0;
-    for (var r = 0; r < n; r++) { if (OPEN[r] != 0) { nW += (OPEN[r] < 0 ? -OPEN[r] : OPEN[r]) + 1; } }
+    for (var r = 0; r < n; r++) { if (OPENING_EXPONENT[r] != 0) { nW += (OPENING_EXPONENT[r] < 0 ? -OPENING_EXPONENT[r] : OPENING_EXPONENT[r]) + 1; } }
     signal {maxNum} root <== GLConst(roots(nBits))();
     signal {maxNum} invroot <== GLConst(invroots(nBits))();
-    signal {maxNum} w[geo_len1(nW)];
+    signal {maxNum} w[nonEmpty(nW)];
     w.maxNum = q;
     signal {maxNum} xDivXSubXi[n][3];
     xDivXSubXi.maxNum = q;
@@ -274,7 +274,7 @@ template DeepQueryBN128(nGroups, nPols, nColGroups, nSums, bits0, nextBits, s0Wi
     component wSub[n];
     var wo = 0;
     for (var r = 0; r < n; r++) {
-        var o = OPEN[r];
+        var o = OPENING_EXPONENT[r];
         if (o != 0) {
             var a = o < 0 ? -o : o;
             w[wo] <== 1;
@@ -284,13 +284,13 @@ template DeepQueryBN128(nGroups, nPols, nColGroups, nSums, bits0, nextBits, s0Wi
             wC[r] = GLC3();
             wC[r].in <== w[wo + a];
             wMul[r] = GLCMul();
-            wMul[r].ina <== challengeOut;
+            wMul[r].ina <== xi;
             wMul[r].inb <== wC[r].out;
             wo += a + 1;
         }
         wSub[r] = GLCSub();
         wSub[r].ina <== X;
-        if (o == 0) { wSub[r].inb <== challengeOut; } else { wSub[r].inb <== wMul[r].out; }
+        if (o == 0) { wSub[r].inb <== xi; } else { wSub[r].inb <== wMul[r].out; }
         xDivXSubXi[r] <== GLCInv()(wSub[r].out);
     }
 
@@ -306,7 +306,7 @@ template DeepQueryBN128(nGroups, nPols, nColGroups, nSums, bits0, nextBits, s0Wi
     // COLS per group: its A source, #columns, (column, leaf, dim)... A column's term is colMul[c] (c > 0),
     // else its leaf: an extension inline, a base one lifted (lift0). The running S_G is a column's term
     // (sKind 0: leaf, 1: lift0, 2: colMul[c]) or colSum[c] (3).
-    component aSum[geo_len1(nSums)];
+    component aSum[nonEmpty(nSums)];
     component colLift[nPols];
     component colMul[nPols];
     component colSum[nPols];
@@ -434,7 +434,7 @@ template VerifyFRIBN128(prevStepBits, currStepBits, nextStepBits, nBitsExt, nIn)
     if (currStepBits > 1) {
         signal {maxNum} s_sx[currStepBits - 1];
         s_sx.maxNum = q;
-        signal {maxNum} inp[geo_len1(currStepBits - 2)];
+        signal {maxNum} inp[nonEmpty(currStepBits - 2)];
         inp.maxNum = q;
         signal {maxNum} ina;
         signal {maxNum} inb;
@@ -493,52 +493,52 @@ template VerifyFinalPolBN128(nLastBits, maxDegSize) {
 }
 
 /*
-    One BN128-verified STARK proof of the compilation's key k (svd_*(k), lib_params.rs) from its flat
+    One BN128-verified STARK proof of the compilation's key k (key_*(k), lib_params.rs) from its flat
     proof; the family half (bn128_open_<family>.circom, picked by the generated verifier's include) opens
     the trees, the key's ConstraintEval checks the constraints.
 */
 template StarkVerifierBN128(k) {
     var q = 0xFFFFFFFFFFFFFFFF;
-    var nBits = svd_nBits(k);
-    var nBitsExt = svd_nBitsExt(k);
-    var arity = svd_arity(k);
-    var lastLevels = svd_lastLevels(k);
-    var nQueries = svd_nQueries(k);
-    var nEvals = svd_nEvals(k);
-    var nPublics = svd_nPublics(k);
-    var nStages = svd_nStages(k);
-    var nChallenges = svd_nChallenges(k);
-    var nSteps = svd_nSteps(k);
-    var nTrees = svd_nTrees(k);
-    var nGroups = svd_nGroups(k);
-    var nPols = svd_nPols(k);
-    var verkeyInput = svd_verkeyInput(k);
-    var enableInput = svd_enableInput(k);
-    var offEvals = svd_offEvals(k);
-    var offFinal = svd_offFinal(k);
-    var offNonce = svd_offNonce(k);
-    var STEPS[nSteps] = svd_STEPS(k);
-    var S0[nTrees + 1] = svd_S0(k);
-    var ROOT_C[4] = svd_ROOT_C(k);
-    var OFF_ROOT[nStages + 1] = svd_OFF_ROOT(k);
-    var OFF_S0V[nTrees] = svd_OFF_S0V(k);
-    var OFF_S0S[nTrees] = svd_OFF_S0S(k);
-    var OFF_S0L[nTrees] = svd_OFF_S0L(k);
-    var TREE_ROOT[nTrees] = svd_TREE_ROOT(k);
+    var nBits = key_nBits(k);
+    var nBitsExt = key_nBitsExt(k);
+    var arity = key_arity(k);
+    var lastLevels = key_lastLevels(k);
+    var nQueries = key_nQueries(k);
+    var nEvals = key_nEvals(k);
+    var nPublics = key_nPublics(k);
+    var nStages = key_nStages(k);
+    var nChallenges = key_nChallenges(k);
+    var nSteps = key_nSteps(k);
+    var nTrees = key_nTrees(k);
+    var nOpenings = key_nOpenings(k);
+    var nPols = key_nPols(k);
+    var verkeyInput = key_verkeyInput(k);
+    var enableInput = key_enableInput(k);
+    var offEvals = key_offEvals(k);
+    var offFinal = key_offFinal(k);
+    var offNonce = key_offNonce(k);
+    var STEPS[nSteps] = key_STEPS(k);
+    var L0_TREE_START[nTrees + 1] = key_L0_TREE_START(k);
+    var ROOT_C[4] = key_ROOT_C(k);
+    var OFF_ROOT[nStages + 1] = key_OFF_ROOT(k);
+    var OFF_L0_VALUES[nTrees] = key_OFF_L0_VALUES(k);
+    var OFF_L0_SIBLINGS[nTrees] = key_OFF_L0_SIBLINGS(k);
+    var OFF_L0_LAST_LEVELS[nTrees] = key_OFF_L0_LAST_LEVELS(k);
+    var TREE_ROOT[nTrees] = key_TREE_ROOT(k);
     var NF = nSteps - 1;
-    var OFF_FROOT[geo_len1(NF)] = svd_OFF_FROOT(k);
-    var OFF_FV[geo_len1(NF)] = svd_OFF_FV(k);
-    var OFF_FS[geo_len1(NF)] = svd_OFF_FS(k);
-    var OFF_FL[geo_len1(NF)] = svd_OFF_FL(k);
+    var OFF_FOLD_ROOT[nonEmpty(NF)] = key_OFF_FOLD_ROOT(k);
+    var OFF_FOLD_VALUES[nonEmpty(NF)] = key_OFF_FOLD_VALUES(k);
+    var OFF_FOLD_SIBLINGS[nonEmpty(NF)] = key_OFF_FOLD_SIBLINGS(k);
+    var OFF_FOLD_LAST_LEVELS[nonEmpty(NF)] = key_OFF_FOLD_LAST_LEVELS(k);
     var rw = bn_rootW();
     var sw = bn_sibW(arity);
-    var L0 = geo_levels0(arity, lastLevels, STEPS);
-    var lastSize = geo_lastSize(arity, lastLevels);
-    var FS = geo_finalSize(nSteps, STEPS);
+    var L0 = l0PathLength(arity, lastLevels, STEPS);
+    var lastSize = clearLevelNodes(arity, lastLevels);
+    var FS = lastDomainSize(nSteps, STEPS);
     var zeroRoot[1][rw];
     for (var i = 0; i < rw; i++) { zeroRoot[0][i] = 0; }
 
-    signal input proof[svd_proofSize(k)];
+    signal input proof[key_proofSize(k)];
     signal input publics[nPublics];
     signal input rootCIn[rw * verkeyInput];
     signal input enable[enableInput];
@@ -567,17 +567,17 @@ template StarkVerifierBN128(k) {
         }
         for (var j = 0; j < lastSize; j++) {
             for (var i = 0; i < rw; i++) {
-                if (lastLevels > 0) { treeLast[t][j][i] <== proof[OFF_S0L[t] + rw * j + i]; } else { treeLast[t][j][i] <== 0; }
+                if (lastLevels > 0) { treeLast[t][j][i] <== proof[OFF_L0_LAST_LEVELS[t] + rw * j + i]; } else { treeLast[t][j][i] <== 0; }
             }
         }
     }
     signal foldRoot[NF][rw];
     signal foldLast[NF][lastSize][rw];
     for (var f = 0; f < NF; f++) {
-        for (var i = 0; i < rw; i++) { foldRoot[f][i] <== proof[OFF_FROOT[f] + i]; }
+        for (var i = 0; i < rw; i++) { foldRoot[f][i] <== proof[OFF_FOLD_ROOT[f] + i]; }
         for (var j = 0; j < lastSize; j++) {
             for (var i = 0; i < rw; i++) {
-                if (lastLevels > 0) { foldLast[f][j][i] <== proof[OFF_FL[f] + rw * j + i]; } else { foldLast[f][j][i] <== 0; }
+                if (lastLevels > 0) { foldLast[f][j][i] <== proof[OFF_FOLD_LAST_LEVELS[f] + rw * j + i]; } else { foldLast[f][j][i] <== 0; }
             }
         }
     }
@@ -588,7 +588,7 @@ template StarkVerifierBN128(k) {
     signal {maxNum} finalPolGL[FS][3] <== GLVals3(FS)(finalPol);
 
     // The GL verifier's transcript over this key's engine; its challenges reduced Goldilocks values.
-    component transcript = StarkVerifierTranscript(nStages, nPublics, 0, 0, nEvals, nChallenges, nSteps, STEPS, 0, 0, 0, [0], svd_hashCommits(k), 0, nQueries, svd_powBits(k), svd_CH(k), [0], [0]);
+    component transcript = StarkVerifierTranscript(nStages, nPublics, 0, 0, nEvals, nChallenges, nSteps, STEPS, 0, 0, 0, [0], key_hashCommits(k), 0, nQueries, key_powBits(k), key_CH(k), [0], [0]);
     transcript.globalChallenge <== [0, 0, 0];
     if (nPublics > 0) { transcript.publics <== publicsGL; } else { transcript.publics <== [0]; }
     transcript.rootC <== rootC;
@@ -605,7 +605,7 @@ template StarkVerifierBN128(k) {
     signal {maxNum} challenges[nChallenges][3];
     challenges.maxNum = q;
     challenges <== transcript.challenges;
-    signal {maxNum} rFold[geo_len1(NF)][3];
+    signal {maxNum} rFold[nonEmpty(NF)][3];
     rFold.maxNum = q;
     if (NF > 0) {
         for (var f = 0; f < NF; f++) { rFold[f] <== transcript.ldt[f]; }
@@ -615,15 +615,15 @@ template StarkVerifierBN128(k) {
 
     // The constraints at xi against the quotient; challenges end with vc, xi, vf1, vf2.
     component zh = ZhBN128(nBits);
-    zh.challengeOut <== challenges[nChallenges - 3];
+    zh.xi <== challenges[nChallenges - 3];
     component ce = ConstraintEval();
     ce.challenges <== challenges;
     ce.evals <== evalsGL;
     ce.Zh <== zh.Zh;
     ce.publics <== publicsGL;
-    QuotientCheckBN128(svd_qDeg(k), svd_qPolEv(k), nEvals)(zh.xN, ce.evalP, evalsGL, enabled);
+    QuotientCheckBN128(key_qDeg(k), key_qPolEv(k), nEvals)(zh.xN, ce.evalP, evalsGL, enabled);
 
-    component deepConsts = DeepConstantsBN128(nGroups, nPols, nEvals, svd_GROUP_LEN(k), svd_REF_COL(k));
+    component deepConsts = DeepConstantsBN128(nOpenings, nPols, nEvals, key_OPENING_NUM_EVALS(k), key_EVAL_COLUMN(k));
     deepConsts.vf[0] <== challenges[nChallenges - 2];
     deepConsts.vf[1] <== challenges[nChallenges - 1];
     deepConsts.evals <== evalsGL;
@@ -633,7 +633,7 @@ template StarkVerifierBN128(k) {
     for (var g = 0; g < nQueries; g++) {
         query[g] = VerifySingleQueryBN128(k);
         query[g].queriesL0 <== transcript.queriesL0[g];
-        query[g].challengeOut <== challenges[nChallenges - 3];
+        query[g].xi <== challenges[nChallenges - 3];
         query[g].friConsts <== deepConsts.friConsts;
         query[g].rFold <== rFold;
         query[g].finalPol <== finalPolGL;
@@ -642,67 +642,67 @@ template StarkVerifierBN128(k) {
         query[g].root <== treeRoot;
         query[g].flast <== foldLast;
         query[g].froot <== foldRoot;
-        for (var t = 0; t < nTrees; t++) { for (var l = 0; l < L0; l++) { for (var i = 0; i < sw; i++) { query[g].sibs[t][l][i] <== proof[OFF_S0S[t] + (g * L0 + l) * sw + i]; } } }
+        for (var t = 0; t < nTrees; t++) { for (var l = 0; l < L0; l++) { for (var i = 0; i < sw; i++) { query[g].sibs[t][l][i] <== proof[OFF_L0_SIBLINGS[t] + (g * L0 + l) * sw + i]; } } }
 
-        for (var i = 0; i < geo_slotW(S0, nTrees, 0); i++) { query[g].v0[i] <== proof[OFF_S0V[0] + g * geo_slotW(S0, nTrees, 0) + i]; }
-        for (var i = 0; i < geo_slotW(S0, nTrees, 1); i++) { query[g].v1[i] <== proof[OFF_S0V[1] + g * geo_slotW(S0, nTrees, 1) + i]; }
-        for (var i = 0; i < geo_slotW(S0, nTrees, 2); i++) { query[g].v2[i] <== proof[OFF_S0V[2] + g * geo_slotW(S0, nTrees, 2) + i]; }
-        for (var i = 0; i < geo_slotW(S0, nTrees, 3); i++) { query[g].v3[i] <== proof[OFF_S0V[3] + g * geo_slotW(S0, nTrees, 3) + i]; }
-        for (var i = 0; i < geo_slotW(S0, nTrees, 4); i++) { query[g].v4[i] <== proof[OFF_S0V[4] + g * geo_slotW(S0, nTrees, 4) + i]; }
-        for (var i = 0; i < geo_slotW(S0, nTrees, 5); i++) { query[g].v5[i] <== proof[OFF_S0V[5] + g * geo_slotW(S0, nTrees, 5) + i]; }
-        for (var i = 0; i < geo_slotW(S0, nTrees, 6); i++) { query[g].v6[i] <== proof[OFF_S0V[6] + g * geo_slotW(S0, nTrees, 6) + i]; }
-        for (var i = 0; i < geo_slotW(S0, nTrees, 7); i++) { query[g].v7[i] <== proof[OFF_S0V[7] + g * geo_slotW(S0, nTrees, 7) + i]; }
-        for (var i = 0; i < 3 * geo_slotC(STEPS, NF, 0); i++) { query[g].fv0[i] <== proof[OFF_FV[0] + g * 3 * geo_slotC(STEPS, NF, 0) + i]; }
-        for (var l = 0; l < geo_slotM(arity, lastLevels, STEPS, NF, 0); l++) { for (var i = 0; i < sw; i++) { query[g].fs0[l][i] <== proof[OFF_FS[0] + (g * geo_slotM(arity, lastLevels, STEPS, NF, 0) + l) * sw + i]; } }
-        for (var i = 0; i < 3 * geo_slotC(STEPS, NF, 1); i++) { query[g].fv1[i] <== proof[OFF_FV[1] + g * 3 * geo_slotC(STEPS, NF, 1) + i]; }
-        for (var l = 0; l < geo_slotM(arity, lastLevels, STEPS, NF, 1); l++) { for (var i = 0; i < sw; i++) { query[g].fs1[l][i] <== proof[OFF_FS[1] + (g * geo_slotM(arity, lastLevels, STEPS, NF, 1) + l) * sw + i]; } }
-        for (var i = 0; i < 3 * geo_slotC(STEPS, NF, 2); i++) { query[g].fv2[i] <== proof[OFF_FV[2] + g * 3 * geo_slotC(STEPS, NF, 2) + i]; }
-        for (var l = 0; l < geo_slotM(arity, lastLevels, STEPS, NF, 2); l++) { for (var i = 0; i < sw; i++) { query[g].fs2[l][i] <== proof[OFF_FS[2] + (g * geo_slotM(arity, lastLevels, STEPS, NF, 2) + l) * sw + i]; } }
-        for (var i = 0; i < 3 * geo_slotC(STEPS, NF, 3); i++) { query[g].fv3[i] <== proof[OFF_FV[3] + g * 3 * geo_slotC(STEPS, NF, 3) + i]; }
-        for (var l = 0; l < geo_slotM(arity, lastLevels, STEPS, NF, 3); l++) { for (var i = 0; i < sw; i++) { query[g].fs3[l][i] <== proof[OFF_FS[3] + (g * geo_slotM(arity, lastLevels, STEPS, NF, 3) + l) * sw + i]; } }
-        for (var i = 0; i < 3 * geo_slotC(STEPS, NF, 4); i++) { query[g].fv4[i] <== proof[OFF_FV[4] + g * 3 * geo_slotC(STEPS, NF, 4) + i]; }
-        for (var l = 0; l < geo_slotM(arity, lastLevels, STEPS, NF, 4); l++) { for (var i = 0; i < sw; i++) { query[g].fs4[l][i] <== proof[OFF_FS[4] + (g * geo_slotM(arity, lastLevels, STEPS, NF, 4) + l) * sw + i]; } }
-        for (var i = 0; i < 3 * geo_slotC(STEPS, NF, 5); i++) { query[g].fv5[i] <== proof[OFF_FV[5] + g * 3 * geo_slotC(STEPS, NF, 5) + i]; }
-        for (var l = 0; l < geo_slotM(arity, lastLevels, STEPS, NF, 5); l++) { for (var i = 0; i < sw; i++) { query[g].fs5[l][i] <== proof[OFF_FS[5] + (g * geo_slotM(arity, lastLevels, STEPS, NF, 5) + l) * sw + i]; } }
-        for (var i = 0; i < 3 * geo_slotC(STEPS, NF, 6); i++) { query[g].fv6[i] <== proof[OFF_FV[6] + g * 3 * geo_slotC(STEPS, NF, 6) + i]; }
-        for (var l = 0; l < geo_slotM(arity, lastLevels, STEPS, NF, 6); l++) { for (var i = 0; i < sw; i++) { query[g].fs6[l][i] <== proof[OFF_FS[6] + (g * geo_slotM(arity, lastLevels, STEPS, NF, 6) + l) * sw + i]; } }
-        for (var i = 0; i < 3 * geo_slotC(STEPS, NF, 7); i++) { query[g].fv7[i] <== proof[OFF_FV[7] + g * 3 * geo_slotC(STEPS, NF, 7) + i]; }
-        for (var l = 0; l < geo_slotM(arity, lastLevels, STEPS, NF, 7); l++) { for (var i = 0; i < sw; i++) { query[g].fs7[l][i] <== proof[OFF_FS[7] + (g * geo_slotM(arity, lastLevels, STEPS, NF, 7) + l) * sw + i]; } }
+        for (var i = 0; i < geo_slotW(L0_TREE_START, nTrees, 0); i++) { query[g].v0[i] <== proof[OFF_L0_VALUES[0] + g * geo_slotW(L0_TREE_START, nTrees, 0) + i]; }
+        for (var i = 0; i < geo_slotW(L0_TREE_START, nTrees, 1); i++) { query[g].v1[i] <== proof[OFF_L0_VALUES[1] + g * geo_slotW(L0_TREE_START, nTrees, 1) + i]; }
+        for (var i = 0; i < geo_slotW(L0_TREE_START, nTrees, 2); i++) { query[g].v2[i] <== proof[OFF_L0_VALUES[2] + g * geo_slotW(L0_TREE_START, nTrees, 2) + i]; }
+        for (var i = 0; i < geo_slotW(L0_TREE_START, nTrees, 3); i++) { query[g].v3[i] <== proof[OFF_L0_VALUES[3] + g * geo_slotW(L0_TREE_START, nTrees, 3) + i]; }
+        for (var i = 0; i < geo_slotW(L0_TREE_START, nTrees, 4); i++) { query[g].v4[i] <== proof[OFF_L0_VALUES[4] + g * geo_slotW(L0_TREE_START, nTrees, 4) + i]; }
+        for (var i = 0; i < geo_slotW(L0_TREE_START, nTrees, 5); i++) { query[g].v5[i] <== proof[OFF_L0_VALUES[5] + g * geo_slotW(L0_TREE_START, nTrees, 5) + i]; }
+        for (var i = 0; i < geo_slotW(L0_TREE_START, nTrees, 6); i++) { query[g].v6[i] <== proof[OFF_L0_VALUES[6] + g * geo_slotW(L0_TREE_START, nTrees, 6) + i]; }
+        for (var i = 0; i < geo_slotW(L0_TREE_START, nTrees, 7); i++) { query[g].v7[i] <== proof[OFF_L0_VALUES[7] + g * geo_slotW(L0_TREE_START, nTrees, 7) + i]; }
+        for (var i = 0; i < 3 * geo_slotC(STEPS, NF, 0); i++) { query[g].fv0[i] <== proof[OFF_FOLD_VALUES[0] + g * 3 * geo_slotC(STEPS, NF, 0) + i]; }
+        for (var l = 0; l < geo_slotM(arity, lastLevels, STEPS, NF, 0); l++) { for (var i = 0; i < sw; i++) { query[g].fs0[l][i] <== proof[OFF_FOLD_SIBLINGS[0] + (g * geo_slotM(arity, lastLevels, STEPS, NF, 0) + l) * sw + i]; } }
+        for (var i = 0; i < 3 * geo_slotC(STEPS, NF, 1); i++) { query[g].fv1[i] <== proof[OFF_FOLD_VALUES[1] + g * 3 * geo_slotC(STEPS, NF, 1) + i]; }
+        for (var l = 0; l < geo_slotM(arity, lastLevels, STEPS, NF, 1); l++) { for (var i = 0; i < sw; i++) { query[g].fs1[l][i] <== proof[OFF_FOLD_SIBLINGS[1] + (g * geo_slotM(arity, lastLevels, STEPS, NF, 1) + l) * sw + i]; } }
+        for (var i = 0; i < 3 * geo_slotC(STEPS, NF, 2); i++) { query[g].fv2[i] <== proof[OFF_FOLD_VALUES[2] + g * 3 * geo_slotC(STEPS, NF, 2) + i]; }
+        for (var l = 0; l < geo_slotM(arity, lastLevels, STEPS, NF, 2); l++) { for (var i = 0; i < sw; i++) { query[g].fs2[l][i] <== proof[OFF_FOLD_SIBLINGS[2] + (g * geo_slotM(arity, lastLevels, STEPS, NF, 2) + l) * sw + i]; } }
+        for (var i = 0; i < 3 * geo_slotC(STEPS, NF, 3); i++) { query[g].fv3[i] <== proof[OFF_FOLD_VALUES[3] + g * 3 * geo_slotC(STEPS, NF, 3) + i]; }
+        for (var l = 0; l < geo_slotM(arity, lastLevels, STEPS, NF, 3); l++) { for (var i = 0; i < sw; i++) { query[g].fs3[l][i] <== proof[OFF_FOLD_SIBLINGS[3] + (g * geo_slotM(arity, lastLevels, STEPS, NF, 3) + l) * sw + i]; } }
+        for (var i = 0; i < 3 * geo_slotC(STEPS, NF, 4); i++) { query[g].fv4[i] <== proof[OFF_FOLD_VALUES[4] + g * 3 * geo_slotC(STEPS, NF, 4) + i]; }
+        for (var l = 0; l < geo_slotM(arity, lastLevels, STEPS, NF, 4); l++) { for (var i = 0; i < sw; i++) { query[g].fs4[l][i] <== proof[OFF_FOLD_SIBLINGS[4] + (g * geo_slotM(arity, lastLevels, STEPS, NF, 4) + l) * sw + i]; } }
+        for (var i = 0; i < 3 * geo_slotC(STEPS, NF, 5); i++) { query[g].fv5[i] <== proof[OFF_FOLD_VALUES[5] + g * 3 * geo_slotC(STEPS, NF, 5) + i]; }
+        for (var l = 0; l < geo_slotM(arity, lastLevels, STEPS, NF, 5); l++) { for (var i = 0; i < sw; i++) { query[g].fs5[l][i] <== proof[OFF_FOLD_SIBLINGS[5] + (g * geo_slotM(arity, lastLevels, STEPS, NF, 5) + l) * sw + i]; } }
+        for (var i = 0; i < 3 * geo_slotC(STEPS, NF, 6); i++) { query[g].fv6[i] <== proof[OFF_FOLD_VALUES[6] + g * 3 * geo_slotC(STEPS, NF, 6) + i]; }
+        for (var l = 0; l < geo_slotM(arity, lastLevels, STEPS, NF, 6); l++) { for (var i = 0; i < sw; i++) { query[g].fs6[l][i] <== proof[OFF_FOLD_SIBLINGS[6] + (g * geo_slotM(arity, lastLevels, STEPS, NF, 6) + l) * sw + i]; } }
+        for (var i = 0; i < 3 * geo_slotC(STEPS, NF, 7); i++) { query[g].fv7[i] <== proof[OFF_FOLD_VALUES[7] + g * 3 * geo_slotC(STEPS, NF, 7) + i]; }
+        for (var l = 0; l < geo_slotM(arity, lastLevels, STEPS, NF, 7); l++) { for (var i = 0; i < sw; i++) { query[g].fs7[l][i] <== proof[OFF_FOLD_SIBLINGS[7] + (g * geo_slotM(arity, lastLevels, STEPS, NF, 7) + l) * sw + i]; } }
     }
     if (lastLevels > 0) {
         for (var t = 0; t < nTrees; t++) { BN128RootCheck(lastLevels, arity, STEPS[0])(treeLast[t], treeRoot[t], enabled); }
         for (var f = 0; f < NF; f++) { BN128RootCheck(lastLevels, arity, STEPS[f + 1])(foldLast[f], foldRoot[f], enabled); }
     }
-    VerifyFinalPolBN128(STEPS[nSteps - 1], geo_maxDegSize(nBits, nBitsExt, nSteps, STEPS))(finalPolGL, enabled);
+    VerifyFinalPolBN128(STEPS[nSteps - 1], finalPolDegreeBound(nBits, nBitsExt, nSteps, STEPS))(finalPolGL, enabled);
 }
 
 // One query: its L_0 rows and fold-tree cosets against their trees, DEEP, every folding step.
 template parallel VerifySingleQueryBN128(k) {
     var q = 0xFFFFFFFFFFFFFFFF;
-    var nBits = svd_nBits(k);
-    var nBitsExt = svd_nBitsExt(k);
-    var arity = svd_arity(k);
-    var lastLevels = svd_lastLevels(k);
-    var nSteps = svd_nSteps(k);
-    var nTrees = svd_nTrees(k);
-    var nGroups = svd_nGroups(k);
-    var nPols = svd_nPols(k);
-    var STEPS[nSteps] = svd_STEPS(k);
-    var S0[nTrees + 1] = svd_S0(k);
+    var nBits = key_nBits(k);
+    var nBitsExt = key_nBitsExt(k);
+    var arity = key_arity(k);
+    var lastLevels = key_lastLevels(k);
+    var nSteps = key_nSteps(k);
+    var nTrees = key_nTrees(k);
+    var nOpenings = key_nOpenings(k);
+    var nPols = key_nPols(k);
+    var STEPS[nSteps] = key_STEPS(k);
+    var L0_TREE_START[nTrees + 1] = key_L0_TREE_START(k);
     var NF = nSteps - 1;
     var rw = bn_rootW();
     var sw = bn_sibW(arity);
-    var L0 = geo_levels0(arity, lastLevels, STEPS);
-    var lastSize = geo_lastSize(arity, lastLevels);
+    var L0 = l0PathLength(arity, lastLevels, STEPS);
+    var lastSize = clearLevelNodes(arity, lastLevels);
     assert(nTrees <= 8 && NF <= 8);
     var zeroSib[1][sw];
     for (var i = 0; i < sw; i++) { zeroSib[0][i] = 0; }
 
     signal input {binary} queriesL0[STEPS[0]];
-    signal input {maxNum} challengeOut[3];
-    signal input {maxNum} friConsts[2 + nPols + 2 * nGroups][3];
-    signal input {maxNum} rFold[geo_len1(NF)][3];
-    signal input {maxNum} finalPol[geo_finalSize(nSteps, STEPS)][3];
+    signal input {maxNum} xi[3];
+    signal input {maxNum} friConsts[2 + nPols + 2 * nOpenings][3];
+    signal input {maxNum} rFold[nonEmpty(NF)][3];
+    signal input {maxNum} finalPol[lastDomainSize(nSteps, STEPS)][3];
     signal input {binary} enable;
     signal input sibs[nTrees][L0][sw];
     signal input last[nTrees][lastSize][rw];
@@ -710,14 +710,14 @@ template parallel VerifySingleQueryBN128(k) {
     signal input flast[NF][lastSize][rw];
     signal input froot[NF][rw];
 
-    signal input v0[geo_slotW(S0, nTrees, 0)];
-    signal input v1[geo_slotW(S0, nTrees, 1)];
-    signal input v2[geo_slotW(S0, nTrees, 2)];
-    signal input v3[geo_slotW(S0, nTrees, 3)];
-    signal input v4[geo_slotW(S0, nTrees, 4)];
-    signal input v5[geo_slotW(S0, nTrees, 5)];
-    signal input v6[geo_slotW(S0, nTrees, 6)];
-    signal input v7[geo_slotW(S0, nTrees, 7)];
+    signal input v0[geo_slotW(L0_TREE_START, nTrees, 0)];
+    signal input v1[geo_slotW(L0_TREE_START, nTrees, 1)];
+    signal input v2[geo_slotW(L0_TREE_START, nTrees, 2)];
+    signal input v3[geo_slotW(L0_TREE_START, nTrees, 3)];
+    signal input v4[geo_slotW(L0_TREE_START, nTrees, 4)];
+    signal input v5[geo_slotW(L0_TREE_START, nTrees, 5)];
+    signal input v6[geo_slotW(L0_TREE_START, nTrees, 6)];
+    signal input v7[geo_slotW(L0_TREE_START, nTrees, 7)];
     signal input fv0[3 * geo_slotC(STEPS, NF, 0)];
     signal input fv1[3 * geo_slotC(STEPS, NF, 1)];
     signal input fv2[3 * geo_slotC(STEPS, NF, 2)];
@@ -735,56 +735,56 @@ template parallel VerifySingleQueryBN128(k) {
     signal input fs6[geo_slotM(arity, lastLevels, STEPS, NF, 6)][sw];
     signal input fs7[geo_slotM(arity, lastLevels, STEPS, NF, 7)][sw];
 
-    // The L_0 rows, reduced, flat in tree order (S0); every row reduced before any tree is opened.
-    signal {maxNum} leaves[S0[nTrees]];
+    // The L_0 rows, reduced, flat in tree order (L0_TREE_START); every row reduced before any tree is opened.
+    signal {maxNum} leaves[L0_TREE_START[nTrees]];
     leaves.maxNum = q;
-    for (var i = 0; i < geo_slotW(S0, nTrees, 0); i++) { leaves[S0[0] + i] <== LessThan64Bits()(v0[i]); }
-    for (var i = 0; i < geo_slotW(S0, nTrees, 1); i++) { leaves[S0[1] + i] <== LessThan64Bits()(v1[i]); }
-    for (var i = 0; i < geo_slotW(S0, nTrees, 2); i++) { leaves[S0[2] + i] <== LessThan64Bits()(v2[i]); }
-    for (var i = 0; i < geo_slotW(S0, nTrees, 3); i++) { leaves[S0[3] + i] <== LessThan64Bits()(v3[i]); }
-    for (var i = 0; i < geo_slotW(S0, nTrees, 4); i++) { leaves[S0[4] + i] <== LessThan64Bits()(v4[i]); }
-    for (var i = 0; i < geo_slotW(S0, nTrees, 5); i++) { leaves[S0[5] + i] <== LessThan64Bits()(v5[i]); }
-    for (var i = 0; i < geo_slotW(S0, nTrees, 6); i++) { leaves[S0[6] + i] <== LessThan64Bits()(v6[i]); }
-    for (var i = 0; i < geo_slotW(S0, nTrees, 7); i++) { leaves[S0[7] + i] <== LessThan64Bits()(v7[i]); }
+    for (var i = 0; i < geo_slotW(L0_TREE_START, nTrees, 0); i++) { leaves[L0_TREE_START[0] + i] <== LessThan64Bits()(v0[i]); }
+    for (var i = 0; i < geo_slotW(L0_TREE_START, nTrees, 1); i++) { leaves[L0_TREE_START[1] + i] <== LessThan64Bits()(v1[i]); }
+    for (var i = 0; i < geo_slotW(L0_TREE_START, nTrees, 2); i++) { leaves[L0_TREE_START[2] + i] <== LessThan64Bits()(v2[i]); }
+    for (var i = 0; i < geo_slotW(L0_TREE_START, nTrees, 3); i++) { leaves[L0_TREE_START[3] + i] <== LessThan64Bits()(v3[i]); }
+    for (var i = 0; i < geo_slotW(L0_TREE_START, nTrees, 4); i++) { leaves[L0_TREE_START[4] + i] <== LessThan64Bits()(v4[i]); }
+    for (var i = 0; i < geo_slotW(L0_TREE_START, nTrees, 5); i++) { leaves[L0_TREE_START[5] + i] <== LessThan64Bits()(v5[i]); }
+    for (var i = 0; i < geo_slotW(L0_TREE_START, nTrees, 6); i++) { leaves[L0_TREE_START[6] + i] <== LessThan64Bits()(v6[i]); }
+    for (var i = 0; i < geo_slotW(L0_TREE_START, nTrees, 7); i++) { leaves[L0_TREE_START[7] + i] <== LessThan64Bits()(v7[i]); }
     if (nTrees > 0) {
-        signal l0[S0[0 + 1] - S0[0]][1];
-        for (var i = 0; i < S0[0 + 1] - S0[0]; i++) { l0[i][0] <== leaves[S0[0] + i]; }
-        BN128Open(1, S0[0 + 1] - S0[0], arity, lastLevels, L0, STEPS[0], STEPS[0])(queriesL0, l0, sibs[0], last[0], root[0], enable);
+        signal l0[L0_TREE_START[0 + 1] - L0_TREE_START[0]][1];
+        for (var i = 0; i < L0_TREE_START[0 + 1] - L0_TREE_START[0]; i++) { l0[i][0] <== leaves[L0_TREE_START[0] + i]; }
+        BN128Open(1, L0_TREE_START[0 + 1] - L0_TREE_START[0], arity, lastLevels, L0, STEPS[0], STEPS[0])(queriesL0, l0, sibs[0], last[0], root[0], enable);
     }
     if (nTrees > 1) {
-        signal l1[S0[1 + 1] - S0[1]][1];
-        for (var i = 0; i < S0[1 + 1] - S0[1]; i++) { l1[i][0] <== leaves[S0[1] + i]; }
-        BN128Open(1, S0[1 + 1] - S0[1], arity, lastLevels, L0, STEPS[0], STEPS[0])(queriesL0, l1, sibs[1], last[1], root[1], enable);
+        signal l1[L0_TREE_START[1 + 1] - L0_TREE_START[1]][1];
+        for (var i = 0; i < L0_TREE_START[1 + 1] - L0_TREE_START[1]; i++) { l1[i][0] <== leaves[L0_TREE_START[1] + i]; }
+        BN128Open(1, L0_TREE_START[1 + 1] - L0_TREE_START[1], arity, lastLevels, L0, STEPS[0], STEPS[0])(queriesL0, l1, sibs[1], last[1], root[1], enable);
     }
     if (nTrees > 2) {
-        signal l2[S0[2 + 1] - S0[2]][1];
-        for (var i = 0; i < S0[2 + 1] - S0[2]; i++) { l2[i][0] <== leaves[S0[2] + i]; }
-        BN128Open(1, S0[2 + 1] - S0[2], arity, lastLevels, L0, STEPS[0], STEPS[0])(queriesL0, l2, sibs[2], last[2], root[2], enable);
+        signal l2[L0_TREE_START[2 + 1] - L0_TREE_START[2]][1];
+        for (var i = 0; i < L0_TREE_START[2 + 1] - L0_TREE_START[2]; i++) { l2[i][0] <== leaves[L0_TREE_START[2] + i]; }
+        BN128Open(1, L0_TREE_START[2 + 1] - L0_TREE_START[2], arity, lastLevels, L0, STEPS[0], STEPS[0])(queriesL0, l2, sibs[2], last[2], root[2], enable);
     }
     if (nTrees > 3) {
-        signal l3[S0[3 + 1] - S0[3]][1];
-        for (var i = 0; i < S0[3 + 1] - S0[3]; i++) { l3[i][0] <== leaves[S0[3] + i]; }
-        BN128Open(1, S0[3 + 1] - S0[3], arity, lastLevels, L0, STEPS[0], STEPS[0])(queriesL0, l3, sibs[3], last[3], root[3], enable);
+        signal l3[L0_TREE_START[3 + 1] - L0_TREE_START[3]][1];
+        for (var i = 0; i < L0_TREE_START[3 + 1] - L0_TREE_START[3]; i++) { l3[i][0] <== leaves[L0_TREE_START[3] + i]; }
+        BN128Open(1, L0_TREE_START[3 + 1] - L0_TREE_START[3], arity, lastLevels, L0, STEPS[0], STEPS[0])(queriesL0, l3, sibs[3], last[3], root[3], enable);
     }
     if (nTrees > 4) {
-        signal l4[S0[4 + 1] - S0[4]][1];
-        for (var i = 0; i < S0[4 + 1] - S0[4]; i++) { l4[i][0] <== leaves[S0[4] + i]; }
-        BN128Open(1, S0[4 + 1] - S0[4], arity, lastLevels, L0, STEPS[0], STEPS[0])(queriesL0, l4, sibs[4], last[4], root[4], enable);
+        signal l4[L0_TREE_START[4 + 1] - L0_TREE_START[4]][1];
+        for (var i = 0; i < L0_TREE_START[4 + 1] - L0_TREE_START[4]; i++) { l4[i][0] <== leaves[L0_TREE_START[4] + i]; }
+        BN128Open(1, L0_TREE_START[4 + 1] - L0_TREE_START[4], arity, lastLevels, L0, STEPS[0], STEPS[0])(queriesL0, l4, sibs[4], last[4], root[4], enable);
     }
     if (nTrees > 5) {
-        signal l5[S0[5 + 1] - S0[5]][1];
-        for (var i = 0; i < S0[5 + 1] - S0[5]; i++) { l5[i][0] <== leaves[S0[5] + i]; }
-        BN128Open(1, S0[5 + 1] - S0[5], arity, lastLevels, L0, STEPS[0], STEPS[0])(queriesL0, l5, sibs[5], last[5], root[5], enable);
+        signal l5[L0_TREE_START[5 + 1] - L0_TREE_START[5]][1];
+        for (var i = 0; i < L0_TREE_START[5 + 1] - L0_TREE_START[5]; i++) { l5[i][0] <== leaves[L0_TREE_START[5] + i]; }
+        BN128Open(1, L0_TREE_START[5 + 1] - L0_TREE_START[5], arity, lastLevels, L0, STEPS[0], STEPS[0])(queriesL0, l5, sibs[5], last[5], root[5], enable);
     }
     if (nTrees > 6) {
-        signal l6[S0[6 + 1] - S0[6]][1];
-        for (var i = 0; i < S0[6 + 1] - S0[6]; i++) { l6[i][0] <== leaves[S0[6] + i]; }
-        BN128Open(1, S0[6 + 1] - S0[6], arity, lastLevels, L0, STEPS[0], STEPS[0])(queriesL0, l6, sibs[6], last[6], root[6], enable);
+        signal l6[L0_TREE_START[6 + 1] - L0_TREE_START[6]][1];
+        for (var i = 0; i < L0_TREE_START[6 + 1] - L0_TREE_START[6]; i++) { l6[i][0] <== leaves[L0_TREE_START[6] + i]; }
+        BN128Open(1, L0_TREE_START[6 + 1] - L0_TREE_START[6], arity, lastLevels, L0, STEPS[0], STEPS[0])(queriesL0, l6, sibs[6], last[6], root[6], enable);
     }
     if (nTrees > 7) {
-        signal l7[S0[7 + 1] - S0[7]][1];
-        for (var i = 0; i < S0[7 + 1] - S0[7]; i++) { l7[i][0] <== leaves[S0[7] + i]; }
-        BN128Open(1, S0[7 + 1] - S0[7], arity, lastLevels, L0, STEPS[0], STEPS[0])(queriesL0, l7, sibs[7], last[7], root[7], enable);
+        signal l7[L0_TREE_START[7 + 1] - L0_TREE_START[7]][1];
+        for (var i = 0; i < L0_TREE_START[7 + 1] - L0_TREE_START[7]; i++) { l7[i][0] <== leaves[L0_TREE_START[7] + i]; }
+        BN128Open(1, L0_TREE_START[7 + 1] - L0_TREE_START[7], arity, lastLevels, L0, STEPS[0], STEPS[0])(queriesL0, l7, sibs[7], last[7], root[7], enable);
     }
 
     // Fold tree f's opened coset, reduced; its Merkle path.
@@ -792,95 +792,95 @@ template parallel VerifySingleQueryBN128(k) {
     fp0.maxNum = q;
     for (var c = 0; c < geo_slotC(STEPS, NF, 0); c++) { for (var e = 0; e < 3; e++) { fp0[c][e] <== LessThan64Bits()(fv0[c * 3 + e]); } }
     if (NF > 0) {
-        var ml = geo_foldLevels(arity, lastLevels, STEPS, 1);
+        var ml = foldPathLength(arity, lastLevels, STEPS, 1);
         if (ml > 0) {
-            BN128Open(3, geo_foldExp(STEPS, 1), arity, lastLevels, ml, STEPS[1], STEPS[0])(queriesL0, fp0, fs0, flast[0], froot[0], enable);
+            BN128Open(3, foldCosetSize(STEPS, 1), arity, lastLevels, ml, STEPS[1], STEPS[0])(queriesL0, fp0, fs0, flast[0], froot[0], enable);
         } else {
-            BN128Open(3, geo_foldExp(STEPS, 1), arity, lastLevels, 0, STEPS[1], STEPS[0])(queriesL0, fp0, zeroSib, flast[0], froot[0], enable);
+            BN128Open(3, foldCosetSize(STEPS, 1), arity, lastLevels, 0, STEPS[1], STEPS[0])(queriesL0, fp0, zeroSib, flast[0], froot[0], enable);
         }
     }
     signal {maxNum} fp1[geo_slotC(STEPS, NF, 1)][3];
     fp1.maxNum = q;
     for (var c = 0; c < geo_slotC(STEPS, NF, 1); c++) { for (var e = 0; e < 3; e++) { fp1[c][e] <== LessThan64Bits()(fv1[c * 3 + e]); } }
     if (NF > 1) {
-        var ml = geo_foldLevels(arity, lastLevels, STEPS, 2);
+        var ml = foldPathLength(arity, lastLevels, STEPS, 2);
         if (ml > 0) {
-            BN128Open(3, geo_foldExp(STEPS, 2), arity, lastLevels, ml, STEPS[2], STEPS[0])(queriesL0, fp1, fs1, flast[1], froot[1], enable);
+            BN128Open(3, foldCosetSize(STEPS, 2), arity, lastLevels, ml, STEPS[2], STEPS[0])(queriesL0, fp1, fs1, flast[1], froot[1], enable);
         } else {
-            BN128Open(3, geo_foldExp(STEPS, 2), arity, lastLevels, 0, STEPS[2], STEPS[0])(queriesL0, fp1, zeroSib, flast[1], froot[1], enable);
+            BN128Open(3, foldCosetSize(STEPS, 2), arity, lastLevels, 0, STEPS[2], STEPS[0])(queriesL0, fp1, zeroSib, flast[1], froot[1], enable);
         }
     }
     signal {maxNum} fp2[geo_slotC(STEPS, NF, 2)][3];
     fp2.maxNum = q;
     for (var c = 0; c < geo_slotC(STEPS, NF, 2); c++) { for (var e = 0; e < 3; e++) { fp2[c][e] <== LessThan64Bits()(fv2[c * 3 + e]); } }
     if (NF > 2) {
-        var ml = geo_foldLevels(arity, lastLevels, STEPS, 3);
+        var ml = foldPathLength(arity, lastLevels, STEPS, 3);
         if (ml > 0) {
-            BN128Open(3, geo_foldExp(STEPS, 3), arity, lastLevels, ml, STEPS[3], STEPS[0])(queriesL0, fp2, fs2, flast[2], froot[2], enable);
+            BN128Open(3, foldCosetSize(STEPS, 3), arity, lastLevels, ml, STEPS[3], STEPS[0])(queriesL0, fp2, fs2, flast[2], froot[2], enable);
         } else {
-            BN128Open(3, geo_foldExp(STEPS, 3), arity, lastLevels, 0, STEPS[3], STEPS[0])(queriesL0, fp2, zeroSib, flast[2], froot[2], enable);
+            BN128Open(3, foldCosetSize(STEPS, 3), arity, lastLevels, 0, STEPS[3], STEPS[0])(queriesL0, fp2, zeroSib, flast[2], froot[2], enable);
         }
     }
     signal {maxNum} fp3[geo_slotC(STEPS, NF, 3)][3];
     fp3.maxNum = q;
     for (var c = 0; c < geo_slotC(STEPS, NF, 3); c++) { for (var e = 0; e < 3; e++) { fp3[c][e] <== LessThan64Bits()(fv3[c * 3 + e]); } }
     if (NF > 3) {
-        var ml = geo_foldLevels(arity, lastLevels, STEPS, 4);
+        var ml = foldPathLength(arity, lastLevels, STEPS, 4);
         if (ml > 0) {
-            BN128Open(3, geo_foldExp(STEPS, 4), arity, lastLevels, ml, STEPS[4], STEPS[0])(queriesL0, fp3, fs3, flast[3], froot[3], enable);
+            BN128Open(3, foldCosetSize(STEPS, 4), arity, lastLevels, ml, STEPS[4], STEPS[0])(queriesL0, fp3, fs3, flast[3], froot[3], enable);
         } else {
-            BN128Open(3, geo_foldExp(STEPS, 4), arity, lastLevels, 0, STEPS[4], STEPS[0])(queriesL0, fp3, zeroSib, flast[3], froot[3], enable);
+            BN128Open(3, foldCosetSize(STEPS, 4), arity, lastLevels, 0, STEPS[4], STEPS[0])(queriesL0, fp3, zeroSib, flast[3], froot[3], enable);
         }
     }
     signal {maxNum} fp4[geo_slotC(STEPS, NF, 4)][3];
     fp4.maxNum = q;
     for (var c = 0; c < geo_slotC(STEPS, NF, 4); c++) { for (var e = 0; e < 3; e++) { fp4[c][e] <== LessThan64Bits()(fv4[c * 3 + e]); } }
     if (NF > 4) {
-        var ml = geo_foldLevels(arity, lastLevels, STEPS, 5);
+        var ml = foldPathLength(arity, lastLevels, STEPS, 5);
         if (ml > 0) {
-            BN128Open(3, geo_foldExp(STEPS, 5), arity, lastLevels, ml, STEPS[5], STEPS[0])(queriesL0, fp4, fs4, flast[4], froot[4], enable);
+            BN128Open(3, foldCosetSize(STEPS, 5), arity, lastLevels, ml, STEPS[5], STEPS[0])(queriesL0, fp4, fs4, flast[4], froot[4], enable);
         } else {
-            BN128Open(3, geo_foldExp(STEPS, 5), arity, lastLevels, 0, STEPS[5], STEPS[0])(queriesL0, fp4, zeroSib, flast[4], froot[4], enable);
+            BN128Open(3, foldCosetSize(STEPS, 5), arity, lastLevels, 0, STEPS[5], STEPS[0])(queriesL0, fp4, zeroSib, flast[4], froot[4], enable);
         }
     }
     signal {maxNum} fp5[geo_slotC(STEPS, NF, 5)][3];
     fp5.maxNum = q;
     for (var c = 0; c < geo_slotC(STEPS, NF, 5); c++) { for (var e = 0; e < 3; e++) { fp5[c][e] <== LessThan64Bits()(fv5[c * 3 + e]); } }
     if (NF > 5) {
-        var ml = geo_foldLevels(arity, lastLevels, STEPS, 6);
+        var ml = foldPathLength(arity, lastLevels, STEPS, 6);
         if (ml > 0) {
-            BN128Open(3, geo_foldExp(STEPS, 6), arity, lastLevels, ml, STEPS[6], STEPS[0])(queriesL0, fp5, fs5, flast[5], froot[5], enable);
+            BN128Open(3, foldCosetSize(STEPS, 6), arity, lastLevels, ml, STEPS[6], STEPS[0])(queriesL0, fp5, fs5, flast[5], froot[5], enable);
         } else {
-            BN128Open(3, geo_foldExp(STEPS, 6), arity, lastLevels, 0, STEPS[6], STEPS[0])(queriesL0, fp5, zeroSib, flast[5], froot[5], enable);
+            BN128Open(3, foldCosetSize(STEPS, 6), arity, lastLevels, 0, STEPS[6], STEPS[0])(queriesL0, fp5, zeroSib, flast[5], froot[5], enable);
         }
     }
     signal {maxNum} fp6[geo_slotC(STEPS, NF, 6)][3];
     fp6.maxNum = q;
     for (var c = 0; c < geo_slotC(STEPS, NF, 6); c++) { for (var e = 0; e < 3; e++) { fp6[c][e] <== LessThan64Bits()(fv6[c * 3 + e]); } }
     if (NF > 6) {
-        var ml = geo_foldLevels(arity, lastLevels, STEPS, 7);
+        var ml = foldPathLength(arity, lastLevels, STEPS, 7);
         if (ml > 0) {
-            BN128Open(3, geo_foldExp(STEPS, 7), arity, lastLevels, ml, STEPS[7], STEPS[0])(queriesL0, fp6, fs6, flast[6], froot[6], enable);
+            BN128Open(3, foldCosetSize(STEPS, 7), arity, lastLevels, ml, STEPS[7], STEPS[0])(queriesL0, fp6, fs6, flast[6], froot[6], enable);
         } else {
-            BN128Open(3, geo_foldExp(STEPS, 7), arity, lastLevels, 0, STEPS[7], STEPS[0])(queriesL0, fp6, zeroSib, flast[6], froot[6], enable);
+            BN128Open(3, foldCosetSize(STEPS, 7), arity, lastLevels, 0, STEPS[7], STEPS[0])(queriesL0, fp6, zeroSib, flast[6], froot[6], enable);
         }
     }
     signal {maxNum} fp7[geo_slotC(STEPS, NF, 7)][3];
     fp7.maxNum = q;
     for (var c = 0; c < geo_slotC(STEPS, NF, 7); c++) { for (var e = 0; e < 3; e++) { fp7[c][e] <== LessThan64Bits()(fv7[c * 3 + e]); } }
     if (NF > 7) {
-        var ml = geo_foldLevels(arity, lastLevels, STEPS, 8);
+        var ml = foldPathLength(arity, lastLevels, STEPS, 8);
         if (ml > 0) {
-            BN128Open(3, geo_foldExp(STEPS, 8), arity, lastLevels, ml, STEPS[8], STEPS[0])(queriesL0, fp7, fs7, flast[7], froot[7], enable);
+            BN128Open(3, foldCosetSize(STEPS, 8), arity, lastLevels, ml, STEPS[8], STEPS[0])(queriesL0, fp7, fs7, flast[7], froot[7], enable);
         } else {
-            BN128Open(3, geo_foldExp(STEPS, 8), arity, lastLevels, 0, STEPS[8], STEPS[0])(queriesL0, fp7, zeroSib, flast[7], froot[7], enable);
+            BN128Open(3, foldCosetSize(STEPS, 8), arity, lastLevels, 0, STEPS[8], STEPS[0])(queriesL0, fp7, zeroSib, flast[7], froot[7], enable);
         }
     }
 
     if (NF > 0) {
-        DeepQueryBN128(nGroups, nPols, svd_nColGroups(k), svd_nSums(k), STEPS[0], STEPS[1], S0[nTrees], nBits, svd_OPEN(k), svd_SUMS(k), svd_COLS(k))(queriesL0, challengeOut, friConsts, leaves, fp0, enable);
+        DeepQueryBN128(nOpenings, nPols, key_nColGroups(k), key_nSums(k), STEPS[0], STEPS[1], L0_TREE_START[nTrees], nBits, key_OPENING_EXPONENT(k), key_SUMS(k), key_COLS(k))(queriesL0, xi, friConsts, leaves, fp0, enable);
     } else {
-        DeepQueryBN128(nGroups, nPols, svd_nColGroups(k), svd_nSums(k), STEPS[0], 0, S0[nTrees], nBits, svd_OPEN(k), svd_SUMS(k), svd_COLS(k))(queriesL0, challengeOut, friConsts, leaves, finalPol, enable);
+        DeepQueryBN128(nOpenings, nPols, key_nColGroups(k), key_nSums(k), STEPS[0], 0, L0_TREE_START[nTrees], nBits, key_OPENING_EXPONENT(k), key_SUMS(k), key_COLS(k))(queriesL0, xi, friConsts, leaves, finalPol, enable);
     }
     if (NF > 1) {
         VerifyFRIBN128(STEPS[0], STEPS[1], STEPS[2], nBitsExt, STEPS[0])(queriesL0, rFold[0], fp0, fp1, enable);

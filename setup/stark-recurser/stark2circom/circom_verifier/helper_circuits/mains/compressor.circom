@@ -8,17 +8,17 @@ include "vadcop/values.circom";
 
 // The compressor of a basic air: its proof verified, its vadcop values minted.
 template Compressor() {
-    var airgroupId = vd_airgroupId();
-    var circuitType = circuitTypeOf(airgroupId, vd_airId() + 1);
-    var nAgg = vd_nAgg(airgroupId);
-    var W = vd_W();
-    var nPub = vd_nPublics();
-    var nPV = vd_nProofValues();
+    var airgroupId = vadcop_airgroupId();
+    var circuitType = circuitTypeOf(airgroupId, vadcop_airId() + 1);
+    var nAgg = vadcop_nAgg(airgroupId);
+    var W = vadcop_W();
+    var nPub = vadcop_nPublics();
+    var nPV = vadcop_nProofValues();
 
     signal input publics[nPub];
     signal input proofValues[nPV][3];
     signal input globalChallenge[3];
-    signal input proof[svd_proofSize(0)];
+    signal input proof[key_proofSize(0)];
     signal output sv_circuitType;
     signal output sv_aggregatedProofs;
     signal output sv_aggregationTypes[nAgg];
@@ -27,8 +27,8 @@ template Compressor() {
 
     component sV = StarkVerifierGL(0);
     sV.proof <== proof;
-    for (var i = 0; i < svd_nPublics(0); i++) { sV.publics[i] <== publics[i]; }
-    for (var i = 0; i < svd_nProofValues(0); i++) { sV.proofvalues[i] <== proofValues[i]; }
+    for (var i = 0; i < key_nPublics(0); i++) { sV.publics[i] <== publics[i]; }
+    for (var i = 0; i < key_nProofValues(0); i++) { sV.proofvalues[i] <== proofValues[i]; }
     sV.globalChallenge <== globalChallenge;
 
     component v = BasicValues(0, circuitType, nAgg, 0);

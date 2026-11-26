@@ -11,18 +11,18 @@ include "vadcop/values.circom";
 
 // A recursive2 over n proofs of one airgroup (recursive1 or recursive2 proofs, keyed by circuitType).
 template Recursive2(n) {
-    var airgroupId = vd_airgroupId();
+    var airgroupId = vadcop_airgroupId();
     var circuitType = circuitTypeOf(airgroupId, 0);
-    var nAgg = vd_nAgg(airgroupId);
-    var W = vd_W();
-    var nPub = vd_nPublics();
-    var nPV = vd_nProofValues();
-    var S = sv_size(nAgg, W);
-    var P = svd_proofSize(0);
-    var multiAir = vd_multiAir();
-    var nBasics = vd_nBasics(airgroupId);
-    var rootCBasics[nBasics][4] = vd_basics(airgroupId);
-    var nPubV = svd_nPublics(0);
+    var nAgg = vadcop_nAgg(airgroupId);
+    var W = vadcop_W();
+    var nPub = vadcop_nPublics();
+    var nPV = vadcop_nProofValues();
+    var S = vadcopValuesSize(nAgg, W);
+    var P = key_proofSize(0);
+    var multiAir = vadcop_multiAir();
+    var nBasics = vadcop_nBasics(airgroupId);
+    var rootCBasics[nBasics][4] = vadcop_basics(airgroupId);
+    var nPubV = key_nPublics(0);
 
     signal output sv_circuitType;
     signal output sv_aggregatedProofs;
@@ -35,8 +35,8 @@ template Recursive2(n) {
     signal input rootCAgg[4];
     signal input slots[n][S + P];
 
-    signal sv[n][S];
-    for (var s = 0; s < n; s++) { for (var i = 0; i < S; i++) { sv[s][i] <== slots[s][i]; } }
+    signal vadcopValues[n][S];
+    for (var s = 0; s < n; s++) { for (var i = 0; i < S; i++) { vadcopValues[s][i] <== slots[s][i]; } }
 
     component vs[n];
     component pubs[n];
@@ -44,31 +44,31 @@ template Recursive2(n) {
     for (var s = 0; s < n; s++) {
         vs[s] = parallel StarkVerifierGL(0);
         for (var i = 0; i < P; i++) { vs[s].proof[i] <== slots[s][S + i]; }
-        for (var i = 0; i < svd_nProofValues(0); i++) { vs[s].proofvalues[i] <== proofValues[i]; }
+        for (var i = 0; i < key_nProofValues(0); i++) { vs[s].proofvalues[i] <== proofValues[i]; }
         pubs[s] = VadcopPublics(airgroupId, nAgg, W, nPub, nPV, nPubV, nPubV - 4);
-        pubs[s].sv <== sv[s];
+        pubs[s].vadcopValues <== vadcopValues[s];
         pubs[s].publics <== publics;
         pubs[s].proofValues <== proofValues;
         pubs[s].globalChallenge <== globalChallenge;
         pubs[s].rootCAgg <== rootCAgg;
         vs[s].publics <== pubs[s].out;
         if (multiAir == 1) {
-            isNull[s] <== IsZero()(sv[s][0]);
+            isNull[s] <== IsZero()(vadcopValues[s][0]);
             vs[s].enable[0] <== 1 - isNull[s];
-            vs[s].rootCIn <== SelectVerificationKeyNull(nBasics, airgroupId)(sv[s][0], rootCBasics, rootCAgg);
+            vs[s].rootCIn <== SelectVerificationKeyNull(nBasics, airgroupId)(vadcopValues[s][0], rootCBasics, rootCAgg);
         } else {
-            vs[s].rootCIn <== SelectVerificationKey(nBasics, airgroupId)(sv[s][0], rootCBasics, rootCAgg);
+            vs[s].rootCIn <== SelectVerificationKey(nBasics, airgroupId)(vadcopValues[s][0], rootCBasics, rootCAgg);
         }
     }
 
     sv_circuitType <== circuitType;
     component out = FoldOutputs(n, nAgg, W, multiAir);
-    out.slots <== sv;
+    out.slots <== vadcopValues;
     out.isNull <== isNull;
-    sv_aggregatedProofs <== out.sv[0];
+    sv_aggregatedProofs <== out.vadcopValues[0];
     for (var i = 0; i < nAgg; i++) {
-        sv_aggregationTypes[i] <== out.sv[1 + i];
-        for (var e = 0; e < 3; e++) { sv_airgroupvalues[i][e] <== out.sv[1 + nAgg + 3 * i + e]; }
+        sv_aggregationTypes[i] <== out.vadcopValues[1 + i];
+        for (var e = 0; e < 3; e++) { sv_airgroupvalues[i][e] <== out.vadcopValues[1 + nAgg + 3 * i + e]; }
     }
-    for (var i = 0; i < W; i++) { sv_stage1Hash[i] <== out.sv[1 + 4 * nAgg + i]; }
+    for (var i = 0; i < W; i++) { sv_stage1Hash[i] <== out.vadcopValues[1 + 4 * nAgg + i]; }
 }

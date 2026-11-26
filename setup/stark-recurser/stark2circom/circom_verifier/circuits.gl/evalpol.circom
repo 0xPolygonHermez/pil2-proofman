@@ -35,11 +35,11 @@ template custom extern_c EvPol4() {
 
     // One Estrin chain: out falls out of the same products as s and acc.
     var zero[3] = [0, 0, 0];
-    var sv[3] = CMulAddF(x, x, zero);
-    var hi[3] = CMulAddF(coefs[4], sv, CMulAddF(coefs[3], x, coefs[2]));
-    s <-- sv;
+    var vadcopValues[3] = CMulAddF(x, x, zero);
+    var hi[3] = CMulAddF(coefs[4], vadcopValues, CMulAddF(coefs[3], x, coefs[2]));
+    s <-- vadcopValues;
     acc <-- hi;
-    out <-- CMulAddF(hi, sv, CMulAddF(coefs[1], x, coefs[0]));
+    out <-- CMulAddF(hi, vadcopValues, CMulAddF(coefs[1], x, coefs[0]));
 }
 
 /*

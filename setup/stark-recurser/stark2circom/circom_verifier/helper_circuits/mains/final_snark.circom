@@ -5,18 +5,18 @@ include "mains/sha256_inputs.circom";
 
 /*
     The final SNARK's circuit: the recursivef's proof verified (StarkVerifierBN128, key 0) and its publics
-    hashed (GetSha256Inputs over the publics definitions vd_DEFS()). Incoming publics:
+    hashed (GetSha256Inputs over the publics definitions vadcop_DEFS()). Incoming publics:
     [rootCVadcopFinal(4) | is_vadcop_final_proof(1) | real publics]; the flag is verified, not hashed.
     vkPos: the program VK's (4) position in the real publics, -1 if none.
 */
 template FinalSnark(nSha, nDefs, vkPos) {
-    var nPub = svd_nPublics(0);
+    var nPub = key_nPublics(0);
     var nProof = nPub - 5;
     assert(vkPos < 0 || nProof >= vkPos + 4);
 
     signal output publicsHash;
     signal input publics[nPub];
-    signal input proof[svd_proofSize(0)];
+    signal input proof[key_proofSize(0)];
 
     component sV = StarkVerifierBN128(0);
     sV.proof <== proof;
@@ -40,5 +40,5 @@ template FinalSnark(nSha, nDefs, vkPos) {
         publicsProof[i] <== publics[i + 5];
     }
 
-    publicsHash <== GetSha256Inputs(nSha, nDefs, vd_DEFS())(publicsProof, rootC);
+    publicsHash <== GetSha256Inputs(nSha, nDefs, vadcop_DEFS())(publicsProof, rootC);
 }

@@ -1,7 +1,7 @@
 pragma circom 2.1.0;
 pragma custom_templates;
 
-include "geometry.circom";
+include "proof_shape.circom";
 
 /*
     Merkle openings of the Goldilocks-word trees (every GL family; blake3's in the BN128 verifier too).
@@ -11,7 +11,7 @@ include "geometry.circom";
 
 // The query's bits grouped per Merkle level (log2(arity) each), zero-padded past the low `bits`.
 template QueryKeys(arity, nLevels, bits, nIn) {
-    var nBA = geo_nBitsArity(arity);
+    var nBA = log2Arity(arity);
 
     signal input {binary} queries[nIn];
     signal output {binary} keys[nLevels][nBA];
@@ -32,10 +32,10 @@ template QueryKeys(arity, nLevels, bits, nIn) {
 template VerifyTreeOpening(eSize, nVals, arity, lastLevels, ml, leafBits) {
     var LL = lastLevels;
 
-    signal input {binary} keys[ml + LL][geo_nBitsArity(arity)];
+    signal input {binary} keys[ml + LL][log2Arity(arity)];
     signal input values[nVals][eSize];
-    signal input siblings[geo_len1(ml)][geo_sibW(arity)];
-    signal input last[geo_lastSize(arity, LL)][4];
+    signal input siblings[nonEmpty(ml)][siblingWords(arity)];
+    signal input last[clearLevelNodes(arity, LL)][4];
     signal input root[4];
     signal input {binary} enable;
 

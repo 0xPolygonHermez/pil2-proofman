@@ -9,7 +9,7 @@ include "custom/merklehash.circom";
 include "pow.circom";
 include "custom/sponge.circom";
 include "transcript_sponge.circom";
-include "geometry.circom";
+include "proof_shape.circom";
 include "stark_verifier_bn128.circom";
 
 /*
@@ -23,7 +23,7 @@ function bn_sibW(arity) { return arity; }
 template BN128Open(eSize, nVals, arity, lastLevels, ml, leafBits, nBits0) {
     signal input {binary} queries[nBits0];
     signal input values[nVals][eSize];
-    signal input siblings[geo_len1(ml)][arity];
+    signal input siblings[nonEmpty(ml)][arity];
     signal input last[1][1];
     signal input root[1];
     signal input {binary} enable;

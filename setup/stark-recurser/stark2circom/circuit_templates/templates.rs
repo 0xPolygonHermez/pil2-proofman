@@ -1,6 +1,6 @@
 //! The circom mains and the Solidity contracts. A main is data over static templates
 //! (`helper_circuits/mains/`): its keys' dispatch
-//! (`circom_verifier::key_dispatch`), the vadcop data `vd_*()` and a `component main` line. The
+//! (`circom_verifier::key_dispatch`), the vadcop data `vadcop_*()` and a `component main` line. The
 //! Solidity contracts are static too (`sol/`): [`gen_solidity`] and [`gen_iverifier`] fill in their
 //! `__TOKEN__`s.
 
@@ -440,7 +440,7 @@ mod tests {
         let si = recursivef_stark_info(false);
         let out = gen_recursion_final(&si, &["v.circom".into()], None).unwrap();
         assert!(out.contains("include \"mains/final_snark.circom\";"), "{out}");
-        assert!(out.contains("function vd_DEFS() { return [0]; }"), "{out}");
+        assert!(out.contains("function vadcop_DEFS() { return [0]; }"), "{out}");
         assert!(
             out.contains("component f = FinalSnark(0, 0, -1);") && out.ends_with("\ncomponent main = Main();\n"),
             "{out}"
@@ -674,9 +674,9 @@ mod main_tests {
     fn mains_are_data_over_static_templates() {
         let out = gen(1, false);
         assert!(out.contains("include \"v.circom\";\ninclude \"mains/recursive1.circom\";"), "{out}");
-        assert!(out.contains("function svd_nBits(k) { return sv0_nBits(); }"), "{out}");
+        assert!(out.contains("function key_nBits(k) { return keyData0_nBits(); }"), "{out}");
         assert!(out.contains("roots <== ConstraintRoots0()(evals, challenges"), "{out}");
-        assert!(out.contains("function vd_airId() { return 1; }"), "{out}");
+        assert!(out.contains("function vadcop_airId() { return 1; }"), "{out}");
         let templates: Vec<&str> = out.lines().filter(|l| l.starts_with("template ")).collect();
         assert_eq!(templates, ["template ConstraintRootsAt(k) {"], "{out}");
         assert!(out
@@ -714,9 +714,9 @@ mod main_tests {
             batch_size: 1,
         };
         let rec2 = gen_recursive2(&si(1), &["v.circom".into()], &vadcop, 1, std::slice::from_ref(&vk), &o).unwrap();
-        assert!(rec2.contains("function vd_airgroupId() { return 1; }"), "{rec2}");
+        assert!(rec2.contains("function vadcop_airgroupId() { return 1; }"), "{rec2}");
         assert!(
-            rec2.contains("function vd_nBasics(i) { if (i == 0) { return 0; } if (i == 1) { return 1; } return 0; }"),
+            rec2.contains("function vadcop_nBasics(i) { if (i == 0) { return 0; } if (i == 1) { return 1; } return 0; }"),
             "{rec2}"
         );
         assert!(rec2.ends_with("= Recursive2(2);\n"), "{rec2}");
@@ -731,7 +731,7 @@ mod main_tests {
         .unwrap();
         assert!(fin.contains("include \"mains/vadcop_final.circom\";"), "{fin}");
         assert!(
-            fin.contains("function svd_nBits(k) { if (k == 0) { return sv0_nBits(); } return sv1_nBits(); }"),
+            fin.contains("function key_nBits(k) { if (k == 0) { return keyData0_nBits(); } return keyData1_nBits(); }"),
             "{fin}"
         );
         assert!(fin.contains("template GlobalConstraints(nAg, maxAgg, nPub, nPV, nCh) {"), "{fin}");

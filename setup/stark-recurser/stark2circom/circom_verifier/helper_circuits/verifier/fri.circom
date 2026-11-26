@@ -3,7 +3,7 @@ pragma custom_templates;
 
 include "fft.circom";
 include "evalpol.circom";
-include "geometry.circom";
+include "proof_shape.circom";
 include "deep.circom";
 include "merkle.circom";
 

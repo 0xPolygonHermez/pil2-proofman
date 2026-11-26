@@ -8,7 +8,7 @@ pragma custom_templates;
 template FinalCompressed(nPub, nReal) {
     signal input publics[nPub];
     signal output publics_stripped[nReal];
-    signal input proof[svd_proofSize(0)];
+    signal input proof[key_proofSize(0)];
 
     component sV = StarkVerifierGL(0);
     sV.proof <== proof;

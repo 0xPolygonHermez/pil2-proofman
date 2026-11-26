@@ -223,7 +223,7 @@ fn split_chunks(code: &[Inst]) -> Vec<Chunk<'_>> {
 }
 
 /// The global constraints of globalInfo `vi` (with its `globalConstraints`, absent meaning none), and
-/// `vd_nGlobalChallenges()`, the stage-2 challenges `VadcopFinal` draws for them.
+/// `vadcop_nGlobalChallenges()`, the stage-2 challenges `VadcopFinal` draws for them.
 pub fn gen_verify_global_constraints(vi: &Value) -> Result<String> {
     let constraints: Vec<GlobalConstraint> = match vi.get("globalConstraints") {
         Some(c) => serde_json::from_value(c.clone()).context("globalConstraints")?,
@@ -238,7 +238,7 @@ pub fn gen_verify_global_constraints(vi: &Value) -> Result<String> {
         n_challenges: vi["numChallenges"].get(1).and_then(Value::as_u64).unwrap_or(0),
     };
 
-    let mut out = format!("function vd_nGlobalChallenges() {{ return {}; }}\n\n", shape.n_challenges);
+    let mut out = format!("function vadcop_nGlobalChallenges() {{ return {}; }}\n\n", shape.n_challenges);
     let mut main = String::new();
     for (c, gc) in constraints.iter().enumerate() {
         let ctx = || format!("global constraint {c}");
@@ -317,7 +317,7 @@ mod tests {
         ]);
         let out = gen_verify_global_constraints(&info(json!([{"code": code}, {"code": binary}]))).unwrap();
         for l in [
-            "function vd_nGlobalChallenges() { return 2; }",
+            "function vadcop_nGlobalChallenges() { return 2; }",
             "    signal tmp_0[3] <== CMul()(airgroupvalues[1][1], challenges[1]);",
             "template GlobalConstraint0_chunk1(nAg, maxAgg, nPub, nPV, nCh) {",
             "    signal input tmp_48[3];",

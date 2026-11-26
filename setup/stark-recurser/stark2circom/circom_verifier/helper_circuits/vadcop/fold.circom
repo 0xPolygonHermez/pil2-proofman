@@ -19,9 +19,9 @@ template FoldHash(W, nullAware) {
     signal {binary} nb[2 * nullAware];
     nb <== isNull;
 
-    if (vd_ec() == 0 && nullAware == 1) {
+    if (vadcop_ec() == 0 && nullAware == 1) {
         out <== AggregateValuesNull(W)(a, b, nb[0], nb[1]);
-    } else if (vd_ec() == 0) {
+    } else if (vadcop_ec() == 0) {
         out <== AggregateValues(W)(a, b);
     } else {
         signal pa[2][5];
@@ -35,7 +35,7 @@ template FoldHash(W, nullAware) {
 
 // n slots' values folded left to right; nullAware drops the slots flagged null.
 template FoldSlots(n, nAgg, W, nullAware) {
-    var AGG[geo_len1(nAgg)] = vd_AGG(vd_airgroupId());
+    var AGG[nonEmpty(nAgg)] = vadcop_AGG(vadcop_airgroupId());
     signal input aggregatedProofs[n];
     signal input airgroupvalues[n][nAgg][3];
     signal input stage1Hash[n][W];
@@ -47,7 +47,7 @@ template FoldSlots(n, nAgg, W, nullAware) {
     signal {binary} isNull[n * nullAware];
     isNull <== isNullIn;
     // prefNull[j - 2]: the first j slots are all null.
-    signal {binary} prefNull[geo_len1(n - 2)];
+    signal {binary} prefNull[nonEmpty(n - 2)];
     if (nullAware == 1) {
         for (var j = 2; j < n; j++) {
             var s = 0;
@@ -58,7 +58,7 @@ template FoldSlots(n, nAgg, W, nullAware) {
     if (nullAware == 0 || n <= 2) { prefNull[0] <== 0; }
 
     // acc[j - 1]: the first j + 1 slots folded.
-    signal accAGV[geo_len1(n - 2)][nAgg][3];
+    signal accAGV[nonEmpty(n - 2)][nAgg][3];
     for (var i = 0; i < nAgg; i++) {
         for (var j = 1; j < n; j++) {
             if (nullAware == 1) {
@@ -92,7 +92,7 @@ template FoldSlots(n, nAgg, W, nullAware) {
         outAggregatedProofs <== AggregateProofs(n)(aggregatedProofs);
     }
 
-    signal accHash[geo_len1(n - 2)][W];
+    signal accHash[nonEmpty(n - 2)][W];
     component fold[n - 1];
     for (var j = 1; j < n; j++) {
         fold[j - 1] = FoldHash(W, nullAware);
@@ -108,10 +108,10 @@ template FoldSlots(n, nAgg, W, nullAware) {
 
 // The fold's outputs: the folded values, and the airgroup's aggregation types.
 template FoldOutputs(n, nAgg, W, nullAware) {
-    var AGG[geo_len1(nAgg)] = vd_AGG(vd_airgroupId());
-    signal input slots[n][sv_size(nAgg, W)];
+    var AGG[nonEmpty(nAgg)] = vadcop_AGG(vadcop_airgroupId());
+    signal input slots[n][vadcopValuesSize(nAgg, W)];
     signal input isNull[n * nullAware];
-    signal output sv[sv_size(nAgg, W) - 1];
+    signal output vadcopValues[vadcopValuesSize(nAgg, W) - 1];
 
     component f = FoldSlots(n, nAgg, W, nullAware);
     for (var s = 0; s < n; s++) {
@@ -120,11 +120,11 @@ template FoldOutputs(n, nAgg, W, nullAware) {
         for (var i = 0; i < W; i++) { f.stage1Hash[s][i] <== slots[s][2 + 4 * nAgg + i]; }
     }
     f.isNullIn <== isNull;
-    // sv without circuitType: aggregatedProofs, aggregationTypes, airgroupvalues, stage1Hash.
-    sv[0] <== f.outAggregatedProofs;
+    // vadcopValues without circuitType: aggregatedProofs, aggregationTypes, airgroupvalues, stage1Hash.
+    vadcopValues[0] <== f.outAggregatedProofs;
     for (var i = 0; i < nAgg; i++) {
-        sv[1 + i] <== AGG[i];
-        for (var e = 0; e < 3; e++) { sv[1 + nAgg + 3 * i + e] <== f.outAirgroupvalues[i][e]; }
+        vadcopValues[1 + i] <== AGG[i];
+        for (var e = 0; e < 3; e++) { vadcopValues[1 + nAgg + 3 * i + e] <== f.outAirgroupvalues[i][e]; }
     }
-    for (var i = 0; i < W; i++) { sv[1 + 4 * nAgg + i] <== f.outStage1Hash[i]; }
+    for (var i = 0; i < W; i++) { vadcopValues[1 + 4 * nAgg + i] <== f.outStage1Hash[i]; }
 }

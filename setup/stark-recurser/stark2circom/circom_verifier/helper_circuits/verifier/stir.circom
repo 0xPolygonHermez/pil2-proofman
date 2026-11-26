@@ -7,7 +7,7 @@ include "iszero.circom";
 include "bitify.circom";
 include "fft.circom";
 include "evalpol.circom";
-include "geometry.circom";
+include "proof_shape.circom";
 include "transcript.circom";
 include "fri.circom";
 
@@ -279,7 +279,7 @@ template StirShiftPoints(t, logL, logK) {
     signal output {binary} leafBits[t][nLeaf];
     signal output gpt[t];
 
-    var shiftPow = geo_shift();
+    var shiftPow = domainShift();
     for (var i = 0; i < logK; i++) { shiftPow = shiftPow * shiftPow; }
     for (var q = 0; q < t; q++) {
         for (var i = 0; i < nLeaf; i++) { leafBits[q][i] <== queries[q][i]; }
@@ -295,7 +295,7 @@ template StirFoldQueries(t, logL, logK) {
     signal output out[t][3];
 
     for (var q = 0; q < t; q++) {
-        out[q] <== StirFoldCoset(logK, logL, 1 / geo_shift())(vals[q], leafBits[q], rFold);
+        out[q] <== StirFoldCoset(logK, logL, 1 / domainShift())(vals[q], leafBits[q], rFold);
     }
 }
 
@@ -311,12 +311,12 @@ template StirVirtualOracle(arity, lastLevels, logL, logK, t, prevT) {
     var nLeaf = logL - logK;
     var nG = prevT + 1;
     var eb = stir_expBits(prevT);
-    var ml = geo_pathLevels(arity, lastLevels, nLeaf);
+    var ml = merklePathLength(arity, lastLevels, nLeaf);
 
     signal input {binary} queries[t][logL];
     signal input vals[t][K][3];
-    signal input siblings[t][geo_len1(ml)][geo_sibW(arity)];
-    signal input last[geo_lastSize(arity, lastLevels)][4];
+    signal input siblings[t][nonEmpty(ml)][siblingWords(arity)];
+    signal input last[clearLevelNodes(arity, lastLevels)][4];
     signal input root[4];
     signal input ansPrev[nG][3];
     signal input uPrev[nG];
@@ -336,7 +336,7 @@ template StirVirtualOracle(arity, lastLevels, logL, logK, t, prevT) {
     signal xm[t][K];
     for (var q = 0; q < t; q++) {
         for (var i = 0; i < nLeaf; i++) { leafBits[q][i] <== queries[q][i]; }
-        cPt[q] <== StirPointAcc(nLeaf, logL, geo_shift(), 0)(leafBits[q]);
+        cPt[q] <== StirPointAcc(nLeaf, logL, domainShift(), 0)(leafBits[q]);
         // VERIFY-CONSTRAINTS: member offsets as roots(logK) ** j (today GL_W[logK]^j printed by Rust).
         for (var j = 0; j < K; j++) { xm[q][j] <== cPt[q] * (roots(logK) ** j); }
     }
@@ -491,24 +491,24 @@ template StirFinalCheck(t, F) {
     then round r's quotient data (r < M - 1) or the final check (r = M - 1). Rounds r >= 1 derive
     their own queries; T_r's levels sent in clear hash up to its root.
 
-    Flat inputs (offsets in geometry.circom): vals = every round's opened cosets, siblings = rounds
+    Flat inputs (offsets in proof_shape.circom): vals = every round's opened cosets, siblings = rounds
     >= 1's Merkle paths, hints = per round r < M - 1 its Ans then its shake coefficients.
 */
-template StirVerifyRounds(arity, lastLevels, stirM, STIR_L, STIR_K, STIR_T, STIR_G, stirFinalBits) {
+template StirVerifyRounds(arity, lastLevels, stirM, STIR_LOG_DOMAIN_SIZES, STIR_FOLDING_FACTORS, STIR_NUM_QUERIES, STIR_GRINDING_BITS, stirFinalBits) {
     var M = stirM;
     var LL = lastLevels;
-    var sibW = geo_sibW(arity);
-    var lastSize = geo_lastSize(arity, LL);
+    var wordsPerLevel = siblingWords(arity);
+    var lastSize = clearLevelNodes(arity, LL);
 
-    signal input {binary} queriesL0[STIR_T[0]][STIR_L[0]];
+    signal input {binary} queriesL0[STIR_NUM_QUERIES[0]][STIR_LOG_DOMAIN_SIZES[0]];
     signal input ldt[ldt_n(1, M)][3];
     signal input nonces[M];
-    signal input vals[stir_valsOff(STIR_T, STIR_K, M)][3];
-    signal input siblings[geo_len1(stir_sibOff(arity, LL, STIR_L, STIR_K, STIR_T, M))][sibW];
+    signal input vals[stir_valsOff(STIR_NUM_QUERIES, STIR_FOLDING_FACTORS, M)][3];
+    signal input siblings[nonEmpty(stir_sibOff(arity, LL, STIR_LOG_DOMAIN_SIZES, STIR_FOLDING_FACTORS, STIR_NUM_QUERIES, M))][wordsPerLevel];
     signal input last[M][lastSize][4];
     signal input roots[M][4];
-    signal input hints[geo_len1(stir_nHints(1, M, STIR_T))][3];
-    signal input betas[geo_len1(M - 1)][3];
+    signal input hints[nonEmpty(stir_nHints(1, M, STIR_NUM_QUERIES))][3];
+    signal input betas[nonEmpty(M - 1)][3];
     signal input finalPol[1 << stirFinalBits][3];
     signal input {binary} enable;
 
@@ -519,14 +519,14 @@ template StirVerifyRounds(arity, lastLevels, stirM, STIR_L, STIR_K, STIR_T, STIR
     component quot[M];
     component fin[1];
     for (var r = 0; r < M; r++) {
-        var logL = STIR_L[r];
-        var logK = STIR_K[r];
+        var logL = STIR_LOG_DOMAIN_SIZES[r];
+        var logK = STIR_FOLDING_FACTORS[r];
         var K = 1 << logK;
-        var t = STIR_T[r];
-        var vo = stir_valsOff(STIR_T, STIR_K, r);
+        var t = STIR_NUM_QUERIES[r];
+        var vo = stir_valsOff(STIR_NUM_QUERIES, STIR_FOLDING_FACTORS, r);
 
         if (r > 0) {
-            qb[r] = QueryBits(t, logL, STIR_G[r], 1);
+            qb[r] = QueryBits(t, logL, STIR_GRINDING_BITS[r], 1);
             qb[r].challenge <== ldt[ldt_query(1, M, r)];
             qb[r].nonce <== nonces[r];
             qb[r].enable <== enable;
@@ -539,20 +539,20 @@ template StirVerifyRounds(arity, lastLevels, stirM, STIR_L, STIR_K, STIR_T, STIR
         }
 
         if (r > 0) {
-            var ml = geo_pathLevels(arity, LL, logL - logK);
-            var so = stir_sibOff(arity, LL, STIR_L, STIR_K, STIR_T, r);
-            var hp = stir_hintOff(STIR_T, r - 1);
-            oracle[r] = StirVirtualOracle(arity, LL, logL, logK, t, STIR_T[r - 1]);
+            var ml = merklePathLength(arity, LL, logL - logK);
+            var so = stir_sibOff(arity, LL, STIR_LOG_DOMAIN_SIZES, STIR_FOLDING_FACTORS, STIR_NUM_QUERIES, r);
+            var hp = stir_hintOff(STIR_NUM_QUERIES, r - 1);
+            oracle[r] = StirVirtualOracle(arity, LL, logL, logK, t, STIR_NUM_QUERIES[r - 1]);
             oracle[r].queries <== qb[r].queries;
             for (var q = 0; q < t; q++) {
                 for (var c = 0; c < K; c++) { oracle[r].vals[q][c] <== vals[vo + q * K + c]; }
                 for (var j = 0; j < ml; j++) { oracle[r].siblings[q][j] <== siblings[so + q * ml + j]; }
                 // VERIFY-CONSTRAINTS: the unused path of an Empty tree is wired to constants.
-                if (ml == 0) { for (var k = 0; k < sibW; k++) { oracle[r].siblings[q][0][k] <== 0; } }
+                if (ml == 0) { for (var k = 0; k < wordsPerLevel; k++) { oracle[r].siblings[q][0][k] <== 0; } }
             }
             oracle[r].last <== last[r];
             oracle[r].root <== roots[r];
-            for (var m = 0; m <= STIR_T[r - 1]; m++) { oracle[r].ansPrev[m] <== hints[hp + m]; }
+            for (var m = 0; m <= STIR_NUM_QUERIES[r - 1]; m++) { oracle[r].ansPrev[m] <== hints[hp + m]; }
             oracle[r].uPrev <== quot[r - 1].uCoefs;
             oracle[r].dBits <== quot[r - 1].dBits;
             oracle[r].expBits <== quot[r - 1].expBits;
@@ -574,7 +574,7 @@ template StirVerifyRounds(arity, lastLevels, stirM, STIR_L, STIR_K, STIR_T, STIR
         fold[r].rFold <== ldt[ldt_rFold(1, r)];
 
         if (r < M - 1) {
-            var hq = stir_hintOff(STIR_T, r);
+            var hq = stir_hintOff(STIR_NUM_QUERIES, r);
             quot[r] = StirQuotient(t);
             quot[r].gpt <== pts[r].gpt;
             quot[r].foldVals <== fold[r].out;

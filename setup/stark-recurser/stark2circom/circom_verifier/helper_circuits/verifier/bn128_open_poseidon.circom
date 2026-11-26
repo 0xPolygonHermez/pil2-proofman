@@ -7,7 +7,7 @@ include "merklehash.circom";
 include "pow.circom";
 include "sponge.circom";
 include "transcript_sponge.circom";
-include "geometry.circom";
+include "proof_shape.circom";
 include "stark_verifier_bn128.circom";
 
 /*
@@ -21,15 +21,15 @@ function bn_sibW(arity) { return arity; }
 template BN128Open(eSize, nVals, arity, lastLevels, ml, leafBits, nBits0) {
     signal input {binary} queries[nBits0];
     signal input values[nVals][eSize];
-    signal input siblings[geo_len1(ml)][arity];
-    signal input last[geo_lastSize(arity, lastLevels)][1];
+    signal input siblings[nonEmpty(ml)][arity];
+    signal input last[clearLevelNodes(arity, lastLevels)][1];
     signal input root[1];
     signal input {binary} enable;
 
     signal {binary} keys[leafBits];
     for (var i = 0; i < leafBits; i++) { keys[i] <== queries[i]; }
-    signal lastLevelsIn[geo_lastSize(arity, lastLevels)];
-    for (var i = 0; i < geo_lastSize(arity, lastLevels); i++) { lastLevelsIn[i] <== last[i][0]; }
+    signal lastLevelsIn[clearLevelNodes(arity, lastLevels)];
+    for (var i = 0; i < clearLevelNodes(arity, lastLevels); i++) { lastLevelsIn[i] <== last[i][0]; }
     if (lastLevels > 0 && ml == 0) {
         VerifyMerkleHashUntilLevelEmpty(eSize, nVals, 1 << leafBits, arity, lastLevels)(values, keys, lastLevelsIn, enable);
         _ <== siblings;
@@ -44,11 +44,11 @@ template BN128Open(eSize, nVals, arity, lastLevels, ml, leafBits, nBits0) {
 }
 
 template BN128RootCheck(lastLevels, arity, leafBits) {
-    signal input last[geo_lastSize(arity, lastLevels)][1];
+    signal input last[clearLevelNodes(arity, lastLevels)][1];
     signal input root[1];
     signal input {binary} enable;
 
-    signal values[geo_lastSize(arity, lastLevels)];
-    for (var i = 0; i < geo_lastSize(arity, lastLevels); i++) { values[i] <== last[i][0]; }
+    signal values[clearLevelNodes(arity, lastLevels)];
+    for (var i = 0; i < clearLevelNodes(arity, lastLevels); i++) { values[i] <== last[i][0]; }
     VerifyMerkleRoot(lastLevels, arity, 1 << leafBits)(values, root[0], enable);
 }

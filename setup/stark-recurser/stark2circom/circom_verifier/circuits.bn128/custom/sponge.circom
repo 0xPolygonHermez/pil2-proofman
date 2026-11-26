@@ -6,7 +6,7 @@ include "verifier/transcript_words_bn128.circom";
 
 // The transcript sponge's permutation under the name verifier/transcript_sponge.circom calls: `CustomPoseidon(rate)`,
 // rate = the Merkle arity of key 0 (the final circuit's one key).
-function sponge_rate() { return svd_arity(0); }
+function sponge_rate() { return key_arity(0); }
 function sponge_capacity() { return 1; }
 
 template SpongePermutation() {

@@ -71,7 +71,7 @@ pub fn gen_stark_verifier(
 }
 
 /// The compilation's access to its keys, whose functions and `ConstraintRoots` carry `sfxs[k]`: the data
-/// `svd_<name>(k)` and, for GL keys, `ConstraintRootsAt(k)` (a BN128 key's `ConstraintEval` is called directly).
+/// `key_<name>(k)` and, for GL keys, `ConstraintRootsAt(k)` (a BN128 key's `ConstraintEval` is called directly).
 pub(crate) fn key_dispatch(sfxs: &[String], gl: bool) -> String {
     let mut out = lib_params::dispatch(sfxs);
     if gl {
@@ -79,16 +79,16 @@ pub(crate) fn key_dispatch(sfxs: &[String], gl: bool) -> String {
 // Key k's constraints at xi.
 template ConstraintRootsAt(k) {
 ";
-        out += "    signal input evals[svd_nEvals(k)][3];
-    signal input challenges[svd_nChallenges(k)][3];
+        out += "    signal input evals[key_nEvals(k)][3];
+    signal input challenges[key_nChallenges(k)][3];
 ";
-        out += "    signal input publics[geo_len1(svd_nPublics(k))];
-    signal input proofvalues[geo_len1(svd_nProofValues(k))][3];
+        out += "    signal input publics[nonEmpty(key_nPublics(k))];
+    signal input proofvalues[nonEmpty(key_nProofValues(k))][3];
 ";
-        out += "    signal input airvalues[geo_len1(svd_nAirValues(k))][3];
-    signal input airgroupvalues[geo_len1(svd_nAirgroupValues(k))][3];
+        out += "    signal input airvalues[nonEmpty(key_nAirValues(k))][3];
+    signal input airgroupvalues[nonEmpty(key_nAirgroupValues(k))][3];
 ";
-        out += "    signal output roots[svd_nRoots(k)][3];
+        out += "    signal output roots[key_nRoots(k)][3];
 
 ";
         for (k, s) in sfxs.iter().enumerate() {

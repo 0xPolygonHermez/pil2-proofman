@@ -2,7 +2,7 @@
 
 The circom side of the recursion: the STARK verifier, the vadcop folding and the recursion circuits.
 It is a static library; Rust (`lib_gl.rs`, `lib_bn128.rs`, `circuit_templates/`) emits only the
-per-key **data** (`svd_*` / `sv<sfx>_*` functions, `vd_*` functions) and the constraint DAG, plus a
+per-key **data** (`key_*` / `keyData<sfx>_*` functions, `vadcop_*` functions) and the constraint DAG, plus a
 `component main` line.
 
 ```
@@ -32,7 +32,7 @@ decides which implementation a circuit gets:
 So a file in `helper_circuits/` never includes `circuits.gl/...` by path, except where a BN128 circuit
 needs Goldilocks gates (the blake3 gates), which it spells relatively.
 
-A path under `helper_circuits/` is written from that root: `include "verifier/geometry.circom"`,
+A path under `helper_circuits/` is written from that root: `include "verifier/proof_shape.circom"`,
 `include "vadcop/values.circom"`. An include without a directory is first looked up next to the
 including file, then through `-l`.
 
@@ -43,10 +43,10 @@ The roots are set in `setup/pil2-stark/src/proving_key/pipeline/mod.rs` (Goldilo
 
 ```
 pragma ...;
-include "<verifier>.circom";          // generated: the key's sv<sfx>_* data functions
+include "<verifier>.circom";          // generated: the key's keyData<sfx>_* data functions
 include "mains/<circuit>.circom";     // the circuit and, through its own includes, the library
-<key dispatch: svd_*(k), ConstraintRootsAt(k)>
-<vadcop data: vd_*()>
+<key dispatch: key_*(k), ConstraintRootsAt(k)>
+<vadcop data: vadcop_*()>
 component main {public [...]} = <Template>(...);
 ```
 

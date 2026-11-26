@@ -1,5 +1,5 @@
 //! The data of `GetSha256Inputs` (static, `helper_circuits/mains/sha256_inputs.circom`): publics_info's
-//! definitions as the final circuit's `vd_DEFS()`.
+//! definitions as the final circuit's `vadcop_DEFS()`.
 
 use anyhow::{bail, Context, Result};
 use proofman_common::PublicsInfo;
@@ -19,7 +19,7 @@ pub struct ProgramVk {
 pub struct Sha256Defs {
     pub n_publics: usize,
     pub n_defs: usize,
-    /// `function vd_DEFS() { return [..]; }`.
+    /// `function vadcop_DEFS() { return [..]; }`.
     pub defs: String,
     pub vk: Option<ProgramVk>,
 }
@@ -57,7 +57,7 @@ pub fn sha256_defs(publics: Option<&Value>) -> Result<Sha256Defs> {
     Ok(Sha256Defs {
         n_publics: info.as_ref().map_or(0, |i| i.n_publics),
         n_defs: defs.len(),
-        defs: format!("function vd_DEFS() {{ return [{body}]; }}\n"),
+        defs: format!("function vadcop_DEFS() {{ return [{body}]; }}\n"),
         vk,
     })
 }
@@ -77,15 +77,15 @@ mod tests {
         let p = json!({ "nPublics": 6, "definitions": [{ "name": "a", "initialPos": 0, "nValues": 1, "chunks": [2, 32] }, vk_def(2)] });
         let s = sha256_defs(Some(&p)).unwrap();
         assert_eq!((s.n_publics, s.n_defs, s.vk), (6, 2, Some(ProgramVk { pos: 2, first: false })));
-        assert_eq!(s.defs, "function vd_DEFS() { return [0, 1, 2, 32, 0, 0, 2, 4, 1, 64, 0, 1]; }\n");
+        assert_eq!(s.defs, "function vadcop_DEFS() { return [0, 1, 2, 32, 0, 0, 2, 4, 1, 64, 0, 1]; }\n");
         let p = json!({ "nPublics": 5, "definitions": [vk_def(0), { "name": "a", "initialPos": 4, "nValues": 1 }] });
         let s = sha256_defs(Some(&p)).unwrap();
         assert_eq!(s.vk, Some(ProgramVk { pos: 0, first: true }));
-        assert_eq!(s.defs, "function vd_DEFS() { return [0, 4, 1, 64, 0, 1, 4, 1, 1, 64, 0, 0]; }\n");
+        assert_eq!(s.defs, "function vadcop_DEFS() { return [0, 4, 1, 64, 0, 1, 4, 1, 1, 64, 0, 0]; }\n");
         let s = sha256_defs(Some(&Value::Null)).unwrap();
         assert_eq!(
             (s.n_publics, s.n_defs, s.vk, s.defs.as_str()),
-            (0, 0, None, "function vd_DEFS() { return [0]; }\n")
+            (0, 0, None, "function vadcop_DEFS() { return [0]; }\n")
         );
     }
 

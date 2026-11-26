@@ -2,7 +2,7 @@ pragma circom 2.1.0;
 pragma custom_templates;
 
 include "elliptic_curve.circom";
-include "verifier/geometry.circom";
+include "verifier/proof_shape.circom";
 
 /*
     The vadcop transcripts on the family's TranscriptEngine and ChainPermutation (the verifier's
@@ -10,16 +10,16 @@ include "verifier/geometry.circom";
     constraints' challenges.
 */
 
-// Absorbs rootC, root1, circuitType and the stage-1 airvalues (AV[j] = stage of airvalue j); returns the
+// Absorbs rootC, root1, circuitType and the stage-1 airvalues (AIR_VALUE_STAGE[j] = stage of airvalue j); returns the
 // first `nOut` squeezed words. Airvalues of later stages are not absorbed.
-template Stage1Transcript(circuitType, nAirValues, AV, nOut) {
+template Stage1Transcript(circuitType, nAirValues, AIR_VALUE_STAGE, nOut) {
     signal input rootC[4];
     signal input root1[4];
-    signal input airValues[geo_len1(nAirValues)][3];
+    signal input airValues[nonEmpty(nAirValues)][3];
     signal output out[nOut];
 
     var n1 = 0;
-    for (var j = 0; j < nAirValues; j++) { if (AV[j] == 1) { n1++; } }
+    for (var j = 0; j < nAirValues; j++) { if (AIR_VALUE_STAGE[j] == 1) { n1++; } }
     var ops[4] = [0, 9 + n1, 1, nOut];
     component tr = TranscriptEngine(9 + n1, nOut, 2, ops);
     for (var i = 0; i < 4; i++) {
@@ -29,7 +29,7 @@ template Stage1Transcript(circuitType, nAirValues, AV, nOut) {
     tr.in[8] <== circuitType;
     var k = 9;
     for (var j = 0; j < nAirValues; j++) {
-        if (AV[j] == 1) {
+        if (AIR_VALUE_STAGE[j] == 1) {
             tr.in[k] <== airValues[j][0];
             k++;
         } else {
@@ -41,17 +41,17 @@ template Stage1Transcript(circuitType, nAirValues, AV, nOut) {
 }
 
 // The lattice contribution: chain_w() squeezed words, then ChainPermutation round after round.
-template CalculateStage1Hash(circuitType, nAirValues, AV, latticeSize) {
+template CalculateStage1Hash(circuitType, nAirValues, AIR_VALUE_STAGE, latticeSize) {
     signal input rootC[4];
     signal input root1[4];
-    signal input airValues[geo_len1(nAirValues)][3];
+    signal input airValues[nonEmpty(nAirValues)][3];
     signal output values[latticeSize];
 
     var w = chain_w();
     assert(latticeSize % w == 0);
-    signal seed[w] <== Stage1Transcript(circuitType, nAirValues, AV, w)(rootC, root1, airValues);
+    signal seed[w] <== Stage1Transcript(circuitType, nAirValues, AIR_VALUE_STAGE, w)(rootC, root1, airValues);
     for (var i = 0; i < w; i++) { values[i] <== seed[i]; }
-    component ch[geo_len1(latticeSize \ w - 1)];
+    component ch[nonEmpty(latticeSize \ w - 1)];
     for (var r = 0; r + 1 < latticeSize \ w; r++) {
         ch[r] = ChainPermutation();
         for (var j = 0; j < w; j++) { ch[r].in[j] <== values[r * w + j]; }
@@ -60,13 +60,13 @@ template CalculateStage1Hash(circuitType, nAirValues, AV, latticeSize) {
 }
 
 // The curve contribution: ten squeezed words as a point (elliptic_curve.circom's HashToCurve).
-template CalculateStage1HashEC(circuitType, nAirValues, AV, A, B, Z, C1, C2) {
+template CalculateStage1HashEC(circuitType, nAirValues, AIR_VALUE_STAGE, A, B, Z, C1, C2) {
     signal input rootC[4];
     signal input root1[4];
-    signal input airValues[geo_len1(nAirValues)][3];
+    signal input airValues[nonEmpty(nAirValues)][3];
     signal output P[2][5];
 
-    signal xy[10] <== Stage1Transcript(circuitType, nAirValues, AV, 10)(rootC, root1, airValues);
+    signal xy[10] <== Stage1Transcript(circuitType, nAirValues, AIR_VALUE_STAGE, 10)(rootC, root1, airValues);
     signal x[5] <== [xy[0], xy[1], xy[2], xy[3], xy[4]];
     signal y[5] <== [xy[5], xy[6], xy[7], xy[8], xy[9]];
     P <== HashToCurve(A, B, Z, C1, C2)(x, y);
@@ -75,8 +75,8 @@ template CalculateStage1HashEC(circuitType, nAirValues, AV, A, B, Z, C1, C2) {
 // globalChallenge == the transcript of the publics, the stage-1 proof values (PV[j] = stage) and every
 // airgroup's stage-1 contribution (W words each).
 template VerifyGlobalChallenges(nPublics, nProofValues, PV, nAirgroups, W) {
-    signal input publics[geo_len1(nPublics)];
-    signal input proofValues[geo_len1(nProofValues)][3];
+    signal input publics[nonEmpty(nPublics)];
+    signal input proofValues[nonEmpty(nProofValues)][3];
     signal input stage1Hash[nAirgroups][W];
     signal input globalChallenge[3];
 

@@ -2,7 +2,7 @@ pragma circom 2.1.0;
 pragma custom_templates;
 
 include "bitify.circom";
-include "geometry.circom";
+include "proof_shape.circom";
 
 /*
     The STARK's Fiat-Shamir schedule on top of `TranscriptEngine` (transcript_sponge.circom or
@@ -76,34 +76,34 @@ template TranscriptHash(n) {
               round's query challenge
 
     challengesMap is in draw order (lib_params.rs checks it), so the squeezes fill `challenges` in
-    order, then `ldt` (geometry.circom's ldt_* name its entries). CH[s] counts stage s's challenges,
-    AV / AGV are the air(group) values' stages; circuitType > 0 starts from the global challenge (a
+    order, then `ldt` (proof_shape.circom's ldt_* name its entries). CH[s] counts stage s's challenges,
+    AIR_VALUE_STAGE / AIRGROUP_VALUE_STAGE are the air(group) values' stages; circuitType > 0 starts from the global challenge (a
     basic air). queriesL0 are round 0's queries (FRI's only round).
 */
-template StarkVerifierTranscript(nStages, nPublics, nAirValues, nAirgroupValues, nEvals, nChallenges, nSteps, STEPS, stir, stirM, stirFinalBits, STIR_T, hashCommits, circuitType, nQueries, powBits, CH, AV, AGV) {
+template StarkVerifierTranscript(nStages, nPublics, nAirValues, nAirgroupValues, nEvals, nChallenges, nSteps, STEPS, stir, stirM, stirFinalBits, STIR_NUM_QUERIES, hashCommits, circuitType, nQueries, powBits, CH, AIR_VALUE_STAGE, AIRGROUP_VALUE_STAGE) {
     var nP = nPublics;
     var nAV = nAirValues;
     var nAGV = nAirgroupValues;
     var nEv = nEvals;
-    var NF = geo_nFolds(stir, nSteps, stirM);
-    var F = geo_finalPolSize(stir, nSteps, STEPS, stirFinalBits);
+    var NF = nFoldTrees(stir, nSteps, stirM);
+    var F = finalPolSize(stir, nSteps, STEPS, stirFinalBits);
     var nB = stir == 1 ? NF - 1 : 0;
-    var nH = stir_nHints(stir, NF, STIR_T);
+    var nH = stir_nHints(stir, NF, STIR_NUM_QUERIES);
     var hc = hashCommits;
     var inCh = circuitType > 0 ? 1 : 0;
     var D = tr_digestW();
     var CW = tr_challengeW();
 
     signal input globalChallenge[3];
-    signal input publics[geo_len1(nP)];
+    signal input publics[nonEmpty(nP)];
     signal input rootC[D];
     signal input stageRoots[nStages + 1][D];
-    signal input airvalues[geo_len1(nAV)][3];
-    signal input airgroupvalues[geo_len1(nAGV)][3];
+    signal input airvalues[nonEmpty(nAV)][3];
+    signal input airgroupvalues[nonEmpty(nAGV)][3];
     signal input evals[nEv][3];
-    signal input foldRoots[geo_len1(NF)][D];
-    signal input betas[geo_len1(nB)][3];
-    signal input hints[geo_len1(nH)][3];
+    signal input foldRoots[nonEmpty(NF)][D];
+    signal input betas[nonEmpty(nB)][3];
+    signal input hints[nonEmpty(nH)][3];
     signal input finalPol[F][3];
     signal input nonce;
     signal input {binary} enable;
@@ -114,7 +114,7 @@ template StarkVerifierTranscript(nStages, nPublics, nAirValues, nAirgroupValues,
 
     // Stage-1 airgroup values use limb 0 only.
     for (var a = 0; a < nAGV; a++) {
-        if (AGV[a] == 1) {
+        if (AIRGROUP_VALUE_STAGE[a] == 1) {
             airgroupvalues[a][1] === 0;
             airgroupvalues[a][2] === 0;
         }
@@ -179,14 +179,14 @@ template StarkVerifierTranscript(nStages, nPublics, nAirValues, nAirgroupValues,
         for (var i = 0; i < D; i++) { src[nIn] = stageRoots[s - 1][i]; nIn++; }
         ops[2 * nOps] = 0; ops[2 * nOps + 1] = D; nOps++;
         for (var a = 0; a < nAV; a++) {
-            if (AV[a] == s) {
+            if (AIR_VALUE_STAGE[a] == s) {
                 for (var e = 0; e < 3; e++) { src[nIn] = airvalues[a][e]; nIn++; }
                 ops[2 * nOps] = 0; ops[2 * nOps + 1] = 3; nOps++;
             }
         }
         // Stage-1 airgroup values (limb 0 only) are absorbed in round 2, wider ones in their own round.
         for (var a = 0; a < nAGV; a++) {
-            var st = AGV[a];
+            var st = AIRGROUP_VALUE_STAGE[a];
             var eff = st > 2 ? st : 2;
             if (eff == s) {
                 var w = st == 1 ? 1 : 3;
@@ -223,8 +223,8 @@ template StarkVerifierTranscript(nStages, nPublics, nAirValues, nAirgroupValues,
         // STIR iteration s - 1 >= 1: rComb, the query challenge of round s - 2, its hints, rho.
         if (stir == 1 && s >= 2) {
             ops[2 * nOps] = 1; ops[2 * nOps + 1] = 2 * CW; nOps++; nSq += 2;
-            var h0 = stir_hintOff(STIR_T, s - 2);
-            var hn = 2 * (STIR_T[s - 2] + 1);
+            var h0 = stir_hintOff(STIR_NUM_QUERIES, s - 2);
+            var hn = 2 * (STIR_NUM_QUERIES[s - 2] + 1);
             for (var i = 0; i < hn; i++) {
                 for (var e = 0; e < 3; e++) { src[nIn] = hints[h0 + i][e]; nIn++; }
             }

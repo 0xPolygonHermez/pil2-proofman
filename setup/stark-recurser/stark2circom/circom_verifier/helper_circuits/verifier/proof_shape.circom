@@ -4,63 +4,63 @@ pragma circom 2.1.0;
 // STEPS: FRI logDomainSizes; STIR [log|L_0|, log|L_0| - k_0] (L_0 queries and tree T_0).
 
 // circom rejects zero-length arrays: optional inputs are padded to one entry.
-function geo_len1(n) { return n > 0 ? n : 1; }
+function nonEmpty(n) { return n > 0 ? n : 1; }
 
 // The STARK domain shift.
-function geo_shift() { return 7; }
+function domainShift() { return 7; }
 
-function geo_nBitsArity(arity) {
+function log2Arity(arity) {
     var b = 0;
     while ((1 << b) < arity) { b++; }
     return b;
 }
 
-function geo_sibW(arity) { return (arity - 1) * 4; }
+function siblingWords(arity) { return (arity - 1) * 4; }
 
 // ceil(bits / log2(arity)): Merkle levels of a tree over 2^bits leaves.
-function geo_levels(arity, bits) {
-    var nba = geo_nBitsArity(arity);
+function merkleHeight(arity, bits) {
+    var nba = log2Arity(arity);
     return (bits + nba - 1) \ nba;
 }
 
-function geo_lastSize(arity, lastLevels) { return lastLevels > 0 ? arity ** lastLevels : 1; }
+function clearLevelNodes(arity, lastLevels) { return lastLevels > 0 ? arity ** lastLevels : 1; }
 
 // Merkle path below the levels sent in clear, of a tree over 2^bits leaves (0 selects the Empty variant).
-function geo_pathLevels(arity, lastLevels, bits) {
-    var full = geo_levels(arity, bits);
+function merklePathLength(arity, lastLevels, bits) {
+    var full = merkleHeight(arity, bits);
     return full > lastLevels ? full - lastLevels : 0;
 }
 
 // Path length of an L_0 tree below the levels sent in clear.
-function geo_levels0(arity, lastLevels, STEPS) { return geo_levels(arity, STEPS[0]) - lastLevels; }
+function l0PathLength(arity, lastLevels, STEPS) { return merkleHeight(arity, STEPS[0]) - lastLevels; }
 
-function geo_finalSize(nSteps, STEPS) { return 1 << STEPS[nSteps - 1]; }
+function lastDomainSize(nSteps, STEPS) { return 1 << STEPS[nSteps - 1]; }
 
 // Coefficients of finalPol below the degree bound.
-function geo_maxDegSize(nBits, nBitsExt, nSteps, STEPS) {
+function finalPolDegreeBound(nBits, nBitsExt, nSteps, STEPS) {
     var blowup = nBitsExt - nBits;
     var fb = STEPS[nSteps - 1];
     return 1 << (fb > blowup ? fb - blowup : 0);
 }
 
 // Fold step s >= 1: coset size of tree s (f_{s-1} grouped by 2^{k_{s-1}}).
-function geo_foldExp(STEPS, s) { return 1 << (STEPS[s - 1] - STEPS[s]); }
+function foldCosetSize(STEPS, s) { return 1 << (STEPS[s - 1] - STEPS[s]); }
 
 // Fold step s >= 1: Merkle path of tree s below the levels sent in clear.
-function geo_foldLevels(arity, lastLevels, STEPS, s) { return geo_pathLevels(arity, lastLevels, STEPS[s]); }
+function foldPathLength(arity, lastLevels, STEPS, s) { return merklePathLength(arity, lastLevels, STEPS[s]); }
 
 // 1 / shift^(2^(nBitsExt - STEPS[s-1])): the coset offset of fold step s's domain.
-function geo_e0(nBitsExt, STEPS, s) {
-    var e = geo_shift();
+function foldCosetShiftInv(nBitsExt, STEPS, s) {
+    var e = domainShift();
     for (var i = 0; i < nBitsExt - STEPS[s - 1]; i++) { e = e * e; }
     return 1 / e;
 }
 
 // Committed oracles after f_0's: FRI's fold trees, STIR's T_0..T_{M-1}.
-function geo_nFolds(stir, nSteps, stirM) { return stir == 1 ? stirM : nSteps - 1; }
+function nFoldTrees(stir, nSteps, stirM) { return stir == 1 ? stirM : nSteps - 1; }
 
 // finalPol rows in the proof: FRI's evaluations over the last domain, STIR's coefficients.
-function geo_finalPolSize(stir, nSteps, STEPS, stirFinalBits) { return stir == 1 ? 1 << stirFinalBits : geo_finalSize(nSteps, STEPS); }
+function finalPolSize(stir, nSteps, STEPS, stirFinalBits) { return stir == 1 ? 1 << stirFinalBits : lastDomainSize(nSteps, STEPS); }
 
 // The low-degree test's squeezes in draw order (transcript output ldt). FRI: rFold[0..nFolds), the query
 // challenge. STIR: rFold[0], then per iteration i >= 1: rOut, rFold[i], rComb, query challenge of round
@@ -92,7 +92,7 @@ function stir_valsOff(T, K, r) {
 
 function stir_sibOff(arity, lastLevels, L, K, T, r) {
     var off = 0;
-    for (var j = 1; j < r; j++) { off += T[j] * geo_pathLevels(arity, lastLevels, L[j] - K[j]); }
+    for (var j = 1; j < r; j++) { off += T[j] * merklePathLength(arity, lastLevels, L[j] - K[j]); }
     return off;
 }
 
@@ -108,20 +108,20 @@ function stir_nHints(stir, M, T) {
 }
 
 // Query-batch slots: L_0 tree j's width, fold tree j+1's coset members and path levels (0 past the last).
-function geo_slotW(S0, nTrees, j) {
-    if (j < nTrees) { return S0[j + 1] - S0[j]; }
+function geo_slotW(L0_TREE_START, nTrees, j) {
+    if (j < nTrees) { return L0_TREE_START[j + 1] - L0_TREE_START[j]; }
     return 0;
 }
 function geo_slotC(STEPS, nq, j) {
-    if (j < nq) { return geo_foldExp(STEPS, j + 1); }
+    if (j < nq) { return foldCosetSize(STEPS, j + 1); }
     return 0;
 }
 function geo_slotM(arity, lastLevels, STEPS, nq, j) {
-    if (j < nq) { return geo_foldLevels(arity, lastLevels, STEPS, j + 1); }
+    if (j < nq) { return foldPathLength(arity, lastLevels, STEPS, j + 1); }
     return 0;
 }
 // The bits of fold step s + 1's domain, 0 past the last.
-function geo_nextBits(STEPS, nSteps, s) {
+function nextFoldDomainBits(STEPS, nSteps, s) {
     if (s + 1 < nSteps) { return STEPS[s + 1]; }
     return 0;
 }

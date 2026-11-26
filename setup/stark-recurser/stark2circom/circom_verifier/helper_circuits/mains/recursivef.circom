@@ -6,8 +6,8 @@ pragma custom_templates;
 // A recursivef (Goldilocks): its verifier with rootC and the publics public.
 template Recursivef() {
     signal input rootC[4];
-    signal input publics[svd_nPublics(0)];
-    signal input proof[svd_proofSize(0)];
+    signal input publics[key_nPublics(0)];
+    signal input proof[key_proofSize(0)];
 
     component sV = StarkVerifierGL(0);
     sV.proof <== proof;

@@ -9,15 +9,15 @@ include "vadcop/hashes.circom";
 
 /*
     vadcop_final (the conventions of vadcop/values.circom); the generated main adds GlobalConstraints,
-    vd_nGlobalChallenges() and the global data vd_nPVMap() / vd_PV() (proofValuesMap's size and stages).
+    vadcop_nGlobalChallenges() and the global data vadcop_nPVMap() / vadcop_PV() (proofValuesMap's size and stages).
 */
 // The vadcop_final of nAg airgroups: one recursive2 proof each (key a), the global challenge and the
 // global constraints.
 template VadcopFinal(nAg) {
-    var nPub = vd_nPublics();
-    var nPV = vd_nProofValues();
-    var W = vd_W();
-    var multiAir = vd_multiAir();
+    var nPub = vadcop_nPublics();
+    var nPV = vadcop_nProofValues();
+    var W = vadcop_W();
+    var multiAir = vadcop_multiAir();
     // A null proof leaves its airgroup's values unconstrained, so the global checks must see what
     // an airgroup with no instances contributes; a single airgroup can never be null.
     var maskNull = multiAir == 1 && nAg > 1 ? 1 : 0;
@@ -26,8 +26,8 @@ template VadcopFinal(nAg) {
     var OFF[nAg];
     for (var a = 0; a < nAg; a++) {
         OFF[a] = T;
-        T += sv_size(vd_nAgg(a), W) + svd_proofSize(a);
-        if (vd_nAgg(a) > maxAgg) { maxAgg = vd_nAgg(a); }
+        T += vadcopValuesSize(vadcop_nAgg(a), W) + key_proofSize(a);
+        if (vadcop_nAgg(a) > maxAgg) { maxAgg = vadcop_nAgg(a); }
     }
 
     signal output is_vadcop_final_proof <== 1;
@@ -44,17 +44,17 @@ template VadcopFinal(nAg) {
     signal stage1Hash[nAg][W];
     signal agv[nAg][maxAgg][3];
     for (var a = 0; a < nAg; a++) {
-        var nAgg = vd_nAgg(a);
-        var S = sv_size(nAgg, W);
-        var nPubV = svd_nPublics(a);
-        var nBasics = vd_nBasics(a);
-        var rootCBasics[nBasics][4] = vd_basics(a);
-        var rootCAgg[4] = vd_rootCAgg(a);
+        var nAgg = vadcop_nAgg(a);
+        var S = vadcopValuesSize(nAgg, W);
+        var nPubV = key_nPublics(a);
+        var nBasics = vadcop_nBasics(a);
+        var rootCBasics[nBasics][4] = vadcop_basics(a);
+        var rootCAgg[4] = vadcop_rootCAgg(a);
         vs[a] = StarkVerifierGL(a);
-        for (var i = 0; i < svd_proofSize(a); i++) { vs[a].proof[i] <== airgroups[OFF[a] + S + i]; }
-        for (var i = 0; i < svd_nProofValues(a); i++) { vs[a].proofvalues[i] <== proofValues[i]; }
+        for (var i = 0; i < key_proofSize(a); i++) { vs[a].proof[i] <== airgroups[OFF[a] + S + i]; }
+        for (var i = 0; i < key_nProofValues(a); i++) { vs[a].proofvalues[i] <== proofValues[i]; }
         pubs[a] = VadcopPublics(a, nAgg, W, nPub, nPV, nPubV, nPubV - 4);
-        for (var i = 0; i < S; i++) { pubs[a].sv[i] <== airgroups[OFF[a] + i]; }
+        for (var i = 0; i < S; i++) { pubs[a].vadcopValues[i] <== airgroups[OFF[a] + i]; }
         pubs[a].publics <== publics;
         pubs[a].proofValues <== proofValues;
         pubs[a].globalChallenge <== globalChallenge;
@@ -76,7 +76,7 @@ template VadcopFinal(nAg) {
                 stage1Hash[a][i] <== airgroups[OFF[a] + 2 + 4 * nAgg + i];
             }
         }
-        var AGG[geo_len1(nAgg)] = vd_AGG(a);
+        var AGG[nonEmpty(nAgg)] = vadcop_AGG(a);
         for (var i = 0; i < maxAgg; i++) {
             if (i >= nAgg) {
                 agv[a][i] <== [0, 0, 0];
@@ -90,14 +90,14 @@ template VadcopFinal(nAg) {
     }
 
     // The global challenge is the transcript of the publics, stage-1 proof values and contributions.
-    component verifyChallenges = VerifyGlobalChallenges(nPub, vd_nPVMap(), vd_PV(), nAg, W);
+    component verifyChallenges = VerifyGlobalChallenges(nPub, vadcop_nPVMap(), vadcop_PV(), nAg, W);
     if (nPub > 0) { verifyChallenges.publics <== publics; } else { verifyChallenges.publics <== [0]; }
-    if (vd_nPVMap() > 0) { verifyChallenges.proofValues <== proofValues; } else { verifyChallenges.proofValues <== [[0, 0, 0]]; }
+    if (vadcop_nPVMap() > 0) { verifyChallenges.proofValues <== proofValues; } else { verifyChallenges.proofValues <== [[0, 0, 0]]; }
     verifyChallenges.stage1Hash <== stage1Hash;
     verifyChallenges.globalChallenge <== globalChallenge;
 
     // The global constraints (generated GlobalConstraints) over the padded values and stage-2 challenges.
-    var nCh = vd_nGlobalChallenges();
+    var nCh = vadcop_nGlobalChallenges();
     signal challenges[nCh][3];
     if (nCh > 0) { challenges <== GlobalChallenges(nCh)(globalChallenge); }
     component globalConstraints = GlobalConstraints(nAg, maxAgg, nPub, nPV, nCh);

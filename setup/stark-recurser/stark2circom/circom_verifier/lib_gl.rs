@@ -140,10 +140,10 @@ pub(crate) mod tests {
         let out = render(&stark_info(), &opts(HashFamily::Poseidon2));
         let templates: Vec<&str> = out.lines().filter(|l| l.starts_with("template ")).collect();
         assert_eq!(templates, ["template parallel ConstraintRoots() {"], "{out}");
-        assert_eq!(out.matches("function sv_").count(), super::super::lib_params::FIELDS.len(), "{out}");
+        assert_eq!(out.matches("function keyData_").count(), super::super::lib_params::FIELDS.len(), "{out}");
         has_all(
             &out,
-            &["function sv_STEPS() { return [17, 14, 11]; }", "include \"verifier/family_poseidon2.circom\";"],
+            &["function keyData_STEPS() { return [17, 14, 11]; }", "include \"verifier/family_poseidon2.circom\";"],
         );
     }
 
@@ -155,21 +155,21 @@ pub(crate) mod tests {
         has_all(
             &out,
             &[
-                "function sv_offAGV() { return 0; }",
-                "function sv_offAV() { return -1; }",
-                "function sv_OFF_ROOT() { return [3, 7, 11]; }",
-                "function sv_offEvals() { return 15; }",
-                "function sv_TREE_ROOT() { return [3, 7, 11, -1, -2]; }",
-                "function sv_TREE_PUB() { return [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 2, 3]; }",
-                "function sv_ROOT_C() { return [0, 0, 0, 0]; }",
+                "function keyData_offAirgroupValues() { return 0; }",
+                "function keyData_offAirValues() { return -1; }",
+                "function keyData_OFF_ROOT() { return [3, 7, 11]; }",
+                "function keyData_offEvals() { return 15; }",
+                "function keyData_TREE_ROOT() { return [3, 7, 11, -1, -2]; }",
+                "function keyData_TREE_PUB() { return [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 2, 3]; }",
+                "function keyData_ROOT_C() { return [0, 0, 0, 0]; }",
             ],
         );
         let off = |name: &str| -> Vec<i64> {
-            let l = out.lines().find(|l| l.starts_with(&format!("function sv_{name}() "))).unwrap();
+            let l = out.lines().find(|l| l.starts_with(&format!("function keyData_{name}() "))).unwrap();
             let v = &l[l.find("return ").unwrap() + 7..l.rfind(';').unwrap()];
             v.trim_matches(['[', ']']).split(", ").map(|x| x.parse().unwrap()).collect()
         };
-        let (v, s, l) = (off("OFF_S0V"), off("OFF_S0S"), off("OFF_S0L"));
+        let (v, s, l) = (off("OFF_L0_VALUES"), off("OFF_L0_SIBLINGS"), off("OFF_L0_LAST_LEVELS"));
         // The const tree is the first in the proof: right after the 7 evaluations.
         assert_eq!(v[3], 15 + 21);
         assert!(v.iter().zip(&s).zip(&l).all(|((v, s), l)| v < s && s < l), "{v:?} {s:?} {l:?}");
@@ -186,9 +186,9 @@ pub(crate) mod tests {
         has_all(
             &out,
             &[
-                "function sv_hashCommits() { return 1; }",
-                "function sv_circuitType() { return 37; }",
-                "function sv_verkeyInput() { return 1; }",
+                "function keyData_hashCommits() { return 1; }",
+                "function keyData_circuitType() { return 37; }",
+                "function keyData_verkeyInput() { return 1; }",
                 "include \"verifier/family_blake3.circom\";",
             ],
         );
@@ -214,14 +214,14 @@ pub(crate) mod tests {
         has_all(
             &out,
             &[
-                "function sv_nGroups() { return 2; }",
-                "function sv_nPols() { return 5; }",
-                "function sv_nSums() { return 1; }",
-                "function sv_S0() { return [0, 1, 4, 7, 8, 9]; }",
-                "function sv_GROUP_LEN() { return [3, 4]; }",
-                "function sv_REF_COL() { return [0, 1, 2, 0, 3, 2, 4]; }",
-                "function sv_SUMS() { return [0, 1]; }",
-                "function sv_COLS() { return [2, 2, 0, 0, 1, 2, 8, 1, 0, 1, 1, 1, 3, 1, 2, 3, 7, 1, 4, 4, 3]; }",
+                "function keyData_nOpenings() { return 2; }",
+                "function keyData_nPols() { return 5; }",
+                "function keyData_nSums() { return 1; }",
+                "function keyData_L0_TREE_START() { return [0, 1, 4, 7, 8, 9]; }",
+                "function keyData_OPENING_NUM_EVALS() { return [3, 4]; }",
+                "function keyData_EVAL_COLUMN() { return [0, 1, 2, 0, 3, 2, 4]; }",
+                "function keyData_SUMS() { return [0, 1]; }",
+                "function keyData_COLS() { return [2, 2, 0, 0, 1, 2, 8, 1, 0, 1, 1, 1, 3, 1, 2, 3, 7, 1, 4, 4, 3]; }",
             ],
         );
     }
@@ -257,7 +257,7 @@ pub(crate) mod tests {
             &out,
             &[
                 "template parallel ConstraintRoots42() {",
-                "function sv42_nBits() {",
+                "function keyData42_nBits() {",
                 "include \"verifier/family_poseidon1.circom\";",
             ],
         );
@@ -283,18 +283,18 @@ pub(crate) mod tests {
         has_all(
             &out,
             &[
-                "function sv_stir() { return 1; }",
-                "function sv_nQueries() { return 10; }",
-                "function sv_powBits() { return 4; }",
-                "function sv_STEPS() { return [17, 14]; }",
-                "function sv_STIR_T() { return [10, 6]; }",
-                "function sv_stirFinalBits() { return 10; }",
-                "function sv_nFolds() { return 2; }",
-                "function sv_offNonce() { return -1; }",
+                "function keyData_stir() { return 1; }",
+                "function keyData_nQueries() { return 10; }",
+                "function keyData_powBits() { return 4; }",
+                "function keyData_STEPS() { return [17, 14]; }",
+                "function keyData_STIR_NUM_QUERIES() { return [10, 6]; }",
+                "function keyData_stirFinalBits() { return 10; }",
+                "function keyData_nFolds() { return 2; }",
+                "function keyData_offNonce() { return -1; }",
             ],
         );
-        assert!(!out.contains("function sv_offBetas() { return -1; }"), "{out}");
-        assert!(!out.contains("function sv_OFF_ANS() { return [-1]; }"), "{out}");
+        assert!(!out.contains("function keyData_offBetas() { return -1; }"), "{out}");
+        assert!(!out.contains("function keyData_OFF_ANS() { return [-1]; }"), "{out}");
     }
 
     #[test]
@@ -344,11 +344,11 @@ pub(crate) mod tests {
         let mut si = stark_info();
         si["starkStruct"]["logDomainSizes"] = json!([17, 14, 2]);
         let out = render(&si, &opts(HashFamily::Poseidon2));
-        let fs = out.lines().find(|l| l.starts_with("function sv_OFF_FS() ")).unwrap();
+        let fs = out.lines().find(|l| l.starts_with("function keyData_OFF_FOLD_SIBLINGS() ")).unwrap();
         assert!(fs.ends_with(", -1]; }") && !fs.contains("[-1"), "{fs}");
     }
 
-    /// The library reads exactly the declared data (`svd_<name>`, lib_params::FIELDS).
+    /// The library reads exactly the declared data (`key_<name>`, lib_params::FIELDS).
     #[test]
     fn library_reads_exactly_the_declared_fields() {
         let lib = [
@@ -364,7 +364,7 @@ pub(crate) mod tests {
         ]
         .concat();
         let mut used: Vec<&str> = lib
-            .split("svd_")
+            .split("key_")
             .skip(1)
             .map(|r| &r[..r.find(|c: char| !c.is_ascii_alphanumeric() && c != '_').unwrap()])
             .filter(|n| !n.is_empty())

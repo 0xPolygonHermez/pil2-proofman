@@ -1,4 +1,4 @@
-//! The vadcop data a recursion main hands its static templates (`helper_circuits/vadcop/` and `helper_circuits/mains/`): `vd_<name>()` and, per airgroup, `vd_<name>(i)`.
+//! The vadcop data a recursion main hands its static templates (`helper_circuits/vadcop/` and `helper_circuits/mains/`): `vadcop_<name>()` and, per airgroup, `vadcop_<name>(i)`.
 
 use anyhow::{bail, Context, Result};
 use serde_json::Value;
@@ -16,11 +16,11 @@ pub fn air_id_vars(stark_info: &Value) -> Result<(u64, u64)> {
     Ok((airgroup_id, air_id))
 }
 
-/// `function vd_{name}(i)`: `values[i]`, else `default`.
+/// `function vadcop_{name}(i)`: `values[i]`, else `default`.
 fn indexed(name: &str, values: &[String], default: &str) -> String {
     let branches: String =
         values.iter().enumerate().map(|(i, v)| format!("if (i == {i}) {{ return {v}; }} ")).collect();
-    format!("function vd_{name}(i) {{ {branches}return {default}; }}\n")
+    format!("function vadcop_{name}(i) {{ {branches}return {default}; }}\n")
 }
 
 fn list<T: ToString>(v: &[T]) -> String {
@@ -58,11 +58,11 @@ pub fn vadcop_data(
     let n_publics = if vi.is_null() { 0 } else { vi["nPublics"].as_u64().context("vadcopInfo has no nPublics")? };
 
     let mut out =
-        format!("\nfunction vd_airgroupId() {{ return {airgroup_id}; }}\nfunction vd_airId() {{ return {air_id}; }}\n");
-    out += &format!("function vd_nPublics() {{ return {n_publics}; }}\n");
-    out += &format!("function vd_nProofValues() {{ return {}; }}\n", parse_num_proof_values(&vi["numProofValues"]));
-    out += &format!("function vd_nPVMap() {{ return {}; }}\nfunction vd_PV() {{ return {}; }}\n", pv.len(), list(&pv));
-    out += &format!("function vd_W() {{ return {w}; }}\nfunction vd_ec() {{ return {}; }}\n", u8::from(ec));
+        format!("\nfunction vadcop_airgroupId() {{ return {airgroup_id}; }}\nfunction vadcop_airId() {{ return {air_id}; }}\n");
+    out += &format!("function vadcop_nPublics() {{ return {n_publics}; }}\n");
+    out += &format!("function vadcop_nProofValues() {{ return {}; }}\n", parse_num_proof_values(&vi["numProofValues"]));
+    out += &format!("function vadcop_nPVMap() {{ return {}; }}\nfunction vadcop_PV() {{ return {}; }}\n", pv.len(), list(&pv));
+    out += &format!("function vadcop_W() {{ return {w}; }}\nfunction vadcop_ec() {{ return {}; }}\n", u8::from(ec));
     for k in ["A", "B", "Z", "C1", "C2"] {
         let v = if ec {
             vi["curveConstants"][k]
@@ -72,9 +72,9 @@ pub fn vadcop_data(
         } else {
             "[0, 0, 0, 0, 0]".into()
         };
-        out += &format!("function vd_ec{k}() {{ return {v}; }}\n");
+        out += &format!("function vadcop_ec{k}() {{ return {v}; }}\n");
     }
-    out += &format!("function vd_multiAir() {{ return {}; }}\n", u8::from(airgroups > 1 || airs_0 > 1));
+    out += &format!("function vadcop_multiAir() {{ return {}; }}\n", u8::from(airgroups > 1 || airs_0 > 1));
     let types: Vec<Vec<u64>> = agg_types
         .iter()
         .map(|ag| {
@@ -118,10 +118,10 @@ mod tests {
         let vk = vec!["1".to_string(), "2".into(), "3".into(), "4".into()];
         let out = vadcop_data(&vi, &[vec![vk.clone()], vec![vk.clone(), vk.clone()]], &[vk.clone(), vk], 0, 0).unwrap();
         for f in [
-            "function vd_nAgg(i) { if (i == 0) { return 1; } if (i == 1) { return 2; } return 0; }",
-            "function vd_AGG(i) { if (i == 0) { return [0]; } if (i == 1) { return [1, 0]; } return [0]; }",
-            "function vd_multiAir() { return 1; }",
-            "function vd_W() { return 368; }",
+            "function vadcop_nAgg(i) { if (i == 0) { return 1; } if (i == 1) { return 2; } return 0; }",
+            "function vadcop_AGG(i) { if (i == 0) { return [0]; } if (i == 1) { return [1, 0]; } return [0]; }",
+            "function vadcop_multiAir() { return 1; }",
+            "function vadcop_W() { return 368; }",
             "if (i == 1) { return [[1, 2, 3, 4], [1, 2, 3, 4]]; }",
         ] {
             assert!(out.contains(f), "missing `{f}`:\n{out}");

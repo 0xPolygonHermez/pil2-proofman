@@ -19,14 +19,14 @@ include "stark_verifier_bn128.circom";
 */
 
 function bn_rootW() { return 4; }
-function bn_sibW(arity) { return geo_sibW(arity); }
+function bn_sibW(arity) { return siblingWords(arity); }
 
 // One opened leaf of nVals elements of eSize limbs, below the levels sent in clear.
 template BN128Open(eSize, nVals, arity, lastLevels, ml, leafBits, nBits0) {
     signal input {binary} queries[nBits0];
     signal input values[nVals][eSize];
-    signal input siblings[geo_len1(ml)][geo_sibW(arity)];
-    signal input last[geo_lastSize(arity, lastLevels)][4];
+    signal input siblings[nonEmpty(ml)][siblingWords(arity)];
+    signal input last[clearLevelNodes(arity, lastLevels)][4];
     signal input root[4];
     signal input {binary} enable;
 
@@ -43,7 +43,7 @@ template BN128Open(eSize, nVals, arity, lastLevels, ml, leafBits, nBits0) {
 
 // The levels sent in clear hash to the committed root.
 template BN128RootCheck(lastLevels, arity, leafBits) {
-    signal input last[geo_lastSize(arity, lastLevels)][4];
+    signal input last[clearLevelNodes(arity, lastLevels)][4];
     signal input root[4];
     signal input {binary} enable;
 
