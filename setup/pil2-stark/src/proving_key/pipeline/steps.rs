@@ -89,15 +89,28 @@ pub enum Prime {
     Bn128,
 }
 
+/// One step of a proving-key pipeline, in the order the kinds run them (`kinds.rs`):
+///
+/// - `CircomPrologue`: writes the verifier circoms and the circuit's main (no template: compiles
+///   `ctx.circom_file` as is), compiles them with circom, copies the `.dat`.
+/// - `WitnessLib`: builds the circuit's witness library in the background.
+/// - `Plonk2Pil`: the r1cs as plonk rows, fixed columns and PIL (the generator; untrusted).
+/// - `WriteFixed`: writes those fixed columns, PIL and exec.
+/// - `CompilePil`: pil2com, PIL to pilout.
+/// - `CheckPlonk`: the trusted checker, r1cs ⇔ plonk ⇔ fixed ⇔ PIL; a mismatch fails the setup.
+/// - `StarkTail`: pil_info (or `ctx.reuse`'s), starkinfo/verifierinfo/expressionsinfo, `.bin`, the
+///   plonk `.const`. `starkinfo_only` (recursive1): just the starkinfo the const tree reads and removes.
+/// - `ConstTree`: `.const` → const tree → verkey; a missing `.const` fails when `required`.
+/// - `WriteVerifierRs`: the Rust verifier.
+/// - `WitnessWait`: waits for the background witness library builds.
+/// - `Custom`: a kind's own step.
 pub enum Step {
-    /// verifier circom(s), circuit circom (None: `ctx.circom_file` as is), `circom` compile, copy `.dat`.
     CircomPrologue {
         verifier: Option<VerifierGen>,
         circom_template: Option<CircuitTemplate>,
         opt: CircomOpt,
         prime: Prime,
     },
-    /// Background build of the compiled circuit's witness library.
     WitnessLib,
     Plonk2Pil {
         kind: SetupKind,
@@ -107,21 +120,15 @@ pub enum Step {
         source: ConstSource,
     },
     CompilePil,
-    /// The trusted checker: r1cs ⇔ plonk equations ⇔ fixed columns ⇔ PIL; the setup fails on a mismatch.
     CheckPlonk,
-    /// pil_info (or `reuse` of `ctx.reuse`), starkinfo/verifierinfo/expressionsinfo JSON, `.bin`,
-    /// plonk `.const`; `starkinfo_only` (recursive1) writes just the starkinfo the const tree reads,
-    /// which the const tree then removes.
     StarkTail {
         reuse: bool,
         starkinfo_only: bool,
     },
-    /// `.const` -> const tree -> verkey; a missing `.const` fails when `required`.
     ConstTree {
         required: bool,
     },
     WriteVerifierRs,
-    /// Waits for the background witness library builds.
     WitnessWait,
     Custom {
         name: &'static str,
