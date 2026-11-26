@@ -6,7 +6,14 @@
 pub(crate) mod vadcop_inputs;
 pub(crate) mod get_sha256_inputs;
 pub(crate) mod verify_global_constraints;
-pub mod templates;
+mod mains;
+mod solidity;
+
+/// The generators at their original path.
+pub mod templates {
+    pub use super::mains::*;
+    pub use super::solidity::*;
+}
 
 use anyhow::{bail, Context, Result};
 use serde_json::Value;
