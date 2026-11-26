@@ -9,6 +9,8 @@ use pil_info::core::dag::lower_code::{
     lower_roots, lower_to_code, CodeOp, Fold, Instr, LowerCtx, Operand, Src, VerifierCode,
 };
 
+// ── Goldilocks: `ConstraintRoots` ─────────────────────────────────────────────
+
 /// The generated template plus what the params record about it.
 pub(crate) struct ConstraintRoots {
     pub template: String,
@@ -17,7 +19,7 @@ pub(crate) struct ConstraintRoots {
 }
 
 /// A value-map entry: limb 0 at stage 1 (base field), all three after.
-fn value(map: &str, id: u32, stage: u32) -> String {
+fn gl_value(map: &str, id: u32, stage: u32) -> String {
     if stage == 1 {
         format!("{map}[{id}][0]")
     } else {
@@ -26,25 +28,25 @@ fn value(map: &str, id: u32, stage: u32) -> String {
 }
 
 /// The circom expression of an operand.
-fn operand(src: &Src) -> Result<String> {
+fn gl_operand(src: &Src) -> Result<String> {
     Ok(match &src.operand {
         Operand::Tmp(k) => format!("tmp_{k}"),
         Operand::Eval(k) => format!("evals[{k}]"),
         Operand::Challenge { id, .. } => format!("challenges[{id}]"),
         Operand::Number(v) => v.clone(),
         Operand::Public(id) => format!("publics[{id}]"),
-        Operand::ProofValue { id, stage } => value("proofvalues", *id, *stage),
-        Operand::AirValue { id, stage } => value("airvalues", *id, *stage),
-        Operand::AirgroupValue { id, stage } => value("airgroupvalues", *id, *stage),
+        Operand::ProofValue { id, stage } => gl_value("proofvalues", *id, *stage),
+        Operand::AirValue { id, stage } => gl_value("airvalues", *id, *stage),
+        Operand::AirgroupValue { id, stage } => gl_value("airgroupvalues", *id, *stage),
         Operand::Zi { .. } => bail!("Zi belongs to the fold, not to a constraint"),
     })
 }
 
 /// One instruction, in unroll_code's forms so the constraints are today's.
 // The former templated verifier's forms over lower_roots' stream (counts measured identical).
-fn instr(i: &Instr) -> Result<String> {
+fn gl_instr(i: &Instr) -> Result<String> {
     let [a, b] = &i.src[..] else { bail!("tmp_{} has {} operands", i.dest, i.src.len()) };
-    let (x, y) = (operand(a)?, operand(b)?);
+    let (x, y) = (gl_operand(a)?, gl_operand(b)?);
     let rhs = match (i.op, a.dim, b.dim) {
         (CodeOp::Add, 1, 1) => format!("{x} + {y}"),
         (CodeOp::Add, 1, 3) => format!("[{x} + {y}[0], {y}[1],  {y}[2]]"),
@@ -90,11 +92,11 @@ pub(crate) fn constraint_roots(suffix: &str, dag: &ConstraintDag, ctx: &LowerCtx
         roots.len(),
     );
     for i in &code.code {
-        out += &instr(i)?;
+        out += &gl_instr(i)?;
     }
     out.push('\n');
     for (k, r) in roots.iter().enumerate() {
-        let x = operand(r)?;
+        let x = gl_operand(r)?;
         out += &if r.dim == 3 {
             format!("    roots[{k}] <== {x};\n")
         } else {
@@ -105,6 +107,8 @@ pub(crate) fn constraint_roots(suffix: &str, dag: &ConstraintDag, ctx: &LowerCtx
     let first_root_dim = roots.first().map_or(3, |r| r.dim);
     Ok(ConstraintRoots { template: out, n_roots: roots.len(), first_root_dim })
 }
+
+// ── BN128: `ConstraintEval` ───────────────────────────────────────────────────
 
 /// A number as a Goldilocks element (the DAG may spell it negative).
 fn gl_number(v: &str) -> Result<u128> {
