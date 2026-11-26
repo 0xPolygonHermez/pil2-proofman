@@ -10,7 +10,7 @@ include "query_point.circom";
 
 /*
     FRI checks of one query (stark_verifier.circom's QueryFoldStep runs them per fold step).
-    `TreeSelector` (tree/treeselector<4|8>.circom) comes from the generated verifier's includes.
+    `TreeSelector` (tree/treeselector.circom) comes from the generated verifier's includes.
 */
 
 // One FRI folding step: the folded value at the query equals the next oracle's opened member.
