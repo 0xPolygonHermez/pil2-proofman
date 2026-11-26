@@ -5,7 +5,8 @@
 //!
 //! Both are the static library `helper_circuits/verifier/` (`StarkVerifierGL(k)`, `StarkVerifierBN128(k)`)
 //! plus per key only data and constraints: `lib_gl` (FRI or STIR) and `lib_bn128` (FRI, Goldilocks
-//! emulated over BN128). A circuit's main reaches its keys through [`key_dispatch`].
+//! emulated over BN128). A key's verifier file holds its constraints; its data goes to the circuit's
+//! main ([`KeyVerifier::data`], [`key_dispatch`]).
 //! Field and hash circuits live in `circom_verifier/circuits.gl/` and `circom_verifier/circuits.bn128/`.
 //!
 //! Entry points:
@@ -30,6 +31,15 @@ use serde_json::Value;
 pub(crate) use lib_gl::{gen_stark_verifier_gl, key_suffix};
 pub(crate) use lib_bn128::gen_stark_verifier_bn128;
 pub use lib_bn128::gen_stark_verifier_bn128_blake3;
+pub use lib_params::KeyData;
+
+/// A key's verifier: the circom file (its family's include and its constraints) and its data, which
+/// the main of the circuit that verifies it carries as `key_<name>(k)`.
+#[derive(Debug)]
+pub struct KeyVerifier {
+    pub circom: String,
+    pub data: KeyData,
+}
 
 #[derive(Debug, Clone)]
 pub struct Pil2CircomOptions {
@@ -61,7 +71,7 @@ pub fn gen_stark_verifier(
     stark_info: &Value,
     verifier_info: &Value,
     opts: &Pil2CircomOptions,
-) -> Result<String> {
+) -> Result<KeyVerifier> {
     let hash_type = stark_info["starkStruct"]["verificationHashType"].as_str();
     match hash_type.context("starkStruct.verificationHashType missing")? {
         "GL" => gen_stark_verifier_gl(const_root, stark_info, verifier_info, opts),
@@ -70,33 +80,44 @@ pub fn gen_stark_verifier(
     }
 }
 
-/// The compilation's access to its keys, whose functions and `ConstraintRoots` carry `sfxs[k]`: the data
-/// `key_<name>(k)` and, for GL keys, `ConstraintRootsAt(k)` (a BN128 key's `ConstraintEval` is called directly).
-pub(crate) fn key_dispatch(sfxs: &[String], gl: bool) -> String {
-    let mut out = lib_params::dispatch(sfxs);
+/// The main's access to the keys it verifies, key `k` being `keys[k]`: their data `key_<name>(k)` and,
+/// for GL keys, `ConstraintRootsAt(k)` (a BN128 key's `ConstraintEval` is called directly).
+pub(crate) fn key_dispatch(keys: &[KeyData], gl: bool) -> String {
+    if keys.is_empty() {
+        return String::new();
+    }
+    let mut out = String::from(
+        "// The data of the keys this circuit verifies (lib_params.rs): key_<name>(k) is key k's <name>.\n",
+    );
+    out += &lib_params::key_functions(keys);
     if gl {
         out += "
 // Key k's constraints at xi.
 template ConstraintRootsAt(k) {
-";
-        out += "    signal input evals[key_nEvals(k)][3];
+    signal input evals[key_nEvals(k)][3];
     signal input challenges[key_nChallenges(k)][3];
-";
-        out += "    signal input publics[nonEmpty(key_nPublics(k))];
+    signal input publics[nonEmpty(key_nPublics(k))];
     signal input proofvalues[nonEmpty(key_nProofValues(k))][3];
-";
-        out += "    signal input airvalues[nonEmpty(key_nAirValues(k))][3];
+    signal input airvalues[nonEmpty(key_nAirValues(k))][3];
     signal input airgroupvalues[nonEmpty(key_nAirgroupValues(k))][3];
-";
-        out += "    signal output roots[key_nRoots(k)][3];
+    signal output roots[key_nRoots(k)][3];
 
 ";
-        for (k, s) in sfxs.iter().enumerate() {
-            out += &format!("    if (k == {k}) {{ roots <== ConstraintRoots{s}()(evals, challenges, publics, proofvalues, airvalues, airgroupvalues); }}
-");
+        let call = |s: &str| {
+            format!(
+                "roots <== ConstraintRoots{s}()(evals, challenges, publics, proofvalues, airvalues, airgroupvalues);"
+            )
+        };
+        // One key: its roots; more: one branch per key.
+        match keys {
+            [key] => out += &format!("    {}\n", call(&key.suffix)),
+            _ => {
+                for (k, key) in keys.iter().enumerate() {
+                    out += &format!("    if (k == {k}) {{ {} }}\n", call(&key.suffix));
+                }
+            }
         }
-        out += "}
-";
+        out += "}\n";
     }
     out
 }

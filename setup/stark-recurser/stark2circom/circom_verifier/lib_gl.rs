@@ -1,5 +1,5 @@
-//! The GL verifier (FRI or STIR) of one key: its data (`lib_params`) and constraints
-//! (`ConstraintRoots<sfx>`). Everything else is the static `StarkVerifierGL(k)`
+//! The GL verifier (FRI or STIR) of one key: its constraints (`ConstraintRoots<sfx>`, the verifier file)
+//! and its data (`lib_params`, for the main). Everything else is the static `StarkVerifierGL(k)`
 //! (`helper_circuits/verifier/stark_verifier.circom`), which the circuit's main instantiates.
 
 use anyhow::Result;
@@ -7,7 +7,7 @@ use serde_json::Value;
 
 use super::constraint_roots::constraint_roots;
 use super::lib_params::{parse_stark_info, KeyData, KeyOpts};
-use super::Pil2CircomOptions;
+use super::{KeyVerifier, Pil2CircomOptions};
 use proofman_common::hash_family::HashFamily;
 
 /// The family's entry (`verifier/family_<dir>.circom`): its hash, selector and transcript files and the library.
@@ -20,23 +20,23 @@ fn includes(hash: HashFamily) -> String {
     format!("include \"verifier/family_{dir}.circom\";\n")
 }
 
-/// The suffix of a key's functions and templates: its airgroup id, if the starkinfo has one.
+/// The suffix of a key's `ConstraintRoots`: its airgroup id, if the starkinfo has one.
 pub(crate) fn key_suffix(si: &Value) -> String {
     si.get("airgroupId").and_then(Value::as_u64).map(|id| id.to_string()).unwrap_or_default()
 }
 
-/// Generate the GL verifier data and constraints of a starkinfo from its `constraintDag`.
+/// Generate the GL verifier constraints and data of a starkinfo from its `constraintDag`.
 pub(crate) fn gen_stark_verifier_gl(
     const_root: Option<&[String; 4]>,
     si: &Value,
     vi: &Value,
     opts: &Pil2CircomOptions,
-) -> Result<String> {
+) -> Result<KeyVerifier> {
     let sfx = key_suffix(si);
     let info = parse_stark_info(si)?;
     let (dag, ctx) = super::dag_and_ctx(&info, vi)?;
     let roots = constraint_roots(&sfx, &dag, &ctx)?;
-    let key = KeyData::new(
+    let data = KeyData::new(
         &info,
         &KeyOpts {
             input_challenges: opts.input_challenges,
@@ -46,13 +46,11 @@ pub(crate) fn gen_stark_verifier_gl(
             enable_input: opts.enable_input,
             const_root: const_root.cloned(),
         },
+        sfx,
     )?;
-    Ok(format!(
-        "pragma circom 2.1.0;\npragma custom_templates;\n\n{}\n{}\n{}",
-        includes(opts.hash),
-        key.functions(&sfx),
-        roots.template
-    ))
+    let circom =
+        format!("pragma circom 2.1.0;\npragma custom_templates;\n\n{}\n{}", includes(opts.hash), roots.template);
+    Ok(KeyVerifier { circom, data })
 }
 
 #[cfg(test)]
@@ -120,8 +118,10 @@ pub(crate) mod tests {
         }})
     }
 
+    /// The key's verifier file and, after it, the data its main carries.
     fn render(si: &Value, opts: &Pil2CircomOptions) -> String {
-        gen_stark_verifier_gl(None, si, &verifier_info(), opts).unwrap()
+        let v = gen_stark_verifier_gl(None, si, &verifier_info(), opts).unwrap();
+        format!("{}\n{}", v.circom, super::super::lib_params::key_functions(std::slice::from_ref(&v.data)))
     }
 
     fn opts(hash: HashFamily) -> Pil2CircomOptions {
@@ -134,16 +134,18 @@ pub(crate) mod tests {
         }
     }
 
-    /// Per key only data and constraints: the verifier is the library's.
+    /// Per key only constraints in its file and data for the main: the verifier is the library's.
     #[test]
     fn per_key_output_is_data_and_constraints() {
+        let v = gen_stark_verifier_gl(None, &stark_info(), &verifier_info(), &opts(HashFamily::Poseidon2)).unwrap();
+        let templates: Vec<&str> = v.circom.lines().filter(|l| l.starts_with("template ")).collect();
+        assert_eq!(templates, ["template parallel ConstraintRoots() {"], "{}", v.circom);
+        assert!(!v.circom.contains("function "), "the verifier file holds no data:\n{}", v.circom);
         let out = render(&stark_info(), &opts(HashFamily::Poseidon2));
-        let templates: Vec<&str> = out.lines().filter(|l| l.starts_with("template ")).collect();
-        assert_eq!(templates, ["template parallel ConstraintRoots() {"], "{out}");
-        assert_eq!(out.matches("function keyData_").count(), super::super::lib_params::FIELDS.len(), "{out}");
+        assert_eq!(out.matches("function key_").count(), super::super::lib_params::FIELDS.len(), "{out}");
         has_all(
             &out,
-            &["function keyData_STEPS() { return [17, 14, 11]; }", "include \"verifier/family_poseidon2.circom\";"],
+            &["function key_STEPS(k) { return [17, 14, 11]; }", "include \"verifier/family_poseidon2.circom\";"],
         );
     }
 
@@ -155,17 +157,17 @@ pub(crate) mod tests {
         has_all(
             &out,
             &[
-                "function keyData_offAirgroupValues() { return 0; }",
-                "function keyData_offAirValues() { return -1; }",
-                "function keyData_OFF_ROOT() { return [3, 7, 11]; }",
-                "function keyData_offEvals() { return 15; }",
-                "function keyData_TREE_ROOT() { return [3, 7, 11, -1, -2]; }",
-                "function keyData_TREE_PUB() { return [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 2, 3]; }",
-                "function keyData_ROOT_C() { return [0, 0, 0, 0]; }",
+                "function key_offAirgroupValues(k) { return 0; }",
+                "function key_offAirValues(k) { return -1; }",
+                "function key_OFF_ROOT(k) { return [3, 7, 11]; }",
+                "function key_offEvals(k) { return 15; }",
+                "function key_TREE_ROOT(k) { return [3, 7, 11, -1, -2]; }",
+                "function key_TREE_PUB(k) { return [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 2, 3]; }",
+                "function key_ROOT_C(k) { return [0, 0, 0, 0]; }",
             ],
         );
         let off = |name: &str| -> Vec<i64> {
-            let l = out.lines().find(|l| l.starts_with(&format!("function keyData_{name}() "))).unwrap();
+            let l = out.lines().find(|l| l.starts_with(&format!("function key_{name}(k) "))).unwrap();
             let v = &l[l.find("return ").unwrap() + 7..l.rfind(';').unwrap()];
             v.trim_matches(['[', ']']).split(", ").map(|x| x.parse().unwrap()).collect()
         };
@@ -186,9 +188,9 @@ pub(crate) mod tests {
         has_all(
             &out,
             &[
-                "function keyData_hashCommits() { return 1; }",
-                "function keyData_circuitType() { return 37; }",
-                "function keyData_verkeyInput() { return 1; }",
+                "function key_hashCommits(k) { return 1; }",
+                "function key_circuitType(k) { return 37; }",
+                "function key_verkeyInput(k) { return 1; }",
                 "include \"verifier/family_blake3.circom\";",
             ],
         );
@@ -214,14 +216,14 @@ pub(crate) mod tests {
         has_all(
             &out,
             &[
-                "function keyData_nOpenings() { return 2; }",
-                "function keyData_nPols() { return 5; }",
-                "function keyData_nSums() { return 1; }",
-                "function keyData_L0_TREE_START() { return [0, 1, 4, 7, 8, 9]; }",
-                "function keyData_OPENING_NUM_EVALS() { return [3, 4]; }",
-                "function keyData_EVAL_COLUMN() { return [0, 1, 2, 0, 3, 2, 4]; }",
-                "function keyData_SUMS() { return [0, 1]; }",
-                "function keyData_COLS() { return [2, 2, 0, 0, 1, 2, 8, 1, 0, 1, 1, 1, 3, 1, 2, 3, 7, 1, 4, 4, 3]; }",
+                "function key_nOpenings(k) { return 2; }",
+                "function key_nPols(k) { return 5; }",
+                "function key_nSums(k) { return 1; }",
+                "function key_L0_TREE_START(k) { return [0, 1, 4, 7, 8, 9]; }",
+                "function key_OPENING_NUM_EVALS(k) { return [3, 4]; }",
+                "function key_EVAL_COLUMN(k) { return [0, 1, 2, 0, 3, 2, 4]; }",
+                "function key_SUMS(k) { return [0, 1]; }",
+                "function key_COLS(k) { return [2, 2, 0, 0, 1, 2, 8, 1, 0, 1, 1, 1, 3, 1, 2, 3, 7, 1, 4, 4, 3]; }",
             ],
         );
     }
@@ -252,15 +254,12 @@ pub(crate) mod tests {
     fn names_with_airgroup_id() {
         let mut si = stark_info();
         si["airgroupId"] = json!(42u64);
-        let out = render(&si, &opts(HashFamily::Poseidon1));
+        let v = gen_stark_verifier_gl(None, &si, &verifier_info(), &opts(HashFamily::Poseidon1)).unwrap();
         has_all(
-            &out,
-            &[
-                "template parallel ConstraintRoots42() {",
-                "function keyData42_nBits() {",
-                "include \"verifier/family_poseidon1.circom\";",
-            ],
+            &v.circom,
+            &["template parallel ConstraintRoots42() {", "include \"verifier/family_poseidon1.circom\";"],
         );
+        assert_eq!(v.data.suffix, "42");
     }
 
     /// `stark_info()` with a 2-iteration STIR schedule.
@@ -283,18 +282,18 @@ pub(crate) mod tests {
         has_all(
             &out,
             &[
-                "function keyData_stir() { return 1; }",
-                "function keyData_nQueries() { return 10; }",
-                "function keyData_powBits() { return 4; }",
-                "function keyData_STEPS() { return [17, 14]; }",
-                "function keyData_STIR_NUM_QUERIES() { return [10, 6]; }",
-                "function keyData_stirFinalBits() { return 10; }",
-                "function keyData_nFolds() { return 2; }",
-                "function keyData_offNonce() { return -1; }",
+                "function key_stir(k) { return 1; }",
+                "function key_nQueries(k) { return 10; }",
+                "function key_powBits(k) { return 4; }",
+                "function key_STEPS(k) { return [17, 14]; }",
+                "function key_STIR_NUM_QUERIES(k) { return [10, 6]; }",
+                "function key_stirFinalBits(k) { return 10; }",
+                "function key_nFolds(k) { return 2; }",
+                "function key_offNonce(k) { return -1; }",
             ],
         );
-        assert!(!out.contains("function keyData_offBetas() { return -1; }"), "{out}");
-        assert!(!out.contains("function keyData_OFF_ANS() { return [-1]; }"), "{out}");
+        assert!(!out.contains("function key_offBetas(k) { return -1; }"), "{out}");
+        assert!(!out.contains("function key_OFF_ANS(k) { return [-1]; }"), "{out}");
     }
 
     #[test]
@@ -344,7 +343,7 @@ pub(crate) mod tests {
         let mut si = stark_info();
         si["starkStruct"]["logDomainSizes"] = json!([17, 14, 2]);
         let out = render(&si, &opts(HashFamily::Poseidon2));
-        let fs = out.lines().find(|l| l.starts_with("function keyData_OFF_FOLD_SIBLINGS() ")).unwrap();
+        let fs = out.lines().find(|l| l.starts_with("function key_OFF_FOLD_SIBLINGS(k) ")).unwrap();
         assert!(fs.ends_with(", -1]; }") && !fs.contains("[-1"), "{fs}");
     }
 

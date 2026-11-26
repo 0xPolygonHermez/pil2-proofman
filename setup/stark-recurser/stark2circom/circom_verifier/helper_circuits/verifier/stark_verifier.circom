@@ -11,8 +11,8 @@ include "stir.circom";
 
 /*
     The GL STARK verifier (FRI or STIR) of the compilation's key k, `StarkVerifierGL(k)` (below): its data
-    is the key's `keyData<sfx>_*` functions (lib_params.rs) read through the compilation's `key_*(k)`, its
-    constraints the key's `ConstraintRoots<sfx>` through `ConstraintRootsAt(k)`. It wires:
+    is the main's `key_*(k)` (lib_params.rs), its constraints the key's `ConstraintRoots<sfx>` through
+    `ConstraintRootsAt(k)`. It wires:
 
         StarkVerifierTranscript   every challenge and the FRI queries (transcript.circom)
         VerifyEvaluations         the roots fold to Q(xi) (below)

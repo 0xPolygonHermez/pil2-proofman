@@ -1,5 +1,5 @@
-//! The per-key data of the static verifier library: one `keyData<sfx>_<name>()` function per [`FIELDS`] entry,
-//! read by the library as `key_<name>(k)` through the compilation's [`dispatch`].
+//! The per-key data of the static verifier library: the circuit's main carries one `key_<name>(k)`
+//! function per [`FIELDS`] entry ([`key_functions`]), the value for key `k` of the keys it verifies.
 //! Data only; FRI/STIR geometry is derived in circom (`verifier/proof_shape.circom`).
 
 use std::collections::HashMap;
@@ -60,9 +60,21 @@ fn l0_trees(si: &StarkInfo) -> Result<(Vec<Tree>, usize)> {
 }
 
 /// A data value: a number or an array of numbers, as circom literals.
+#[derive(Debug)]
 pub(crate) enum Val {
     N(String),
     A(Vec<String>),
+}
+
+impl Val {
+    /// The circom literal; an empty array is `[0]` (circom has no empty arrays).
+    fn literal(&self) -> String {
+        match self {
+            Val::N(x) => x.clone(),
+            Val::A(x) if x.is_empty() => "[0]".into(),
+            Val::A(x) => format!("[{}]", x.join(", ")),
+        }
+    }
 }
 
 fn n(v: impl ToString) -> Val {
@@ -74,7 +86,7 @@ fn a<T: ToString>(v: &[T]) -> Val {
 }
 
 /// The data the static library reads as `key_<name>(k)` (key `k` of the compilation), in emission order.
-/// The one declared table: `lib_params::tests` checks the library uses exactly these names.
+/// The one declared table: `lib_gl::tests` checks the library uses exactly these names.
 pub(crate) const FIELDS: &[&str] = &[
     "nBits",
     "nBitsExt",
@@ -160,9 +172,11 @@ pub(crate) struct KeyOpts {
     pub const_root: Option<[String; 4]>,
 }
 
-/// The key's data, one entry per [`FIELDS`] name.
-pub(crate) struct KeyData {
-    pub fields: Vec<(&'static str, Val)>,
+/// One key's data, one entry per [`FIELDS`] name, and the suffix of its `ConstraintRoots<suffix>`.
+#[derive(Debug)]
+pub struct KeyData {
+    pub(crate) suffix: String,
+    pub(crate) fields: Vec<(&'static str, Val)>,
 }
 
 /// The DEEP data: openings with evaluations by rank, columns by first appearance in evMap.
@@ -284,7 +298,8 @@ impl Offsets {
 }
 
 impl KeyData {
-    pub fn new(si: &StarkInfo, o: &KeyOpts) -> Result<Self> {
+    /// `suffix` names the key's `ConstraintRoots<suffix>` in its verifier file.
+    pub(crate) fn new(si: &StarkInfo, o: &KeyOpts, suffix: String) -> Result<Self> {
         let ss = &si.stark_struct;
         // Validates the low-degree schedule before it is indexed.
         let off = Offsets::new(si)?;
@@ -451,34 +466,24 @@ impl KeyData {
             ("nFolds", n(nf)),
         ];
         debug_assert!(fields.iter().map(|f| f.0).eq(FIELDS.iter().copied()));
-        Ok(KeyData { fields })
-    }
-
-    /// `function keyData{sfx}_<name>() { return <value>; }` per field (empty arrays padded to one entry).
-    pub fn functions(&self, sfx: &str) -> String {
-        let mut out = String::new();
-        for (name, v) in &self.fields {
-            let v = match v {
-                Val::N(x) => x.clone(),
-                Val::A(x) if x.is_empty() => "[0]".into(),
-                Val::A(x) => format!("[{}]", x.join(", ")),
-            };
-            out += &format!("function keyData{sfx}_{name}() {{ return {v}; }}\n");
-        }
-        out
+        Ok(KeyData { suffix, fields })
     }
 }
 
-/// The compilation's `key_<name>(k)`: field `name` of its k-th key, whose functions carry `sfxs[k]`.
-pub(crate) fn dispatch(sfxs: &[String]) -> String {
+/// The data of the circuit's keys: `function key_<name>(k)` per [`FIELDS`] entry, returning `keys[k]`'s
+/// value (one key: the value; more: one branch per key, the last one unconditional). No keys, no functions.
+pub(crate) fn key_functions(keys: &[KeyData]) -> String {
+    let Some((last, rest)) = keys.split_last() else {
+        return String::new();
+    };
     let mut out = String::new();
-    for name in FIELDS {
+    for (i, name) in FIELDS.iter().enumerate() {
         let mut body = String::new();
-        for (k, s) in sfxs.iter().enumerate().take(sfxs.len().saturating_sub(1)) {
-            body += &format!("if (k == {k}) {{ return keyData{s}_{name}(); }} ");
+        for (k, key) in rest.iter().enumerate() {
+            body += &format!("if (k == {k}) {{ return {}; }} ", key.fields[i].1.literal());
         }
-        let last = sfxs.last().map_or(String::new(), |s| format!("return keyData{s}_{name}();"));
-        out += &format!("function key_{name}(k) {{ {body}{last} }}\n");
+        body += &format!("return {};", last.fields[i].1.literal());
+        out += &format!("function key_{name}(k) {{ {body} }}\n");
     }
     out
 }

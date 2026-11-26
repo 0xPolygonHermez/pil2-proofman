@@ -9,7 +9,7 @@ use pil2_pilout::pilout_proxy::PilOutProxy;
 use pil2_stark_recurser::plonk2pil::{self, r1cs::types::PlonkOptions, SetupKind};
 use pil2_stark_recurser::stark2circom::{
     gen_circom_circuit, gen_stark_verifier, gen_stark_verifier_bn128_blake3, CircuitTemplate, GenCircomCircuitInput,
-    StarkVerifierOptions,
+    KeyVerifier, StarkVerifierOptions,
 };
 use serde_json::Value;
 
@@ -52,8 +52,8 @@ impl VerifierGen {
         }
     }
 
-    /// The verifier circom of a proof of (`stark_info`, `verifier_info`) under `const_root`.
-    pub fn generate(&self, const_root: &[String; 4], stark_info: &Value, verifier_info: &Value) -> Result<String> {
+    /// The verifier of a proof of (`stark_info`, `verifier_info`) under `const_root`: its circom and its data.
+    pub fn generate(&self, const_root: &[String; 4], stark_info: &Value, verifier_info: &Value) -> Result<KeyVerifier> {
         match self {
             VerifierGen::Gl(o) => {
                 let root = (!o.verkey_input).then_some(const_root);
@@ -219,15 +219,18 @@ fn circom_prologue(
     for d in [&circom_dir, &build, &ctx.build_dir.join("pil"), &ctx.files_dir] {
         fs::create_dir_all(d)?;
     }
+    // Each verifier's circom goes to its file, its data to the main.
+    let mut keys = Vec::new();
     if let Some(gen) = verifier {
         let mut gen = gen.clone();
         // A batched circuit switches its slots off through `enable`.
         gen.opts_mut().enable_input |= ctx.batch_size > 1;
         for v in &ctx.verifiers {
-            let src = gen
+            let key = gen
                 .generate(&v.const_root, &v.stark_info, &v.verifier_info)
                 .with_context(|| format!("verifier {} of {}", v.file, ctx.circuit))?;
-            fs::write(circom_dir.join(&v.file), src)?;
+            fs::write(circom_dir.join(&v.file), key.circom)?;
+            keys.push(key.data);
         }
     }
     let circom_file = match template {
@@ -241,6 +244,7 @@ fn circom_prologue(
                 stark_infos: &input.stark_infos,
                 vadcop_info: &input.vadcop_info,
                 verifier_filenames: &verifier_filenames,
+                keys: &keys,
                 basic_vk: &input.basic_vk,
                 agg_vk: &input.agg_vk,
                 publics: &input.publics,

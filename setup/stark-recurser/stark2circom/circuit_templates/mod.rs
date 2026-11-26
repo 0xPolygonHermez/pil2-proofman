@@ -11,6 +11,8 @@ pub mod templates;
 use anyhow::{bail, Context, Result};
 use serde_json::Value;
 
+use super::circom_verifier::{key_suffix, KeyData};
+
 pub use templates::{
     gen_recursivef, gen_recursion_final, gen_solidity, gen_iverifier, gen_final_compressed, gen_compressor,
     gen_recursive1, gen_recursive2, gen_vadcop_final, SnarkVerifier,
@@ -65,6 +67,8 @@ pub struct GenCircomCircuitInput<'a> {
     pub vadcop_info: &'a Value,
     /// Verifier circom filenames (base names, not full paths).
     pub verifier_filenames: &'a [String],
+    /// The data of those verifiers' keys (`KeyVerifier::data`), in the same order.
+    pub keys: &'a [KeyData],
     /// Per-airgroup per-air basic (recursive1) verification keys.
     pub basic_vk: &'a [Vec<Vec<String>>],
     /// Per-airgroup aggregation (recursive2) verification keys.
@@ -86,13 +90,35 @@ pub fn gen_circom_circuit(input: &GenCircomCircuitInput<'_>) -> Result<String> {
         [p] => Some(p),
         _ => bail!("gen_circom_circuit: multi-publics not yet supported"),
     };
-    let files = input.verifier_filenames;
+    let (files, keys) = (input.verifier_filenames, input.keys);
+    // Key k of the main is the k-th starkinfo (airgroup k in vadcop_final): its data and its constraints.
+    if keys.len() != files.len() || keys.len() != input.stark_infos.len() {
+        bail!(
+            "gen_circom_circuit: {} verifier files, {} keys' data, {} starkinfos",
+            files.len(),
+            keys.len(),
+            input.stark_infos.len()
+        );
+    }
+    if input.template != CircuitTemplate::Final {
+        for (k, (key, si)) in keys.iter().zip(input.stark_infos).enumerate() {
+            if key.suffix != key_suffix(si) {
+                bail!(
+                    "gen_circom_circuit: key {k}'s data is not its starkinfo's ({} vs {})",
+                    key.suffix,
+                    key_suffix(si)
+                );
+            }
+        }
+    }
     match input.template {
-        CircuitTemplate::Recursivef => templates::gen_recursivef(stark_info, files),
-        CircuitTemplate::Final => templates::gen_recursion_final(stark_info, files, publics),
-        CircuitTemplate::FinalCompressed => templates::gen_final_compressed(stark_info, files, input.options),
-        CircuitTemplate::Compressor => templates::gen_compressor(stark_info, files, input.vadcop_info),
-        CircuitTemplate::Recursive1 => templates::gen_recursive1(stark_info, files, input.vadcop_info, input.options),
+        CircuitTemplate::Recursivef => templates::gen_recursivef(files, keys),
+        CircuitTemplate::Final => templates::gen_recursion_final(stark_info, files, keys, publics),
+        CircuitTemplate::FinalCompressed => templates::gen_final_compressed(stark_info, files, keys, input.options),
+        CircuitTemplate::Compressor => templates::gen_compressor(stark_info, files, keys, input.vadcop_info),
+        CircuitTemplate::Recursive1 => {
+            templates::gen_recursive1(stark_info, files, keys, input.vadcop_info, input.options)
+        }
         CircuitTemplate::Recursive2 => {
             let airgroup_id =
                 input.options.airgroup_id.context("gen_circom_circuit: a recursive2 needs its airgroup id")?;
@@ -100,10 +126,10 @@ pub fn gen_circom_circuit(input: &GenCircomCircuitInput<'_>) -> Result<String> {
                 .basic_vk
                 .get(airgroup_id)
                 .with_context(|| format!("no recursive1 verification keys for airgroup {airgroup_id}"))?;
-            templates::gen_recursive2(stark_info, files, input.vadcop_info, airgroup_id, bvk, input.options)
+            templates::gen_recursive2(files, keys, input.vadcop_info, airgroup_id, bvk, input.options)
         }
         CircuitTemplate::VadcopFinal => {
-            templates::gen_vadcop_final(input.stark_infos, files, input.vadcop_info, input.basic_vk, input.agg_vk)
+            templates::gen_vadcop_final(input.stark_infos, files, keys, input.vadcop_info, input.basic_vk, input.agg_vk)
         }
     }
 }

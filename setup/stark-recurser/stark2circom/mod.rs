@@ -22,5 +22,6 @@ pub use circuit_templates::templates::{
     gen_recursive1, gen_recursive2, gen_vadcop_final, SnarkVerifier,
 };
 pub use circom_verifier::{
-    gen_stark_verifier, lower_tables, gen_stark_verifier_bn128_blake3, Pil2CircomOptions as StarkVerifierOptions,
+    gen_stark_verifier, lower_tables, gen_stark_verifier_bn128_blake3, KeyData, KeyVerifier,
+    Pil2CircomOptions as StarkVerifierOptions,
 };

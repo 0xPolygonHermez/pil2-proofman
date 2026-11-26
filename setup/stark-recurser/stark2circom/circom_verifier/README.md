@@ -2,7 +2,7 @@
 
 The circom side of the recursion: the STARK verifier, the vadcop folding and the recursion circuits.
 It is a static library; Rust (`lib_gl.rs`, `lib_bn128.rs`, `circuit_templates/`) emits only the
-per-key **data** (`key_*` / `keyData<sfx>_*` functions, `vadcop_*` functions) and the constraint DAG, plus a
+per-key **data** (`key_*(k)` functions, `vadcop_*` functions) and the constraint DAG, plus a
 `component main` line.
 
 ```
@@ -43,12 +43,17 @@ The roots are set in `setup/pil2-stark/src/proving_key/pipeline/mod.rs` (Goldilo
 
 ```
 pragma ...;
-include "<verifier>.circom";          // generated: the key's keyData<sfx>_* data functions
+include "<verifier>.circom";          // generated per key: its family's entry and ConstraintRoots<sfx> (the DAG)
 include "mains/<circuit>.circom";     // the circuit and, through its own includes, the library
-<key dispatch: key_*(k), ConstraintRootsAt(k)>
+<keys' data: key_<name>(k), the value of key k>
+<keys' constraints: ConstraintRootsAt(k)>
 <vadcop data: vadcop_*()>
 component main {public [...]} = <Template>(...);
 ```
+
+Key `k` is the k-th key the circuit verifies: there is one, except in `vadcop_final` (one per airgroup).
+With one key the data reads `function key_nQueries(k) { return 72; }`; with more, one branch per key.
+The library reads only these names (`lib_params.rs` `FIELDS`, checked by a test).
 
 Inputs keep the order the witness fill copies the zkin into: a proof is one flat array, a slot (a proof
 and the vadcop values before it) one row.

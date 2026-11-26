@@ -1,5 +1,5 @@
 //! The circom mains and the Solidity contracts. A main is data over static templates
-//! (`helper_circuits/mains/`): its keys' dispatch
+//! (`helper_circuits/mains/`): its keys' data and constraints dispatch
 //! (`circom_verifier::key_dispatch`), the vadcop data `vadcop_*()` and a `component main` line. The
 //! Solidity contracts are static too (`sol/`): [`gen_solidity`] and [`gen_iverifier`] fill in their
 //! `__TOKEN__`s.
@@ -13,7 +13,7 @@ use super::verify_global_constraints::gen_verify_global_constraints;
 use super::CircomGenOptions;
 use crate::stark2circom::circom_verifier::lib_params::parse_stark_info;
 use proofman_common::proof_inputs::{proof_inputs, Origin};
-use crate::stark2circom::circom_verifier::{key_dispatch, key_suffix};
+use crate::stark2circom::circom_verifier::{key_dispatch, KeyData};
 
 // ── The static Solidity contracts ────────────────────────────────────────────
 
@@ -30,8 +30,8 @@ fn fill(src: &str, tokens: &[(&str, &str)]) -> String {
 
 // ── circom mains ──────────────────────────────────────────────────────────────
 
-/// A main's head: pragmas, the verifier files and `lib`, the keys' dispatch.
-fn head(files: &[String], lib: &str, stark_infos: &[&Value], gl: bool, custom_pragma: bool) -> String {
+/// A main's head: pragmas, the verifier files and `lib`, the keys' data and dispatch.
+fn head(files: &[String], lib: &str, keys: &[KeyData], gl: bool, custom_pragma: bool) -> String {
     let mut out = String::from("pragma circom 2.1.0;\n");
     if custom_pragma {
         out += "pragma custom_templates;\n";
@@ -39,8 +39,7 @@ fn head(files: &[String], lib: &str, stark_infos: &[&Value], gl: bool, custom_pr
     out += "\n";
     out += &files.iter().map(|f| format!("include \"{f}\";\n")).collect::<String>();
     out += &format!("include \"{lib}\";\n\n");
-    let sfxs: Vec<String> = stark_infos.iter().map(|si| if gl { key_suffix(si) } else { String::new() }).collect();
-    out + &key_dispatch(&sfxs, gl)
+    out + &key_dispatch(keys, gl)
 }
 
 /// `component main {public [..]} = <call>;`.
@@ -57,9 +56,9 @@ const SV: [&str; 5] =
     ["sv_circuitType", "sv_aggregatedProofs", "sv_aggregationTypes", "sv_airgroupvalues", "sv_stage1Hash"];
 
 /// The recursivef circuit: its verifier on the proof, rootC (and the publics) public.
-pub fn gen_recursivef(stark_info: &Value, verifier_filenames: &[String]) -> Result<String> {
+pub fn gen_recursivef(verifier_filenames: &[String], keys: &[KeyData]) -> Result<String> {
     let vd = vadcop_data(&Value::Null, &[], &[], 0, 0)?;
-    Ok(head(verifier_filenames, "mains/recursivef.circom", &[stark_info], true, true)
+    Ok(head(verifier_filenames, "mains/recursivef.circom", keys, true, true)
         + &vd
         + &main_line(&["rootC", "publics"], "Recursivef()"))
 }
@@ -70,6 +69,7 @@ pub fn gen_recursivef(stark_info: &Value, verifier_filenames: &[String]) -> Resu
 pub fn gen_recursion_final(
     stark_info: &Value,
     verifier_filenames: &[String],
+    keys: &[KeyData],
     publics: Option<&Value>,
 ) -> Result<String> {
     let sha = sha256_defs(publics)?;
@@ -109,7 +109,7 @@ pub fn gen_recursion_final(
             }
         }
     }
-    Ok(head(verifier_filenames, "mains/final_snark.circom", &[stark_info], false, info.stark_struct.merkle_tree_custom)
+    Ok(head(verifier_filenames, "mains/final_snark.circom", keys, false, info.stark_struct.merkle_tree_custom)
         + &sha.defs
         + &format!(
             "\ntemplate Main() {{\n    signal output publicsHash;\n{decl}\n    component f = FinalSnark({}, {}, {});\n{wire}    publicsHash <== f.publicsHash;\n}}\n",
@@ -125,22 +125,28 @@ pub fn gen_recursion_final(
 pub fn gen_final_compressed(
     stark_info: &Value,
     verifier_filenames: &[String],
+    keys: &[KeyData],
     opts: &CircomGenOptions,
 ) -> Result<String> {
     let n_publics = stark_info["nPublics"].as_u64().unwrap_or(0) as usize;
     let has_publics = if opts.has_recursion { n_publics > 4 } else { n_publics > 0 };
     let (n, n_real) = if has_publics { (n_publics, n_publics.saturating_sub(1)) } else { (0, 0) };
     let vd = vadcop_data(&Value::Null, &[], &[], 0, 0)?;
-    Ok(head(verifier_filenames, "mains/final_compressed.circom", &[stark_info], true, true)
+    Ok(head(verifier_filenames, "mains/final_compressed.circom", keys, true, true)
         + &vd
         + &main_line(&[], &format!("FinalCompressed({n}, {n_real})")))
 }
 
 /// The compressor of a basic air.
-pub fn gen_compressor(stark_info: &Value, verifier_filenames: &[String], vadcop_info: &Value) -> Result<String> {
+pub fn gen_compressor(
+    stark_info: &Value,
+    verifier_filenames: &[String],
+    keys: &[KeyData],
+    vadcop_info: &Value,
+) -> Result<String> {
     let (ag, air) = air_id_vars(stark_info)?;
     let vd = vadcop_data(vadcop_info, &[], &[], ag, air)?;
-    Ok(head(verifier_filenames, "mains/compressor.circom", &[stark_info], true, true)
+    Ok(head(verifier_filenames, "mains/compressor.circom", keys, true, true)
         + &vd
         + &main_line(&GLOBALS[..3], "Compressor()"))
 }
@@ -149,6 +155,7 @@ pub fn gen_compressor(stark_info: &Value, verifier_filenames: &[String], vadcop_
 pub fn gen_recursive1(
     stark_info: &Value,
     verifier_filenames: &[String],
+    keys: &[KeyData],
     vadcop_info: &Value,
     opts: &CircomGenOptions,
 ) -> Result<String> {
@@ -164,13 +171,13 @@ pub fn gen_recursive1(
         (1, true) => main_line(&[&SV[..], &GLOBALS[..]].concat(), "Recursive1Compressed()"),
         (k, c) => main_line(&GLOBALS, &format!("Recursive1Batched({k}, {})", u8::from(c))),
     };
-    Ok(head(verifier_filenames, "mains/recursive1.circom", &[stark_info], true, true) + &vd + &main)
+    Ok(head(verifier_filenames, "mains/recursive1.circom", keys, true, true) + &vd + &main)
 }
 
 /// A recursive2 over `opts.agg_arity` proofs of airgroup `airgroup_id`.
 pub fn gen_recursive2(
-    stark_info: &Value,
     verifier_filenames: &[String],
+    keys: &[KeyData],
     vadcop_info: &Value,
     airgroup_id: usize,
     basic_vk: &[Vec<String>],
@@ -187,7 +194,7 @@ pub fn gen_recursive2(
     let mut basics = vec![Vec::new(); airgroup_id + 1];
     basics[airgroup_id] = basic_vk.to_vec();
     let vd = vadcop_data(vadcop_info, &basics, &[], airgroup_id as u64, 0)?;
-    Ok(head(verifier_filenames, "mains/recursive2.circom", &[stark_info], true, true)
+    Ok(head(verifier_filenames, "mains/recursive2.circom", keys, true, true)
         + &vd
         + &main_line(&GLOBALS, &format!("Recursive2({agg_arity})")))
 }
@@ -196,6 +203,7 @@ pub fn gen_recursive2(
 pub fn gen_vadcop_final(
     stark_infos: &[Value],
     verifier_filenames: &[String],
+    keys: &[KeyData],
     vadcop_info: &Value,
     basic_vk: &[Vec<Vec<String>>],
     agg_vk: &[Vec<String>],
@@ -209,9 +217,8 @@ pub fn gen_vadcop_final(
             basic_vk.len()
         );
     }
-    let sis: Vec<&Value> = stark_infos.iter().collect();
     let vd = vadcop_data(vadcop_info, basic_vk, agg_vk, 0, 0)?;
-    Ok(head(verifier_filenames, "mains/vadcop_final.circom", &sis, true, true)
+    Ok(head(verifier_filenames, "mains/vadcop_final.circom", keys, true, true)
         + &vd
         + "\n"
         + &gen_verify_global_constraints(vadcop_info)?
@@ -365,7 +372,7 @@ mod tests {
 
     use super::*;
     use crate::stark2circom::circom_verifier::{
-        gen_stark_verifier_bn128, gen_stark_verifier_bn128_blake3, Pil2CircomOptions,
+        gen_stark_verifier_bn128, gen_stark_verifier_bn128_blake3, KeyVerifier, Pil2CircomOptions,
     };
     use crate::plonk2pil::r1cs::types::read_r1cs_from_bytes;
     use proofman_fields::Bn128;
@@ -418,7 +425,7 @@ mod tests {
     /// The final circuit around a recursivef whose trees are custom or not.
     fn final_circuit(merkle_tree_custom: bool) -> String {
         let verifiers = ["recursivef.verifier.circom".to_string()];
-        gen_recursion_final(&recursivef_stark_info(merkle_tree_custom), &verifiers, Some(&Value::Null)).unwrap()
+        gen_recursion_final(&recursivef_stark_info(merkle_tree_custom), &verifiers, &[], Some(&Value::Null)).unwrap()
     }
 
     /// A custom-tree verifier wants the pragma on the main too; otherwise there is none.
@@ -440,7 +447,7 @@ mod tests {
     #[test]
     fn recursion_final_is_data_over_final_snark() {
         let si = recursivef_stark_info(false);
-        let out = gen_recursion_final(&si, &["v.circom".into()], None).unwrap();
+        let out = gen_recursion_final(&si, &["v.circom".into()], &[], None).unwrap();
         assert!(out.contains("include \"mains/final_snark.circom\";"), "{out}");
         assert!(out.contains("function vadcop_DEFS() { return [0]; }"), "{out}");
         assert!(
@@ -457,7 +464,7 @@ mod tests {
         let mut si = recursivef_stark_info(false);
         si["mapSectionsN"]["cm2"] = json!(0);
         si["starkStruct"]["lastLevelVerification"] = json!(1);
-        let out = gen_recursion_final(&si, &["v.circom".into()], None).unwrap();
+        let out = gen_recursion_final(&si, &["v.circom".into()], &[], None).unwrap();
         let decls: Vec<&str> = out.lines().filter_map(|l| l.trim().strip_prefix("signal input ")).collect();
         assert_eq!(
             decls,
@@ -502,12 +509,12 @@ mod tests {
     fn final_binds_the_program_vk_where_it_sits() {
         let mut si = recursivef_stark_info(false);
         si["nPublics"] = json!(4);
-        assert!(gen_recursion_final(&si, &["v.circom".into()], None).unwrap_err().to_string().contains("publics"));
+        assert!(gen_recursion_final(&si, &["v.circom".into()], &[], None).unwrap_err().to_string().contains("publics"));
         si["nPublics"] = json!(10);
-        let err = gen_recursion_final(&si, &["v.circom".into()], None).unwrap_err().to_string();
+        let err = gen_recursion_final(&si, &["v.circom".into()], &[], None).unwrap_err().to_string();
         assert!(err.contains("0 publics, the recursivef 5"), "{err}");
         for (vk_first, pos) in [(true, ", 0);"), (false, ", 1);")] {
-            let out = gen_recursion_final(&si, &["v.circom".into()], Some(&out_and_vk(vk_first))).unwrap();
+            let out = gen_recursion_final(&si, &["v.circom".into()], &[], Some(&out_and_vk(vk_first))).unwrap();
             assert!(out.lines().any(|l| l.contains("FinalSnark(5, 2") && l.ends_with(pos)), "{out}");
         }
         let mut middle = out_and_vk(false);
@@ -519,7 +526,7 @@ mod tests {
         for (publics, msg) in
             [(middle, "first or the last"), (halves, "chunks [1, 64]"), (two, "second verificationKey")]
         {
-            let err = gen_recursion_final(&si, &["v.circom".into()], Some(&publics)).unwrap_err().to_string();
+            let err = gen_recursion_final(&si, &["v.circom".into()], &[], Some(&publics)).unwrap_err().to_string();
             assert!(err.contains(msg), "{err}");
         }
     }
@@ -588,7 +595,7 @@ mod tests {
     /// passes (`None`).
     fn compile_final(
         label: &str,
-        verifier: &str,
+        verifier: &KeyVerifier,
         stark_info: &Value,
         vk_first: bool,
     ) -> Option<crate::plonk2pil::r1cs::types::R1csFile<Bn128>> {
@@ -600,14 +607,14 @@ mod tests {
         }
         let circom = root.join("setup/circom").join(if cfg!(target_os = "macos") { "circom_mac" } else { "circom" });
         let libraries = Path::new(env!("CARGO_MANIFEST_DIR")).join("stark2circom/circom_verifier");
-        let circuit =
-            gen_recursion_final(stark_info, &["recursivef.verifier.circom".to_string()], Some(&out_and_vk(vk_first)))
-                .unwrap();
+        let files = ["recursivef.verifier.circom".to_string()];
+        let keys = std::slice::from_ref(&verifier.data);
+        let circuit = gen_recursion_final(stark_info, &files, keys, Some(&out_and_vk(vk_first))).unwrap();
 
         let dir = std::env::temp_dir().join(format!("final_{label}_{}_{vk_first}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
-        fs::write(dir.join("recursivef.verifier.circom"), verifier).unwrap();
+        fs::write(dir.join("recursivef.verifier.circom"), &verifier.circom).unwrap();
         fs::write(dir.join("final.circom"), circuit).unwrap();
 
         // The libraries of `snark_setup.rs`'s final compile, in its order.
@@ -706,16 +713,26 @@ mod main_tests {
     }
 
     fn gen(k: usize, has_compressor: bool) -> String {
-        gen_recursive1(&stark_info(), &["v.circom".into()], &vadcop(), &opts(k, has_compressor)).unwrap()
+        gen_recursive1(&stark_info(), &["v.circom".into()], &[key(0)], &vadcop(), &opts(k, has_compressor)).unwrap()
     }
 
-    /// A main is data: the verifier's include, the keys' dispatch, the vadcop data and the main line.
+    /// The data of a key of airgroup `ag` (the GL sample starkinfo, `4 + ag` publics).
+    fn key(ag: u64) -> KeyData {
+        use crate::stark2circom::circom_verifier::lib_gl::{gen_stark_verifier_gl, tests};
+        let mut info = tests::stark_info();
+        info["airgroupId"] = serde_json::json!(ag);
+        info["nPublics"] = serde_json::json!(4 + ag);
+        gen_stark_verifier_gl(None, &info, &tests::verifier_info(), &Default::default()).unwrap().data
+    }
+
+    /// A main is data: the verifier's include, the keys' data and dispatch, the vadcop data and the main line.
     #[test]
     fn mains_are_data_over_static_templates() {
         let out = gen(1, false);
         assert!(out.contains("include \"v.circom\";\ninclude \"mains/recursive1.circom\";"), "{out}");
-        assert!(out.contains("function key_nBits(k) { return keyData0_nBits(); }"), "{out}");
-        assert!(out.contains("roots <== ConstraintRoots0()(evals, challenges"), "{out}");
+        assert!(out.contains("function key_nBits(k) { return 16; }"), "{out}");
+        assert!(out.contains("\n    roots <== ConstraintRoots0()(evals, challenges"), "{out}");
+        assert!(!out.contains("if (k =="), "one key needs no branch on k:\n{out}");
         assert!(out.contains("function vadcop_airId() { return 1; }"), "{out}");
         let templates: Vec<&str> = out.lines().filter(|l| l.starts_with("template ")).collect();
         assert_eq!(templates, ["template ConstraintRootsAt(k) {"], "{out}");
@@ -733,7 +750,7 @@ mod main_tests {
     #[test]
     fn past_the_cap_it_refuses() {
         let o = opts(super::super::MAX_RECURSIVE1_BATCH + 1, false);
-        assert!(gen_recursive1(&stark_info(), &["v.circom".into()], &vadcop(), &o).is_err());
+        assert!(gen_recursive1(&stark_info(), &["v.circom".into()], &[], &vadcop(), &o).is_err());
     }
 
     /// Each recursive2 accepts only its own airgroup's types, and so does each final slot.
@@ -753,7 +770,7 @@ mod main_tests {
             agg_arity: 2,
             batch_size: 1,
         };
-        let rec2 = gen_recursive2(&si(1), &["v.circom".into()], &vadcop, 1, std::slice::from_ref(&vk), &o).unwrap();
+        let rec2 = gen_recursive2(&["v.circom".into()], &[], &vadcop, 1, std::slice::from_ref(&vk), &o).unwrap();
         assert!(rec2.contains("function vadcop_airgroupId() { return 1; }"), "{rec2}");
         assert!(
             rec2.contains(
@@ -763,19 +780,19 @@ mod main_tests {
         );
         assert!(rec2.ends_with("= Recursive2(2);\n"), "{rec2}");
 
+        // Key k is airgroup k: its data and its ConstraintRoots<k>.
         let fin = gen_vadcop_final(
             &[si(0), si(1)],
             &["v0.circom".into(), "v1.circom".into()],
+            &[key(0), key(1)],
             &vadcop,
             &[vec![vk.clone(), vk.clone()], vec![vk.clone()]],
             &[vk.clone(), vk],
         )
         .unwrap();
         assert!(fin.contains("include \"mains/vadcop_final.circom\";"), "{fin}");
-        assert!(
-            fin.contains("function key_nBits(k) { if (k == 0) { return keyData0_nBits(); } return keyData1_nBits(); }"),
-            "{fin}"
-        );
+        assert!(fin.contains("function key_nPublics(k) { if (k == 0) { return 4; } return 5; }"), "{fin}");
+        assert!(fin.contains("    if (k == 1) { roots <== ConstraintRoots1()("), "{fin}");
         assert!(fin.contains("template GlobalConstraints(nAg, maxAgg, nPub, nPV, nCh) {"), "{fin}");
         assert!(fin.ends_with("component main {public [publics]} = VadcopFinal(2);\n"), "{fin}");
     }

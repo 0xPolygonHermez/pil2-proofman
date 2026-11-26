@@ -1,6 +1,6 @@
 //! The BN128 verifier (a recursivef's, in the final SNARK's circuit) of one key: its family's entry
-//! (`verifier/bn128_open_<family>.circom`), data (`lib_params`) and constraints
-//! (`ConstraintEval`). The verifier itself is the static `StarkVerifierBN128(k)`
+//! (`verifier/bn128_open_<family>.circom`) and constraints (`ConstraintEval`), and its data
+//! (`lib_params`, for the main). The verifier itself is the static `StarkVerifierBN128(k)`
 //! (`helper_circuits/verifier/stark_verifier_bn128.circom`).
 
 use anyhow::{bail, Context, Result};
@@ -8,7 +8,7 @@ use serde_json::Value;
 
 use super::constraint_roots::constraint_eval_bn128;
 use super::lib_params::{parse_stark_info, KeyData, KeyOpts};
-use super::Pil2CircomOptions;
+use super::{KeyVerifier, Pil2CircomOptions};
 
 /// The BN128 verifier of a BN128 STARK (Poseidon trees, `verificationHashType` BN128).
 pub fn gen_stark_verifier_bn128(
@@ -16,7 +16,7 @@ pub fn gen_stark_verifier_bn128(
     stark_info: &Value,
     verifier_info: &Value,
     opts: &Pil2CircomOptions,
-) -> Result<String> {
+) -> Result<KeyVerifier> {
     gen(const_root, stark_info, verifier_info, opts, false)
 }
 
@@ -29,7 +29,7 @@ pub fn gen_stark_verifier_bn128_blake3(
     stark_info: &Value,
     verifier_info: &Value,
     opts: &Pil2CircomOptions,
-) -> Result<String> {
+) -> Result<KeyVerifier> {
     gen(const_root, stark_info, verifier_info, opts, true)
 }
 
@@ -39,7 +39,7 @@ fn gen(
     vi: &Value,
     opts: &Pil2CircomOptions,
     blake3: bool,
-) -> Result<String> {
+) -> Result<KeyVerifier> {
     let info = parse_stark_info(si)?;
     let ss = &info.stark_struct;
     let custom = ss.merkle_tree_custom;
@@ -74,7 +74,7 @@ fn gen(
     if !blake3 && custom && ss.last_level_verification > 0 {
         bail!("lastLevelVerification > 0 with merkleTreeCustom: circuits.bn128/custom/merklehash.circom has no last-level templates");
     }
-    let key = KeyData::new(
+    let data = KeyData::new(
         &info,
         &KeyOpts {
             verkey_input: opts.verkey_input,
@@ -82,6 +82,7 @@ fn gen(
             const_root: const_root.cloned(),
             ..Default::default()
         },
+        String::new(),
     )?;
 
     // The family's entry includes its field, hash, transcript and verifier files.
@@ -93,11 +94,10 @@ fn gen(
         "poseidon"
     };
     let pragma = if custom { "pragma custom_templates;\n" } else { "" };
-    let mut out = format!("pragma circom 2.1.0;\n{pragma}\ninclude \"verifier/bn128_open_{family}.circom\";\n\n");
-    out += &key.functions("");
+    let mut circom = format!("pragma circom 2.1.0;\n{pragma}\ninclude \"verifier/bn128_open_{family}.circom\";\n");
     let (dag, ctx) = super::dag_and_ctx(&info, vi)?;
-    out += &format!("\n{}", constraint_eval_bn128(&dag, &ctx)?);
-    Ok(out)
+    circom += &format!("\n{}", constraint_eval_bn128(&dag, &ctx)?);
+    Ok(KeyVerifier { circom, data })
 }
 
 #[cfg(test)]
@@ -130,21 +130,25 @@ pub(crate) mod tests {
         json!({ "constraintDag": { "version": 1, "field": "gl", "extDim": 3, "nodes": [[5, 1, 0, 0]], "roots": [[0, 0, "c"]] } })
     }
 
+    /// The key's verifier file and, after it, the data its main carries.
     fn render(si: &Value) -> Result<String> {
         let root = ["7".to_string(), "0".into(), "0".into(), "0".into()];
-        gen_stark_verifier_bn128(Some(&root), si, &verifier_info(), &Pil2CircomOptions::default())
+        let v = gen_stark_verifier_bn128(Some(&root), si, &verifier_info(), &Pil2CircomOptions::default())?;
+        Ok(format!("{}\n{}", v.circom, super::super::lib_params::key_functions(std::slice::from_ref(&v.data))))
     }
 
     #[test]
     fn per_key_output_is_includes_data_and_constraints() {
         let out = render(&stark_info(false, 0)).unwrap();
         assert!(
-            out.starts_with("pragma circom 2.1.0;\n\ninclude \"verifier/bn128_open_poseidon.circom\";\n\nfunction "),
+            out.starts_with(
+                "pragma circom 2.1.0;\n\ninclude \"verifier/bn128_open_poseidon.circom\";\n\n// The constraints at xi"
+            ),
             "out:\n{out}"
         );
         assert!(out.contains("    tmp_0 <== evals[0];\n    signal {maxNum} tmp_1[3];\n    tmp_1 <== GLCMul()(tmp_0, Zh);\n\n    evalP <== tmp_1;\n}"), "out:\n{out}");
-        assert!(out.contains("function keyData_ROOT_C() { return [7, 0, 0, 0]; }"), "out:\n{out}");
-        assert!(out.contains("function keyData_OFF_ROOT() { return [0, 1, 2]; }"), "single-element roots:\n{out}");
+        assert!(out.contains("function key_ROOT_C(k) { return [7, 0, 0, 0]; }"), "out:\n{out}");
+        assert!(out.contains("function key_OFF_ROOT(k) { return [0, 1, 2]; }"), "single-element roots:\n{out}");
         let templates: Vec<&str> = out.lines().filter(|l| l.starts_with("template ")).collect();
         assert_eq!(templates, ["template ConstraintEval() {"], "{out}");
         let custom = render(&stark_info(true, 0)).unwrap();
@@ -159,10 +163,10 @@ pub(crate) mod tests {
     #[test]
     fn last_levels_reach_the_data() {
         let out = render(&stark_info(false, 2)).unwrap();
-        assert!(out.contains("function keyData_lastLevels() { return 2; }"), "out:\n{out}");
-        assert!(!out.contains("function keyData_OFF_L0_LAST_LEVELS() { return [-1, -1]; }"), "out:\n{out}");
+        assert!(out.contains("function key_lastLevels(k) { return 2; }"), "out:\n{out}");
+        assert!(!out.contains("function key_OFF_L0_LAST_LEVELS(k) { return [-1, -1]; }"), "out:\n{out}");
         let none = render(&stark_info(false, 0)).unwrap();
-        assert!(none.contains("function keyData_OFF_L0_LAST_LEVELS() { return [-1, -1]; }"), "out:\n{none}");
+        assert!(none.contains("function key_OFF_L0_LAST_LEVELS(k) { return [-1, -1]; }"), "out:\n{none}");
     }
 
     /// Custom trees of any arity (the sponge rate reads it), and a key with no fold step.
@@ -171,13 +175,13 @@ pub(crate) mod tests {
         let mut si = stark_info(true, 0);
         si["starkStruct"]["merkleTreeArity"] = json!(2);
         let out = render(&si).unwrap();
-        assert!(out.contains("function keyData_arity() { return 2; }"), "out:\n{out}");
+        assert!(out.contains("function key_arity(k) { return 2; }"), "out:\n{out}");
         let mut si = stark_info(false, 0);
         si["starkStruct"]["logDomainSizes"] = json!([10]);
         si["starkStruct"]["logDegrees"] = json!([6]);
         si["starkStruct"]["foldingFactors"] = json!([]);
         let out = render(&si).unwrap();
-        assert!(out.contains("function keyData_nSteps() { return 1; }"), "out:\n{out}");
+        assert!(out.contains("function key_nSteps(k) { return 1; }"), "out:\n{out}");
     }
 
     #[test]
