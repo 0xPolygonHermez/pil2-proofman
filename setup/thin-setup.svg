@@ -1,0 +1,166 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 660" width="1000" height="660" role="img" aria-label="Diagram: heuristics propose, the trusted kernel checks and produces the starkinfo and the constraint DAG, which every verifier reads; in recursion, plonk2pil generates the artefacts and a trusted checker verifies they implement exactly the r1cs.">
+      <style>
+  .bg { fill: #ffffff; }
+  .fg { fill: #1b2321; }
+  .k-frame { fill: #e6f3f1; stroke: #0f766e; stroke-width: 1.5; }
+  .t-box { fill: #ffffff; stroke: #0f766e; stroke-width: 1.5; }
+  .p-box { fill: #fbf1e4; stroke: #a85a0c; stroke-width: 1.5; stroke-dasharray: 5 4; }
+  .d-box { fill: #ffffff; stroke: #c9d1ce; stroke-width: 1.5; }
+  .band { fill: none; stroke: #c9d1ce; stroke-width: 1; stroke-dasharray: 2 4; }
+  text { font-family: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; }
+  .lbl { font-size: 13px; font-weight: 600; fill: #1b2321; }
+  .sub { font-size: 10.5px; font-family: "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace; fill: #5b6763; }
+  .eyebrow { font-size: 10.5px; font-weight: 600; letter-spacing: 0.09em; }
+  .tk { fill: #0f766e; } .pk { fill: #a85a0c; } .mk { fill: #5b6763; } .ah { fill: #5b6763; }
+  .edge { stroke: #5b6763; stroke-width: 1.4; fill: none; }
+  .edge.p { stroke: #a85a0c; stroke-dasharray: 5 4; }
+  .edge.t { stroke: #0f766e; }
+  .elbl { font-size: 10.5px; fill: #5b6763; font-style: italic; }
+  .note { font-size: 12px; fill: #5b6763; }
+  @media (prefers-color-scheme: dark) {
+    .bg { fill: #0d1117; } .fg { fill: #e3e9e6; }
+    .k-frame { fill: #15302c; stroke: #4fd1c0; } .t-box { fill: #161b22; stroke: #4fd1c0; }
+    .p-box { fill: #33260f; stroke: #f0b061; } .d-box { fill: #161b22; stroke: #36403d; } .band { stroke: #36403d; }
+    .lbl { fill: #e3e9e6; } .sub, .elbl, .note { fill: #98a5a0; }
+    .tk { fill: #4fd1c0; } .pk { fill: #f0b061; } .mk, .ah { fill: #98a5a0; }
+    .edge { stroke: #98a5a0; } .edge.p { stroke: #f0b061; } .edge.t { stroke: #4fd1c0; }
+  }
+</style>
+<rect width="1000" height="660" class="bg"/>
+      <defs>
+        <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0 0 L10 5 L0 10 z" class="ah"/>
+        </marker>
+        <marker id="ap" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0 0 L10 5 L0 10 z" class="pk"/>
+        </marker>
+        <marker id="at" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0 0 L10 5 L0 10 z" class="tk"/>
+        </marker>
+      </defs>
+
+      <!-- ===== top: proposers ===== -->
+      <text x="200" y="26" class="eyebrow pk">PROPOSE · A BUG ONLY COSTS COMPLETENESS</text>
+      <rect x="282" y="38" width="112" height="50" rx="7" class="p-box"/>
+      <text x="338" y="59" text-anchor="middle" class="lbl">im columns</text>
+      <text x="338" y="76" text-anchor="middle" class="sub">search_im</text>
+
+      <rect x="546" y="38" width="112" height="50" rx="7" class="p-box"/>
+      <text x="602" y="59" text-anchor="middle" class="lbl">FRI / STIR</text>
+      <text x="602" y="76" text-anchor="middle" class="sub">solver</text>
+
+      <rect x="700" y="38" width="140" height="50" rx="7" class="p-box"/>
+      <text x="770" y="59" text-anchor="middle" class="lbl">codegen prover</text>
+      <text x="770" y="76" text-anchor="middle" class="sub">.bin · .exps.so</text>
+
+      <path d="M340 88 V188" class="edge p" marker-end="url(#ap)"/>
+      <text x="346" y="122" class="elbl">proposes</text>
+      <path d="M610 88 V188" class="edge p" marker-end="url(#ap)"/>
+      <text x="616" y="122" class="elbl">proposes</text>
+      <path d="M660 160 H700 V90" class="edge p" marker-end="url(#ap)"/>
+      <text x="668" y="152" class="elbl">from DAG</text>
+
+      <!-- ===== input ===== -->
+      <rect x="24" y="196" width="134" height="58" rx="7" class="d-box"/>
+      <text x="91" y="221" text-anchor="middle" class="lbl">pilout</text>
+      <text x="91" y="239" text-anchor="middle" class="sub">PiloutCore</text>
+      <path d="M158 225 H208" class="edge" marker-end="url(#a)"/>
+
+      <!-- ===== trust kernel ===== -->
+      <rect x="200" y="140" width="460" height="170" rx="12" class="k-frame"/>
+      <text x="214" y="162" class="eyebrow tk">TRUSTED KERNEL · SPECIFICATION → LEAN</text>
+
+      <rect x="210" y="190" width="80" height="70" rx="6" class="t-box"/>
+      <text x="250" y="219" text-anchor="middle" class="lbl">ingest</text>
+      <text x="250" y="236" text-anchor="middle" class="sub">strict</text>
+
+      <rect x="300" y="190" width="80" height="70" rx="6" class="t-box"/>
+      <text x="340" y="219" text-anchor="middle" class="lbl">check im</text>
+      <text x="340" y="236" text-anchor="middle" class="sub">qDeg</text>
+
+      <rect x="390" y="190" width="80" height="70" rx="6" class="t-box"/>
+      <text x="430" y="219" text-anchor="middle" class="lbl">DAG</text>
+      <text x="430" y="236" text-anchor="middle" class="sub">constraints</text>
+
+      <rect x="480" y="190" width="80" height="70" rx="6" class="t-box"/>
+      <text x="520" y="219" text-anchor="middle" class="lbl">layout</text>
+      <text x="520" y="236" text-anchor="middle" class="sub">openings</text>
+
+      <rect x="570" y="190" width="80" height="70" rx="6" class="t-box"/>
+      <text x="610" y="219" text-anchor="middle" class="lbl">security</text>
+      <text x="610" y="236" text-anchor="middle" class="sub">≥ 128 bits</text>
+
+      <path d="M290 225 H298" class="edge t" marker-end="url(#at)"/>
+      <path d="M380 225 H388" class="edge t" marker-end="url(#at)"/>
+      <path d="M470 225 H478" class="edge t" marker-end="url(#at)"/>
+      <path d="M560 225 H568" class="edge t" marker-end="url(#at)"/>
+      <text x="430" y="290" text-anchor="middle" class="sub">exact arithmetic · canonical numbering · refuses, never guesses</text>
+
+      <!-- ===== outputs ===== -->
+      <path d="M660 214 H698" class="edge" marker-end="url(#a)"/>
+      <path d="M660 272 H698" class="edge" marker-end="url(#a)"/>
+      <rect x="700" y="190" width="140" height="48" rx="7" class="d-box"/>
+      <text x="770" y="211" text-anchor="middle" class="lbl">starkinfo</text>
+      <text x="770" y="227" text-anchor="middle" class="sub">layout, parameters</text>
+      <rect x="700" y="248" width="140" height="48" rx="7" class="d-box"/>
+      <text x="770" y="269" text-anchor="middle" class="lbl">verifierinfo</text>
+      <text x="770" y="285" text-anchor="middle" class="sub">constraintDag</text>
+
+      <!-- ===== consumers ===== -->
+      <text x="872" y="162" class="eyebrow mk">VERIFIERS</text>
+      <rect x="872" y="174" width="112" height="36" rx="6" class="d-box"/>
+      <text x="928" y="197" text-anchor="middle" class="lbl">C++</text>
+      <rect x="872" y="218" width="112" height="36" rx="6" class="d-box"/>
+      <text x="928" y="241" text-anchor="middle" class="lbl">Rust</text>
+      <rect x="872" y="262" width="112" height="36" rx="6" class="d-box"/>
+      <text x="928" y="285" text-anchor="middle" class="lbl">circom</text>
+      <path d="M840 272 C856 272 856 192 870 192" class="edge" marker-end="url(#a)"/>
+      <path d="M840 272 C856 272 856 236 870 236" class="edge" marker-end="url(#a)"/>
+      <path d="M840 272 H870" class="edge" marker-end="url(#a)"/>
+      <text x="928" y="318" text-anchor="middle" class="elbl">all read the same DAG</text>
+
+      <!-- ===== recursion band ===== -->
+      <line x1="24" y1="352" x2="984" y2="352" class="band"/>
+      <text x="24" y="380" class="eyebrow mk">RECURSION · THE SAME PATTERN, ONE LEVEL DOWN</text>
+
+      <rect x="24" y="410" width="134" height="58" rx="7" class="d-box"/>
+      <text x="91" y="435" text-anchor="middle" class="lbl">r1cs</text>
+      <text x="91" y="453" text-anchor="middle" class="sub">circom verifier</text>
+      <path d="M158 439 H210" class="edge" marker-end="url(#a)"/>
+
+      <rect x="212" y="410" width="172" height="58" rx="7" class="p-box"/>
+      <text x="298" y="435" text-anchor="middle" class="lbl">plonk2pil</text>
+      <text x="298" y="453" text-anchor="middle" class="sub">declarative generator</text>
+      <path d="M384 439 H434" class="edge p" marker-end="url(#ap)"/>
+      <text x="390" y="430" class="elbl">generates</text>
+
+      <rect x="436" y="410" width="170" height="58" rx="7" class="d-box"/>
+      <text x="521" y="435" text-anchor="middle" class="lbl">pilout + fixed + exec</text>
+      <text x="521" y="453" text-anchor="middle" class="sub">artefacts</text>
+      <path d="M606 439 H656" class="edge" marker-end="url(#a)"/>
+
+      <rect x="658" y="410" width="182" height="58" rx="7" class="t-box"/>
+      <text x="749" y="435" text-anchor="middle" class="lbl">checker</text>
+      <text x="749" y="453" text-anchor="middle" class="sub">r1cs ⇔ plonk ⇔ fixed</text>
+      <path d="M840 439 H870" class="edge t" marker-end="url(#at)"/>
+      <text x="876" y="435" class="lbl tk">implements</text>
+      <text x="876" y="452" class="lbl tk">exactly</text>
+      <text x="876" y="469" class="lbl tk">the r1cs</text>
+
+      <!-- checker reads the r1cs itself, not the generator -->
+      <path d="M91 468 V528 H749 V470" class="edge t" marker-end="url(#at)"/>
+      <text x="420" y="546" text-anchor="middle" class="elbl">the checker reads the r1cs and the artefacts, never the generator's structures</text>
+
+      <!-- the recursion's pilout goes through the same kernel -->
+      <path d="M521 410 V312" class="edge" marker-end="url(#a)"/>
+      <text x="528" y="340" class="elbl">same kernel</text>
+
+      <text x="24" y="586" class="sub">circom and Solidity: static libraries · Rust emits only data</text>
+          <rect x="24" y="606" width="22" height="12" rx="3" class="k-frame"/>
+      <text x="54" y="616" class="note">Trusted: specification, checks</text>
+      <rect x="260" y="606" width="22" height="12" rx="3" class="p-box"/>
+      <text x="290" y="616" class="note">Proposes: a bug only costs completeness</text>
+      <rect x="540" y="606" width="22" height="12" rx="3" class="d-box"/>
+      <text x="570" y="616" class="note">Data: input or artefact</text>
+      <text x="24" y="642" class="note">Everything that decides soundness goes through a solid green box; dashed boxes can at worst make the setup fail.</text>
+</svg>
