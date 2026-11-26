@@ -10,6 +10,7 @@ include "evalpol.circom";
 include "proof_shape.circom";
 include "transcript.circom";
 include "fri.circom";
+include "query_point.circom";
 
 /*
     Helpers for the in-circuit STIR verifier (Arnon–Chiesa–Fenzi–Yogev, ePrint 2024/390,
@@ -61,22 +62,6 @@ template StirLessThan(nBits) {
 
     signal {binary} bits[nBits + 1] <== Num2Bits(nBits + 1)(a + (1 << nBits) - b);
     out <== 1 - bits[nBits];
-}
-
-// base·ω^{index} (inv = 0) or base·ω^{−index} (inv = 1), where ω generates the subgroup of
-// order 2^{logDomain} and `index` is given LSB-first in bits.
-template StirPointAcc(nBits, logDomain, base, inv) {
-    signal input {binary} bits[nBits];
-    signal output out;
-
-    signal acc[nBits];
-    var r0 = inv == 1 ? invroots(logDomain) : roots(logDomain);
-    acc[0] <== bits[0] * (base * r0 - base) + base;
-    for (var i = 1; i < nBits; i++) {
-        var ri = inv == 1 ? invroots(logDomain - i) : roots(logDomain - i);
-        acc[i] <== acc[i - 1] * (bits[i] * (ri - 1) + 1);
-    }
-    out <== acc[nBits - 1];
 }
 
 // y^e in Fp³ for a data-dependent exponent e < 2^maxBits, given LSB-first in bits.
@@ -267,7 +252,7 @@ template StirFoldCoset(logK, logL, shiftInv) {
     signal output out[3];
 
     signal coefs[1 << logK][3] <== FFT(logK, 3, 1)(vals);
-    signal cInv <== StirPointAcc(logL - logK, logL, shiftInv, 1)(leafBits);
+    signal cInv <== QueryPoint(logL - logK, logL, shiftInv, 1, logL - logK)(leafBits);
     signal evalX[3] <== [rFold[0] * cInv, rFold[1] * cInv, rFold[2] * cInv];
     out <== EvalPol(1 << logK)(coefs, evalX);
 }
@@ -283,7 +268,7 @@ template StirShiftPoints(t, logL, logK) {
     for (var i = 0; i < logK; i++) { shiftPow = shiftPow * shiftPow; }
     for (var q = 0; q < t; q++) {
         for (var i = 0; i < nLeaf; i++) { leafBits[q][i] <== queries[q][i]; }
-        gpt[q] <== StirPointAcc(nLeaf, nLeaf, shiftPow, 0)(leafBits[q]);
+        gpt[q] <== QueryPoint(nLeaf, nLeaf, shiftPow, 0, nLeaf)(leafBits[q]);
     }
 }
 
@@ -336,7 +321,7 @@ template StirVirtualOracle(arity, lastLevels, logL, logK, t, prevT) {
     signal xm[t][K];
     for (var q = 0; q < t; q++) {
         for (var i = 0; i < nLeaf; i++) { leafBits[q][i] <== queries[q][i]; }
-        cPt[q] <== StirPointAcc(nLeaf, logL, domainShift(), 0)(leafBits[q]);
+        cPt[q] <== QueryPoint(nLeaf, logL, domainShift(), 0, nLeaf)(leafBits[q]);
         // VERIFY-CONSTRAINTS: member offsets as roots(logK) ** j (today GL_W[logK]^j printed by Rust).
         for (var j = 0; j < K; j++) { xm[q][j] <== cPt[q] * (roots(logK) ** j); }
     }

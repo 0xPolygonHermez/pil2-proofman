@@ -109,6 +109,10 @@ template StarkVerifierTranscript(nStages, nPublics, nAirValues, nAirgroupValues,
     signal input {binary} enable;
 
     signal output challenges[nChallenges][3];
+    // challengesMap ends with vc, xi, vf1, vf2: the quotient's, the evaluation point, DEEP's two.
+    signal output vc[3];
+    signal output xi[3];
+    signal output vf[2][3];
     signal output ldt[ldt_n(stir, NF)][3];
     signal output {binary} queriesL0[nQueries][STEPS[0]];
 
@@ -265,6 +269,11 @@ template StarkVerifierTranscript(nStages, nPublics, nAirValues, nAirgroupValues,
             ldt[k - nChallenges] <== ch[k].out;
         }
     }
+
+    vc <== challenges[nChallenges - 4];
+    xi <== challenges[nChallenges - 3];
+    vf[0] <== challenges[nChallenges - 2];
+    vf[1] <== challenges[nChallenges - 1];
 
     queriesL0 <== QueryBits(nQueries, STEPS[0], powBits, stir == 1 || powBits > 0 ? 1 : 0)(ldt[ldt_query(stir, NF, 0)], nonce, enable);
 }

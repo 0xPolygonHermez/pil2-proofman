@@ -111,7 +111,6 @@ template StarkVerifierGL(k) {
     var nAirgroupValues = key_nAirgroupValues(k);
     var nProofValues = key_nProofValues(k);
     var nStages = key_nStages(k);
-    var nChallenges = key_nChallenges(k);
     var circuitType = key_circuitType(k);
     var nRoots = key_nRoots(k);
     var nSteps = key_nSteps(k);
@@ -246,7 +245,7 @@ template StarkVerifierGL(k) {
         stirHints <== [[0, 0, 0]];
     }
 
-    component transcript = StarkVerifierTranscript(nStages, nPublics, nAirValues, nAirgroupValues, nEvals, nChallenges, nSteps, STEPS, stir, stirM, key_stirFinalBits(k), STIR_NUM_QUERIES, key_hashCommits(k), circuitType, nQueries, key_powBits(k), key_CH(k), key_AIR_VALUE_STAGE(k), key_AIRGROUP_VALUE_STAGE(k));
+    component transcript = StarkVerifierTranscript(nStages, nPublics, nAirValues, nAirgroupValues, nEvals, key_nChallenges(k), nSteps, STEPS, stir, stirM, key_stirFinalBits(k), STIR_NUM_QUERIES, key_hashCommits(k), circuitType, nQueries, key_powBits(k), key_CH(k), key_AIR_VALUE_STAGE(k), key_AIRGROUP_VALUE_STAGE(k));
     if (inCh == 1) { transcript.globalChallenge <== globalChallenge; } else { transcript.globalChallenge <== [0, 0, 0]; }
     if (nPublics > 0) { transcript.publics <== publics; } else { transcript.publics <== [0]; }
     transcript.rootC <== rootC;
@@ -280,12 +279,10 @@ template StarkVerifierGL(k) {
     if (nAirgroupValues > 0) { cr.airgroupvalues <== airgroupvalues; } else { cr.airgroupvalues <== [[0, 0, 0]]; }
     signal roots[nRoots][3] <== cr.roots;
 
-    // challenges end with vc, xi, vf1, vf2.
-    VerifyEvaluations(nBits, nRoots, key_firstRootDim(k), key_qDeg(k), key_qPolEv(k), nEvals)(transcript.challenges[nChallenges - 3], transcript.challenges[nChallenges - 4], roots, evals, enabled);
+    VerifyEvaluations(nBits, nRoots, key_firstRootDim(k), key_qDeg(k), key_qPolEv(k), nEvals)(transcript.xi, transcript.vc, roots, evals, enabled);
 
     component deepConsts = DeepConstants(key_nOpenings(k), key_nPols(k), nEvals, key_OPENING_NUM_EVALS(k), key_EVAL_COLUMN(k));
-    deepConsts.vf[0] <== transcript.challenges[nChallenges - 2];
-    deepConsts.vf[1] <== transcript.challenges[nChallenges - 1];
+    deepConsts.vf <== transcript.vf;
     deepConsts.evals <== evals;
 
     // The L_0 queries in batches of batchSize, the rest in one tail batch: its own array, as circom
@@ -297,14 +294,14 @@ template StarkVerifierGL(k) {
     component tail[1];
     for (var b = 0; b < nFull; b++) {
         batch[b] = QueryBatchGL(k, batchSize);
-        batch[b].xi <== transcript.challenges[nChallenges - 3];
+        batch[b].xi <== transcript.xi;
         batch[b].friConsts <== deepConsts.friConsts;
         batch[b].treeLast <== treeLast;
         batch[b].treeRoot <== treeRoot;
         for (var f = 0; f < nq; f++) {
             batch[b].foldLast[f] <== foldLast[f];
             batch[b].foldRoot[f] <== foldRoot[f];
-            if (stir == 0) { batch[b].rFold[f] <== transcript.ldt[f]; }
+            if (stir == 0) { batch[b].rFold[f] <== transcript.ldt[ldt_rFold(stir, f)]; }
         }
         if (stir == 0) { batch[b].finalPol <== finalPol; }
         batch[b].enable <== enabled;
@@ -319,14 +316,14 @@ template StarkVerifierGL(k) {
     }
     if (nTail > 0) {
         tail[0] = QueryBatchGL(k, nTail);
-        tail[0].xi <== transcript.challenges[nChallenges - 3];
+        tail[0].xi <== transcript.xi;
         tail[0].friConsts <== deepConsts.friConsts;
         tail[0].treeLast <== treeLast;
         tail[0].treeRoot <== treeRoot;
         for (var f = 0; f < nq; f++) {
             tail[0].foldLast[f] <== foldLast[f];
             tail[0].foldRoot[f] <== foldRoot[f];
-            if (stir == 0) { tail[0].rFold[f] <== transcript.ldt[f]; }
+            if (stir == 0) { tail[0].rFold[f] <== transcript.ldt[ldt_rFold(stir, f)]; }
         }
         if (stir == 0) { tail[0].finalPol <== finalPol; }
         tail[0].enable <== enabled;

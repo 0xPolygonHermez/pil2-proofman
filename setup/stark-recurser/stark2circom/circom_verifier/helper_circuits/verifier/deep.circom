@@ -5,6 +5,7 @@ include "cmul.circom";
 include "cinv.circom";
 include "fft.circom";
 include "proof_shape.circom";
+include "query_point.circom";
 
 /*
     The DEEP polynomial f_0, grouped as the native provers and verifiers compute it (deep.rs's plan,
@@ -103,17 +104,14 @@ template DeepQuery(nOpenings, nPols, nColGroups, nSums, bits0, nextBits, s0Width
     signal input s1_vals[1 << nextStep][3];
     signal input {binary} enable;
 
-    signal xacc[bits0];
-    xacc[0] <== queriesL0[0] * (domainShift() * roots(bits0) - domainShift()) + domainShift();
-    for (var i = 1; i < bits0; i++) {
-        xacc[i] <== xacc[i - 1] * (queriesL0[i] * (roots(bits0 - i) - 1) + 1);
-    }
+    // The query's point of L_0.
+    signal x <== QueryPoint(bits0, bits0, domainShift(), 0, bits0)(queriesL0);
 
     // 1 / (x - g^o z) per opening with evaluations.
     signal xDivXSubXi[n][3];
     for (var r = 0; r < n; r++) {
         var root = OPENING_ROOT[r];
-        xDivXSubXi[r] <== CInv()([xacc[bits0 - 1] - root * xi[0], - root * xi[1], - root * xi[2]]);
+        xDivXSubXi[r] <== CInv()([x - root * xi[0], - root * xi[1], - root * xi[2]]);
     }
 
     // A_r = vf1^{e_r} * xDivXSubXi[r] (e = 0 for the last opening).

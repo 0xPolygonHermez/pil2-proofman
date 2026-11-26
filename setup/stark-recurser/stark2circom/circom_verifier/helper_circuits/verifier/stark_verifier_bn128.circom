@@ -601,17 +601,23 @@ template StarkVerifierBN128(k) {
     signal {maxNum} challenges[nChallenges][3];
     challenges.maxNum = q;
     challenges <== transcript.challenges;
+    signal {maxNum} xi[3];
+    xi.maxNum = q;
+    xi <== transcript.xi;
+    signal {maxNum} vf[2][3];
+    vf.maxNum = q;
+    vf <== transcript.vf;
     signal {maxNum} rFold[nonEmpty(NF)][3];
     rFold.maxNum = q;
     if (NF > 0) {
-        for (var f = 0; f < NF; f++) { rFold[f] <== transcript.ldt[f]; }
+        for (var f = 0; f < NF; f++) { rFold[f] <== transcript.ldt[ldt_rFold(0, f)]; }
     } else {
         rFold[0] <== [0, 0, 0];
     }
 
-    // The constraints at xi against the quotient; challenges end with vc, xi, vf1, vf2.
+    // The constraints at xi against the quotient.
     component zh = ZhBN128(nBits);
-    zh.xi <== challenges[nChallenges - 3];
+    zh.xi <== xi;
     component ce = ConstraintEval();
     ce.challenges <== challenges;
     ce.evals <== evalsGL;
@@ -620,8 +626,7 @@ template StarkVerifierBN128(k) {
     QuotientCheckBN128(key_qDeg(k), key_qPolEv(k), nEvals)(zh.xN, ce.evalP, evalsGL, enabled);
 
     component deepConsts = DeepConstantsBN128(key_nOpenings(k), key_nPols(k), nEvals, key_OPENING_NUM_EVALS(k), key_EVAL_COLUMN(k));
-    deepConsts.vf[0] <== challenges[nChallenges - 2];
-    deepConsts.vf[1] <== challenges[nChallenges - 1];
+    deepConsts.vf <== vf;
     deepConsts.evals <== evalsGL;
 
     // Per query (the proof holds each tree's data query after query); the levels sent in clear once.
@@ -629,7 +634,7 @@ template StarkVerifierBN128(k) {
     for (var g = 0; g < nQueries; g++) {
         query[g] = VerifySingleQueryBN128(k);
         query[g].queriesL0 <== transcript.queriesL0[g];
-        query[g].xi <== challenges[nChallenges - 3];
+        query[g].xi <== xi;
         query[g].friConsts <== deepConsts.friConsts;
         query[g].rFold <== rFold;
         query[g].finalPol <== finalPolGL;

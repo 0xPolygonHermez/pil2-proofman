@@ -6,6 +6,7 @@ include "evalpol.circom";
 include "proof_shape.circom";
 include "deep.circom";
 include "merkle.circom";
+include "query_point.circom";
 
 /*
     FRI checks of one query (stark_verifier.circom's QueryFoldStep runs them per fold step).
@@ -23,16 +24,12 @@ template VerifyFRIFold(prevStepBits, currStepBits, nextStepBits, e0, nIn) {
     signal input s_vals_next[1 << nextStep][3];
     signal input {binary} enable;
 
-    signal sx[currStepBits];
-
-    sx[0] <== e0 * (queriesL0[0] * (invroots(prevStepBits) - 1) + 1);
-    for (var i = 1; i < currStepBits; i++) {
-        sx[i] <== sx[i - 1] * (queriesL0[i] * (invroots(prevStepBits - i) - 1) + 1);
-    }
+    // 1 / c, c the offset of the query's coset in the previous domain (its low currStepBits bits pick it).
+    signal sxInv <== QueryPoint(currStepBits, prevStepBits, e0, 1, nIn)(queriesL0);
 
     // Interpolate the opened coset and evaluate it at the challenge over the coset point.
     signal coefs[1 << step][3] <== FFT(step, 3, 1)(s_vals_curr);
-    signal evalXprime[3] <== [friChallenge[0] * sx[currStepBits - 1], friChallenge[1] * sx[currStepBits - 1], friChallenge[2] * sx[currStepBits - 1]];
+    signal evalXprime[3] <== [friChallenge[0] * sxInv, friChallenge[1] * sxInv, friChallenge[2] * sxInv];
     signal evalPol[3] <== EvalPol(1 << step)(coefs, evalXprime);
 
     signal {binary} keys_lowValues[nextStep];
