@@ -87,15 +87,6 @@ template GLCNorm() {
     }
 }
 
-template GLCCopy() {
-    signal input {maxNum} in[3];
-    signal output {maxNum} out[3];
-
-    for (var i=0; i<3; i++) {
-        out[i] <== GLCopy()(in[i]);
-    }
-}
-
 template GLCAdd() {
     signal input {maxNum} ina[3];
     signal input {maxNum} inb[3];

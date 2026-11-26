@@ -120,7 +120,7 @@ struct Bn128Code {
     lines: Vec<String>,
     consts: std::collections::HashMap<(u128, usize), String>,
     n_values: usize,
-    /// Temporaries that are another signal: `x + 0`, which the DAG keeps.
+    /// Temporaries that are another signal: `x + 0` and `x - 0`, which the DAG keeps.
     alias: std::collections::HashMap<u32, String>,
 }
 
@@ -167,15 +167,27 @@ impl Bn128Code {
         Ok(name)
     }
 
-    fn instr(&mut self, i: &Instr) -> Result<()> {
-        if let (CodeOp::Add, [a, b]) = (i.op, &i.src[..]) {
-            for (x, z) in [(a, b), (b, a)] {
-                if x.dim == i.dim && Self::is_zero(z)? {
-                    let name = self.raw(x, x.dim)?;
-                    self.alias.insert(i.dest, name);
-                    return Ok(());
-                }
+    /// `x + 0`, `0 + x` or `x - 0` at x's own dimension: the op's operand that is x itself.
+    fn identity_operand<'a>(i: &'a Instr) -> Result<Option<&'a Src>> {
+        let [a, b] = &i.src[..] else { return Ok(None) };
+        let candidates: &[(&Src, &Src)] = match i.op {
+            CodeOp::Add => &[(a, b), (b, a)],
+            CodeOp::Sub => &[(a, b)],
+            _ => &[],
+        };
+        for &(x, z) in candidates {
+            if x.dim == i.dim && Self::is_zero(z)? {
+                return Ok(Some(x));
             }
+        }
+        Ok(None)
+    }
+
+    fn instr(&mut self, i: &Instr) -> Result<()> {
+        if let Some(x) = Self::identity_operand(i)? {
+            let name = self.raw(x, x.dim)?;
+            self.alias.insert(i.dest, name);
+            return Ok(());
         }
         let arr = if i.dim == 3 { "[3]" } else { "" };
         self.lines.push(format!("    signal {{maxNum}} tmp_{}{arr};", i.dest));
@@ -183,9 +195,6 @@ impl Bn128Code {
         let line = match (i.op, &i.src[..]) {
             (CodeOp::Copy, [a]) if a.dim == 1 => format!("{d}GLCopy()({});", self.raw(a, 1)?),
             (CodeOp::Copy, [a]) => format!("{d}{};", self.raw(a, 3)?),
-            (CodeOp::Sub, [a, b]) if a.dim == 3 && b.dim == 1 && Self::is_zero(b)? => {
-                format!("{d}GLCCopy()({});", self.raw(a, 3)?)
-            }
             (op, [a, b]) => {
                 let (x, y) = (self.raw(a, b.dim)?, self.raw(b, a.dim)?);
                 let (x, y) = (self.lift(a, x, b.dim)?, self.lift(b, y, a.dim)?);
@@ -301,6 +310,17 @@ mod tests {
         d.roots[0].boundary = DagBoundary::FirstRow;
         let Err(e) = constraint_roots("0", &d, &ctx()) else { panic!("a firstRow root must be refused") };
         assert!(e.to_string().contains("everyRow"), "{e}");
+    }
+
+    /// `x - 0` on a base value is `x` itself: no GLSub against a zero constant, whose bound
+    /// used to be 0 and wrapped the quotient off x mod GL.
+    #[test]
+    fn bn128_minus_zero_is_the_operand() {
+        let zero = DagNode::Const { value: "0".into() };
+        let d = dag(vec![DagNode::Public { id: 0 }, zero, DagNode::Sub { a: 0, b: 1 }, cm(0), DagNode::Mul { a: 2, b: 3 }], &[4]);
+        let out = constraint_eval_bn128(&d, &ctx()).unwrap();
+        assert!(!out.contains("GLSub") && !out.contains("GLCSub"), "{out}");
+        assert!(out.contains("GLC3()(publics[0])"), "x - 0 reads x: {out}");
     }
 
     /// The one dimension rule refuses a DAG over another extension (here degree 2).

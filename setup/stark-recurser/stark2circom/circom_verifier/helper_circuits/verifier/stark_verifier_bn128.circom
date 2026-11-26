@@ -18,17 +18,21 @@ include "transcript.circom";
         VerifyFinalPolBN128
 */
 
+// A constant's bound is at least 1: the GL ops size their quotients from `maxNum - 1`, which a bound
+// of 0 wraps in the BN field (GLSub(x, 0) then lands off x mod GL).
+function gl_constBound(num) { return num == 0 ? 1 : num; }
+
 template GLConst(num) {
     signal output {maxNum} out;
 
-    out.maxNum = num;
+    out.maxNum = gl_constBound(num);
     out <== num;
 }
 
 template GLConst3(num) {
     signal output {maxNum} out[3];
 
-    out.maxNum = num;
+    out.maxNum = gl_constBound(num);
     out <== [num, 0, 0];
 }
 
