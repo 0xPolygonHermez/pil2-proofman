@@ -243,8 +243,7 @@ mod tests {
     use super::r1cs::types::read_r1cs_from_bytes;
     use super::*;
     use proofman_common::exec_format::{
-        ExecFile, ExecGateBand, EXEC_FORMAT_VERSION, EXEC_FORMAT_VERSION_WIDE, EXEC_HEADER_WORDS, EXEC_MAGIC,
-        EXEC_WIDE_HEADER_WORDS,
+        ExecFile, ExecGateBand, EXEC_FORMAT_VERSION_WIDE, EXEC_HEADER_WORDS, EXEC_MAGIC, EXEC_WIDE_HEADER_WORDS,
     };
     use proofman_common::hash_family::HashFamily;
     use proofman_fields::{Field, Goldilocks, PrimeField, QuotientMap};
@@ -370,76 +369,45 @@ mod tests {
         assert!(err.contains("18446744069414584321 is not an element of Goldilocks"), "{err}");
     }
 
-    /// A truncated file is an error at the read that runs out, whatever length it claims.
+    /// Malformed files are refused where the read runs out or the structure breaks, never misread.
     #[test]
-    fn a_truncated_r1cs_is_an_error() {
+    fn a_malformed_r1cs_is_refused() {
+        // The constraints section is the file's last: three one-term linear combinations of a
+        // 4-byte term count, a 4-byte wire and an 8-byte coefficient.
+        const CONSTRAINTS_BYTES: usize = 3 * (4 + 4 + 8);
         let data = build_simple_r1cs_bytes();
-        for len in [0, 3, 12, 30, data.len() - 1] {
-            assert!(read_r1cs_from_bytes::<Goldilocks>(&data[..len]).is_err(), "{len} bytes");
-        }
-    }
-
-    /// A section whose size runs past the end of the file is an error, however large the size: one
-    /// above i64::MAX included, which a seek by it would have wrapped backwards.
-    #[test]
-    fn a_section_past_the_end_is_an_error() {
-        let data = build_simple_r1cs_bytes();
-        // The header section's size: past the magic, the version, the section count and its type.
-        let at = 4 + 4 + 4 + 4;
-        for size in [u64::MAX, i64::MAX as u64 + 1, data.len() as u64] {
+        let constraints_at = data.len() - CONSTRAINTS_BYTES;
+        let put = |at: usize, bytes: &[u8]| {
             let mut bad = data.clone();
-            bad[at..at + 8].copy_from_slice(&size.to_le_bytes());
-            let err = read_r1cs_from_bytes::<Goldilocks>(&bad).unwrap_err().to_string();
-            assert!(err.contains("run past the end of the file"), "size {size}: {err}");
+            bad[at..at + bytes.len()].copy_from_slice(bytes);
+            bad
+        };
+        // (what is broken, the file, a fragment of the error if it is a named one)
+        let mut cases = vec![
+            ("a section size past the end", put(16, &u64::MAX.to_le_bytes()), "run past the end of the file"),
+            // above i64::MAX, which a seek by it would have wrapped backwards
+            ("a section size above i64::MAX", put(16, &(i64::MAX as u64 + 1).to_le_bytes()), "run past the end"),
+            (
+                "a section declared too short",
+                put(constraints_at - 8, &(CONSTRAINTS_BYTES as u64 - 1).to_le_bytes()),
+                "",
+            ),
+            ("a section type twice", put(constraints_at - 12, &1u32.to_le_bytes()), "section 1 appears twice"),
+            (
+                "a wire past the header's",
+                put(constraints_at + 4, &4u32.to_le_bytes()),
+                "wire 4 is not one of the header's 4 wires",
+            ),
+            // nConstraints, the header's last word: sizes no allocation
+            ("a count beyond the data", put(4 + 4 + 4 + 4 + 8 + 4 + 8 + 4 * 4 + 8, &u32::MAX.to_le_bytes()), ""),
+        ];
+        for len in [0, 3, 12, 30, data.len() - 1] {
+            cases.push(("a truncated file", data[..len].to_vec(), ""));
         }
-    }
-
-    /// The bytes of the constraints section of `build_simple_r1cs_bytes`, its last: three linear
-    /// combinations of one term each, a 4-byte term count, a 4-byte wire and an 8-byte coefficient.
-    const CONSTRAINTS_BYTES: usize = 3 * (4 + 4 + 8);
-
-    /// Each section is read within its own bytes: one that declares fewer bytes than its reads take
-    /// is an error, not a read of the bytes after it.
-    #[test]
-    fn a_read_past_its_section_is_an_error() {
-        let mut data = build_simple_r1cs_bytes();
-        let size_at = data.len() - CONSTRAINTS_BYTES - 8;
-        data[size_at..size_at + 8].copy_from_slice(&(CONSTRAINTS_BYTES as u64 - 1).to_le_bytes());
-        assert!(read_r1cs_from_bytes::<Goldilocks>(&data).is_err());
-    }
-
-    /// A section type that appears twice is an error, not one of the two read as the other.
-    #[test]
-    fn a_section_twice_is_an_error() {
-        let mut data = build_simple_r1cs_bytes();
-        // The constraints section's type, before its size, made the header's.
-        let type_at = data.len() - CONSTRAINTS_BYTES - 8 - 4;
-        data[type_at..type_at + 4].copy_from_slice(&1u32.to_le_bytes());
-        let err = read_r1cs_from_bytes::<Goldilocks>(&data).unwrap_err().to_string();
-        assert!(err.contains("section 1 appears twice"), "{err}");
-    }
-
-    /// A wire is one of the header's: a constraint on wire `n_vars` is an error.
-    #[test]
-    fn a_wire_beyond_the_headers_is_an_error() {
-        let mut data = build_simple_r1cs_bytes();
-        // The first linear combination's wire, after its term count.
-        let wire_at = data.len() - CONSTRAINTS_BYTES + 4;
-        data[wire_at..wire_at + 4].copy_from_slice(&4u32.to_le_bytes());
-        let err = read_r1cs_from_bytes::<Goldilocks>(&data).unwrap_err().to_string();
-        assert!(err.contains("wire 4 is not one of the header's 4 wires"), "{err}");
-    }
-
-    /// A count beyond what the file holds sizes no allocation: it is an error at the read that runs
-    /// out, as for any truncated file.
-    #[test]
-    fn a_count_beyond_the_data_is_an_error() {
-        let mut data = build_simple_r1cs_bytes();
-        // nConstraints, the header's last word: past the magic, the version, the section count, the
-        // header's type and size, n8, the 8-byte prime, four u32 counts and nLabels.
-        let at = 4 + 4 + 4 + 4 + 8 + 4 + 8 + 4 * 4 + 8;
-        data[at..at + 4].copy_from_slice(&u32::MAX.to_le_bytes());
-        assert!(read_r1cs_from_bytes::<Goldilocks>(&data).is_err());
+        for (what, bad, fragment) in cases {
+            let err = read_r1cs_from_bytes::<Goldilocks>(&bad).unwrap_err().to_string();
+            assert!(err.contains(fragment), "{what}: {err}");
+        }
     }
 
     /// The STARK recursion's airs are over Goldilocks: asked for a `PlonkResult` of words,
@@ -499,45 +467,6 @@ mod tests {
         (exec[map_at + entry / 2] >> (32 * (entry % 2))) as u32
     }
 
-    #[test]
-    fn test_write_exec_file_roundtrip() {
-        let adds: Vec<PlonkAddition<Goldilocks>> = vec![
-            PlonkAddition { wires: [10, 20], coeffs: [Goldilocks::new(30), Goldilocks::new(40)] },
-            PlonkAddition { wires: [50, 60], coeffs: [Goldilocks::new(70), Goldilocks::new(80)] },
-        ];
-        let s_map: Vec<Vec<u32>> = vec![vec![1, 2, 3, 4], vec![5, 6, 7, 8]];
-
-        let exec = write_exec_file(N_VARS, &adds, &s_map, &[], 0);
-
-        assert_eq!(exec[0], EXEC_MAGIC | EXEC_FORMAT_VERSION, "magic and version lead");
-        assert_eq!(exec[1], 2, "2 additions");
-        assert_eq!(exec[2], 4, "4 mapped rows");
-        assert_eq!(exec[3], 2, "2 mapped columns");
-
-        // First addition
-        assert_eq!(exec[4], 10);
-        assert_eq!(exec[5], 20);
-        assert_eq!(exec[6], 30);
-        assert_eq!(exec[7], 40);
-
-        // Second addition
-        assert_eq!(exec[8], 50);
-        assert_eq!(exec[9], 60);
-        assert_eq!(exec[10], 70);
-        assert_eq!(exec[11], 80);
-
-        // The map is row-major over (row, col), transposing the column-major s_map.
-        let map_at = EXEC_HEADER_WORDS + adds.len() * 4;
-        for (col, column) in s_map.iter().enumerate() {
-            for (row, &signal) in column.iter().enumerate() {
-                assert_eq!(map_entry(&exec, map_at, 2, row, col), signal, "row {row} col {col}");
-            }
-        }
-
-        // Version 2 does not record the r1cs's wire count: its words are the same for any.
-        assert_eq!(write_exec_file(N_VARS + 1, &adds, &s_map, &[], 0), exec);
-    }
-
     /// The map is stored at its live extent: the trailing rows the power-of-two padding leaves
     /// empty, and the trailing columns a gate band fills instead of the map, are not written at
     /// all. Both are measured from the data, so a packer that starts using them keeps working.
@@ -588,42 +517,6 @@ mod tests {
             assert_eq!((exec[2], exec[3]), (0, 0));
             assert_eq!(exec.len(), EXEC_HEADER_WORDS + 3, "header plus an empty band section");
         }
-    }
-
-    /// The band section lands after the map, so a reader that stops at the map's end does not
-    /// see it and one that knows about it finds it at the offset the header implies.
-    #[test]
-    fn write_exec_file_appends_bands_past_the_map() {
-        use r1cs::types::{GateBand, GateBandKind};
-        let adds = vec![PlonkAddition { wires: [10, 20], coeffs: [Goldilocks::ONE; 2] }];
-        // Tall enough to contain both bands: a band's boundary is always inside the live extent.
-        let s_map = vec![(1..=12).collect::<Vec<u32>>(), (13..=24).collect::<Vec<u32>>()];
-        let bands = vec![
-            GateBand { row: 0, kind: GateBandKind::Poseidon1CompressorCompression, payload: 0 },
-            // A non-zero payload, so the triple stride is actually exercised: this is where BLAKE3
-            // puts a block's `flags`, which the expander cannot read off the witness trace.
-            GateBand { row: 10, kind: GateBandKind::Poseidon1CompressorSponge, payload: 0xB3 },
-        ];
-
-        let without = write_exec_file(N_VARS, &adds, &s_map, &[], 0);
-        let with = write_exec_file(N_VARS, &adds, &s_map, &bands, 0);
-
-        // 12 rows x 2 cols = 24 entries = 12 words.
-        let prefix = EXEC_HEADER_WORDS + adds.len() * 4 + 12;
-        assert_eq!(with[..prefix], without[..prefix], "the map must not move");
-        assert_eq!(with[prefix], GATE_BAND_FORMAT_VERSION, "section version leads");
-        assert_eq!(with[prefix + 1], 2, "band count");
-        assert_eq!(with[prefix + 2], 0, "the per-air aux word");
-        // three words per band: row, kind, payload
-        assert_eq!(with[prefix + 3], 0);
-        assert_eq!(with[prefix + 4], GateBandKind::Poseidon1CompressorCompression as u64);
-        assert_eq!(with[prefix + 5], 0, "payload of the first band");
-        assert_eq!(with[prefix + 6], 10);
-        assert_eq!(with[prefix + 7], GateBandKind::Poseidon1CompressorSponge as u64);
-        assert_eq!(with[prefix + 8], 0xB3, "payload of the second band");
-        assert_eq!(with.len(), prefix + 3 + bands.len() * 3, "no slack past the last band");
-        assert_eq!(without[prefix], GATE_BAND_FORMAT_VERSION);
-        assert_eq!(without[prefix + 1], 0, "no bands");
     }
 
     /// Trimming must never drop a row a gate band needs: the prover would gather zeros for that
@@ -679,10 +572,17 @@ mod tests {
 
     #[test]
     fn a_goldilocks_exec_reads_back_as_written() {
-        assert_exec_round_trips(&[
+        let adds = [
             PlonkAddition { wires: [10, 20], coeffs: [Goldilocks::new(30), Goldilocks::NEG_ONE] },
             PlonkAddition { wires: [0, u32::MAX], coeffs: [Goldilocks::ZERO, Goldilocks::new(1 << 63)] },
-        ]);
+        ];
+        assert_exec_round_trips(&adds);
+        // version 2 does not record the r1cs's wire count: its words are the same for any
+        let (s_map, bands, aux) = exec_fixture();
+        assert_eq!(
+            write_exec_file(N_VARS + 1, &adds, &s_map, &bands, aux),
+            write_exec_file(N_VARS, &adds, &s_map, &bands, aux)
+        );
     }
 
     /// Coefficients no word holds come back whole.

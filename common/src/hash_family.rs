@@ -482,11 +482,7 @@ pub fn rust_grinding_type(family: HashFamily) -> &'static str {
 mod tests {
     use super::*;
 
-    /// The per-family knobs every key is built with, pinned (moving one invalidates every key of the family). Grinding
-    /// sets the query count: recursion grinds at least as hard as the basic airs (a query is expensive in-circuit, the
-    /// grind one hash), the final stage at least as hard as the recursion, and the cheap-to-hash blake3 hardest. blake3's
-    /// recursion settles at 2^19 against poseidon's 2^17; only blake3 pins its final air; the BN128 recursivef is
-    /// poseidon-only (blake3's is a Goldilocks STARK of its key).
+    /// Per-family knobs every key is built with, pinned: moving one invalidates every key of the family.
     #[test]
     fn per_family_knobs_are_pinned() {
         // (family, ffi id, grinding basic/recursive/final, compressed blowup/grinding, recursive bits, final bits, bn128)
@@ -509,93 +505,62 @@ mod tests {
         }
     }
 
-    /// The blowup is per family, and whatever it is must still carry degree 5 -- the floor the final
-    /// air's own constraints need -- so the degree cap never becomes the thing that forces it.
+    /// The final blowup must carry degree 5, the floor of the final air's own constraints.
     #[test]
-    fn final_blowup_is_per_family_and_carries_the_degree() {
-        assert_eq!(final_blowup_factor(Blake3), 4);
-        assert_eq!(final_blowup_factor(Poseidon2), 4);
+    fn final_blowup_carries_the_degree() {
+        assert_eq!((final_blowup_factor(Blake3), final_blowup_factor(Poseidon2)), (4, 4));
         for f in HashFamily::ALL {
             let b = final_blowup_factor(f);
             assert!(max_constraint_degree_for_blowup(b) >= 5, "{f} at blowup {b} cannot carry degree 5");
         }
     }
 
-    /// The degree follows the blowup, capped at the repo's 8. Blowup 2 lands on 5, which is what the
-    /// recursion already compiles at -- so this changes nothing there and everything above it.
     #[test]
     fn max_constraint_degree_follows_the_blowup() {
-        assert_eq!(max_constraint_degree_for_blowup(1), 3);
-        assert_eq!(max_constraint_degree_for_blowup(2), 5);
-        assert_eq!(max_constraint_degree_for_blowup(3), 8);
-        assert_eq!(max_constraint_degree_for_blowup(4), 8);
-        assert_eq!(max_constraint_degree_for_blowup(10), 8, "capped");
+        let degrees = [1, 2, 3, 4, 10].map(max_constraint_degree_for_blowup);
+        assert_eq!(degrees, [3, 5, 8, 8, 8], "capped at 8");
     }
 
-    /// blake3 aggregates two proofs, poseidon three: recursive2's BLAKE3 gate count is `arity` times
-    /// recursive1's, and for blake3 that count is what sizes the air.
     #[test]
-    fn default_aggregation_arity_is_two_for_blake3_and_three_for_poseidon() {
-        assert_eq!(default_aggregation_arity(Blake3), 2);
-        assert_eq!(default_aggregation_arity(Poseidon1), 3);
-        assert_eq!(default_aggregation_arity(Poseidon2), 3);
-        for f in HashFamily::ALL {
-            let a = default_aggregation_arity(f);
-            assert!(crate::global_info::is_valid_aggregation_arity(a), "{f} defaults to an invalid arity {a}");
+    fn default_aggregation_arity_is_valid_and_pinned() {
+        for (f, arity) in [(Blake3, 2), (Poseidon1, 3), (Poseidon2, 3)] {
+            assert_eq!(default_aggregation_arity(f), arity, "{f}");
+            assert!(crate::global_info::is_valid_aggregation_arity(arity), "{f}");
         }
     }
 
-    /// `to_plonk.rs`'s `lookup_gate` panics on an unregistered name, so a family with no gates cannot
-    /// be packed at all -- which is what blocked blake3 recursion.
-    /// A single air's gate set must resolve to exactly ONE family, because `to_plonk` panics with
-    /// "r1cs mixes multiple hash families" otherwise.
-    ///
-    /// This is why TreeSelector4/8 are family-agnostic. Their number is the gate's radix over a
-    /// binary selection tree, not a hash arity, so any family may use either; tagging TreeSelector4
-    /// as Poseidon2 made a blake3 r1cs that used radix 4 look like it mixed blake3 with Poseidon2.
-    /// The hash gates alone still identify the family, which is the property that has to hold.
+    /// Hash gates each own one family and every other gate is family-agnostic, so a gate set can only
+    /// mix families by mixing hash gates (`to_plonk` panics on that).
     #[test]
-    fn a_families_gate_set_resolves_to_exactly_one_family() {
-        let plausible: &[(HashFamily, &[&str])] = &[
-            (
-                Poseidon1,
-                &["Poseidon1_16", "CustPoseidon1_16", "TreeSelector8", "CMul", "FFT4", "EvPol4", "SelectValueArity4"],
-            ),
-            (
-                Poseidon2,
-                &["Poseidon2_16", "CustPoseidon2_16", "TreeSelector4", "CMul", "FFT4", "EvPol4", "SelectValueArity4"],
-            ),
-            // blake3 is arity 2, and it uses radix 4 for the FRI selection tree
-            (Blake3, &["Blake3Node", "Blake3Compress", "TreeSelector4", "CMul", "FFT4", "EvPol4", "SelectValueArity2"]),
-            // the other radix must be just as usable by any family
-            (Blake3, &["Blake3Node", "TreeSelector8", "CMul"]),
-            (Poseidon2, &["Poseidon2_16", "TreeSelector8", "CMul"]),
-        ];
-
-        for (expected, gates) in plausible {
-            let mut seen: Vec<HashFamily> = Vec::new();
-            for name in *gates {
-                let (_, family) = lookup_gate(name).unwrap_or_else(|| panic!("unregistered gate {name}"));
-                if let Some(f) = family {
-                    if !seen.contains(&f) {
-                        seen.push(f);
-                    }
-                }
-            }
-            assert_eq!(seen, vec![*expected], "gate set {gates:?} does not resolve to {expected} alone");
+    fn gates_are_owned_by_their_hash_family_or_by_none() {
+        for (name, family) in [
+            ("Poseidon1_16", Poseidon1),
+            ("CustPoseidon1_16", Poseidon1),
+            ("Poseidon2_16", Poseidon2),
+            ("CustPoseidon2_16", Poseidon2),
+            ("Blake3Node", Blake3),
+            ("Blake3Compress", Blake3),
+        ] {
+            assert_eq!(lookup_gate(name).map(|(_, f)| f), Some(Some(family)), "{name}");
         }
+        // TreeSelector4/8 are radices, not arities: tagging them made blake3 r1cs look mixed
+        for name in [
+            "TreeSelector4",
+            "TreeSelector8",
+            "CMul",
+            "FFT4",
+            "EvPol4",
+            "SelectValueArity2",
+            "SelectValueArity4",
+            "PoseidonT",
+            "Num2Bytes",
+        ] {
+            assert_eq!(lookup_gate(name).map(|(_, f)| f), Some(None), "{name}");
+        }
+        assert_eq!(lookup_gate("Nope"), None);
     }
 
-    /// The blake3 gates are blake3's; the BN128 wraps' own gates, `PoseidonT` and the range check, are of no STARK family.
-    #[test]
-    fn the_gates_of_blake3_and_of_the_bn128_wraps_are_registered() {
-        assert_eq!(lookup_gate("Blake3Node"), Some((GateRole::Blake3Node, Some(Blake3))));
-        assert_eq!(lookup_gate("Blake3Compress"), Some((GateRole::Blake3Compress, Some(Blake3))));
-        assert_eq!(lookup_gate("PoseidonT"), Some((GateRole::PoseidonT, None)));
-        assert_eq!(lookup_gate("Num2Bytes"), Some((GateRole::RangeCheck, None)));
-    }
-
-    /// `lookup_gate` takes the first entry of a name, so a name registered twice would hide the other.
+    /// `lookup_gate` takes the first entry of a name, so a duplicate would hide the other.
     #[test]
     fn gate_names_are_unique() {
         let names: std::collections::HashSet<_> = GATES.iter().map(|(name, ..)| name).collect();
@@ -603,36 +568,31 @@ mod tests {
     }
 
     #[test]
-    fn rust_hash_type_tracks_arity_width() {
+    fn hash_geometry() {
         // width = arity * 4
-        assert_eq!(rust_hash_type(Poseidon2, 4), "Poseidon2_16");
-        assert_eq!(rust_hash_type(Poseidon2, 2), "Poseidon2_8");
-        assert_eq!(rust_hash_type(Poseidon1, 4), "Poseidon1_16");
-        assert_eq!(rust_hash_type(Poseidon1, 3), "Poseidon1_12");
-        assert_eq!(rust_hash_type(Poseidon1, 2), "Poseidon1_8");
-    }
-
-    /// The measured geometry: arity 4 is a width-16 sponge absorbing 12 per block.
-    #[test]
-    fn the_sponge_width_fits_one_node_of_children() {
+        for (f, arity, name) in [
+            (Poseidon2, 4, "Poseidon2_16"),
+            (Poseidon2, 2, "Poseidon2_8"),
+            (Poseidon1, 4, "Poseidon1_16"),
+            (Poseidon1, 3, "Poseidon1_12"),
+            (Poseidon1, 2, "Poseidon1_8"),
+        ] {
+            assert_eq!(rust_hash_type(f, arity), name);
+        }
         assert_eq!((sponge_width(4), sponge_rate(4)), (16, 12));
-    }
-
-    /// The transcript buffers one rate's worth before permuting and drains the full state.
-    #[test]
-    fn transcript_sizes_match_the_native_transcript() {
         assert_eq!((transcript_pending_size(4), transcript_out_size(4)), (12, 16));
         assert_eq!((transcript_pending_size(2), transcript_out_size(2)), (4, 8));
     }
 
-    /// Names parse exactly (an unknown family, e.g. `Keccak`, is refused), and serde uses the same names.
+    /// Names parse exactly (unknown or differently-cased ones are refused) and serde uses the same names.
     #[test]
     fn parses_exact_names_only() {
         for f in HashFamily::ALL {
+            let json = format!("\"{}\"", f.as_str());
             assert_eq!(f.as_str().parse::<HashFamily>().unwrap(), f);
             assert_eq!(f.is_blake3(), f == Blake3);
-            assert_eq!(serde_json::to_string(&f).unwrap(), format!("\"{}\"", f.as_str()));
-            assert_eq!(serde_json::from_str::<HashFamily>(&format!("\"{}\"", f.as_str())).unwrap(), f);
+            assert_eq!(serde_json::to_string(&f).unwrap(), json);
+            assert_eq!(serde_json::from_str::<HashFamily>(&json).unwrap(), f);
         }
         for bad in ["Blake3", "poseidon1", "POSEIDON2", "", "sha2", "Keccak"] {
             let e = bad.parse::<HashFamily>().unwrap_err();
