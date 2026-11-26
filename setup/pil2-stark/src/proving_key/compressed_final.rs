@@ -20,7 +20,7 @@ pub struct CompressedFinalConfig<'a> {
     pub stark_info: &'a Value,
     pub verifier_info: &'a Value,
     pub tools: &'a Tools,
-    /// Low-degree test of the compressed proof; `None` is the family's (`compressed_final_stir`).
+    /// Low-degree test of the compressed proof; `None` is STIR.
     pub low_degree_test: Option<crate::types::stark_struct::LowDegreeTestKind>,
 }
 

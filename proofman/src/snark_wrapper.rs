@@ -779,9 +779,9 @@ impl Blake3Wrap {
                 .map_err(|e| ProofmanError::InvalidSetup(format!("Failed to read {}: {e}", path.display())))
         }
         let starkinfo_path = proving_key_snark.join(RECURSIVEF_STARKINFO);
-        let starkinfo: serde_json::Value = read(&starkinfo_path)?;
         let bad = |why: String| ProofmanError::InvalidSetup(format!("{}: {why}", starkinfo_path.display()));
-        proofman_common::stark_info::check_key_version(&starkinfo).map_err(|e| bad(e.to_string()))?;
+        let starkinfo =
+            proofman_common::stark_info::check_key_version_file(&starkinfo_path).map_err(|e| bad(e.to_string()))?;
         let n_publics = starkinfo["nPublics"].as_u64().ok_or_else(|| bad("no nPublics".into()))? as usize;
         let verkey = read(&proving_key_snark.join(RECURSIVEF_VERKEY))?;
         let mut wrap = Self {
@@ -1851,8 +1851,9 @@ mod snarkjs_verdict_tests {
             n_values: 3,
             chunks: [1, 64],
             verification_key: false,
+            avoid_alias: false,
         };
-        let info = PublicsInfo { n_publics: 3, definitions: vec![out], has_program_vk: false };
+        let info = PublicsInfo { n_publics: 3, definitions: vec![out] };
         let (publics, rootc) = ([1, 2, 3], [11, 12, 13, 14]);
         let digest = info.snark_public_digest(&publics, &rootc).unwrap();
         assert!(check_snark_public_digest(&info, &publics, &rootc, &digest).is_ok());

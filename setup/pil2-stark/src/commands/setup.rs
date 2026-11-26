@@ -81,7 +81,7 @@ pub(crate) fn nvcc_present() -> bool {
 
 /// Run the non-recursive setup pipeline.
 pub fn run_setup(opts: &SetupOptions) -> Result<()> {
-    proofman_starks_lib_c::set_hash_family_c(opts.hash.as_str());
+    proofman_starks_lib_c::set_hash_family_c(opts.hash.ffi_id());
     let pilout_data = fs::read(&opts.airout_path)?;
     let pilout = pb::PilOut::decode(pilout_data.as_slice())?;
     let pilout_name = pilout.name.clone().unwrap_or_else(|| "pilout".to_string());
@@ -153,10 +153,11 @@ pub fn run_setup(opts: &SetupOptions) -> Result<()> {
     // Always write globalConstraints first — run_recursive_setup reads them from disk.
     // globalInfo.json is written now only for the non-recursive path; for recursive it is
     // written once at the end after hasCompressor flags are known.
-    write_global_constraints(&pilout, &opts.build_dir)?;
+    let header = pil_info::core::pilout_core::PiloutCore::header_of(&pilout)?;
+    write_global_constraints(&header, &opts.build_dir)?;
     if !opts.recursive {
         write_global_info_json(
-            &pilout,
+            &header,
             &pilout_name,
             &opts.build_dir,
             &settings_map,
@@ -256,7 +257,7 @@ pub fn run_setup(opts: &SetupOptions) -> Result<()> {
     if opts.recursive {
         tracing::info!("Starting recursive setup...");
         let global_info_base = global_info_json(
-            &pilout,
+            &header,
             &pilout_name,
             &settings_map,
             opts.hash,
@@ -275,7 +276,7 @@ pub fn run_setup(opts: &SetupOptions) -> Result<()> {
             final_settings.set_has_compressor(air_name);
         }
         write_global_info_json(
-            &pilout,
+            &header,
             &pilout_name,
             &opts.build_dir,
             &final_settings,

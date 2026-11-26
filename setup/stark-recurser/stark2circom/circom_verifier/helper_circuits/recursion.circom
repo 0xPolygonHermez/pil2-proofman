@@ -505,7 +505,7 @@ template Recursive2(n) {
     for (var i = 0; i < W; i++) { sv_stage1Hash[i] <== out.sv[1 + 4 * nAgg + i]; }
 }
 
-// The compressed vadcop_final: the incoming proof's publics are [is_vadcop_final_proof | vk(4) | inputs];
+// The compressed vadcop_final: the incoming proof's publics are [is_vadcop_final_proof | publics];
 // this proof re-exposes the flag-free rest.
 template FinalCompressed(nPub, nReal) {
     signal input publics[nPub];

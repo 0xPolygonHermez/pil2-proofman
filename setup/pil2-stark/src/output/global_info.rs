@@ -11,7 +11,7 @@ use std::path::Path;
 
 use anyhow::Result;
 use pil2_pilout::pilout as pb;
-use pil_info::core::global::global_from_pilout;
+use pil_info::core::global::global_from_core;
 use pil_info::core::pilout_core::PiloutCore;
 use pil_info::output::global_constraints::global_constraints_json;
 use pil_info::output::global_info::global_values_maps;
@@ -20,10 +20,10 @@ use proofman_common::hash_family::HashFamily;
 
 use crate::types::stark_struct::StarkStructsConfig;
 
-/// The `globalInfo` JSON value, from the pilout's core input (does not write to disk).
+/// The `globalInfo` JSON value of the pilout's header (`PiloutCore::header_of`); does not write to disk.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn global_info_json(
-    pilout: &pb::PilOut,
+    core: &PiloutCore,
     pilout_name: &str,
     settings_map: &StarkStructsConfig,
     hash: HashFamily,
@@ -33,8 +33,7 @@ pub(crate) fn global_info_json(
     // (airgroup, air) -> recursive1 batch size; by index, since air names repeat across airgroups.
     r1_batch_sizes: &std::collections::HashMap<(usize, usize), usize>,
 ) -> Result<serde_json::Value> {
-    let core = PiloutCore::from_pb(pilout)?;
-    let (proof_values_map, publics_map) = global_values_maps(&core)?;
+    let (proof_values_map, publics_map) = global_values_maps(core)?;
     let unnamed = |n: &Option<String>| n.clone().unwrap_or_else(|| "unnamed".to_string());
     let (mut airs, mut air_groups, mut agg_types) = (Vec::new(), Vec::new(), Vec::new());
     for (ag_idx, airgroup) in core.air_groups.iter().enumerate() {
@@ -88,7 +87,7 @@ pub(crate) fn global_info_json(
 /// Write only `pilout.globalInfo.json` into `<build_dir>/provingKey/`.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn write_global_info_json(
-    pilout: &pb::PilOut,
+    core: &PiloutCore,
     pilout_name: &str,
     build_dir: &str,
     settings_map: &StarkStructsConfig,
@@ -102,7 +101,7 @@ pub(crate) fn write_global_info_json(
     let proving_key_dir = Path::new(build_dir).join("provingKey");
     fs::create_dir_all(&proving_key_dir)?;
     let global_info = global_info_json(
-        pilout,
+        core,
         pilout_name,
         settings_map,
         hash,
@@ -118,14 +117,14 @@ pub(crate) fn write_global_info_json(
 
 /// Write `pilout.globalConstraints.json` and `pilout.globalConstraints.bin`
 /// into `<build_dir>/provingKey/`. Does not write `globalInfo.json`.
-pub(crate) fn write_global_constraints(pilout: &pb::PilOut, build_dir: &str) -> Result<()> {
+pub(crate) fn write_global_constraints(core: &PiloutCore, build_dir: &str) -> Result<()> {
     use crate::io::parser_args::{GlobalInfo as ParserGlobalInfo, ProofValueEntry};
     use crate::output::global_constraints::write_global_constraints_bin_file;
     use crate::types::stark_info::GlobalConstraintsInfo;
 
     let proving_key_dir = Path::new(build_dir).join("provingKey");
     fs::create_dir_all(&proving_key_dir)?;
-    let gs = global_from_pilout(pilout, &pil_info::FieldCfg::goldilocks())?;
+    let gs = global_from_core(core, &pil_info::FieldCfg::goldilocks())?;
     let global_constraints = global_constraints_json(&gs)?;
     let gc_str = crate::output::json::to_json_string(&global_constraints)?;
     fs::write(proving_key_dir.join("pilout.globalConstraints.json"), &gc_str)?;
@@ -150,9 +149,10 @@ pub(crate) fn write_global_info(
     agg_arity: usize,
     has_compressed_final: bool,
 ) -> Result<()> {
-    write_global_constraints(pilout, build_dir)?;
+    let core = PiloutCore::header_of(pilout)?;
+    write_global_constraints(&core, build_dir)?;
     write_global_info_json(
-        pilout,
+        &core,
         pilout_name,
         build_dir,
         settings_map,
@@ -221,7 +221,7 @@ mod r1_batch_size_tests {
         sizes.insert((0usize, 1usize), 5usize);
         sizes.insert((0usize, 0usize), 1usize);
         let v = global_info_json(
-            &pilout(),
+            &PiloutCore::header_of(&pilout()).unwrap(),
             "t",
             &StarkStructsConfig::default(),
             HashFamily::Blake3,
@@ -255,7 +255,7 @@ mod agg_arity_tests {
 
     #[test]
     fn the_builder_emits_the_aggregation_arity() {
-        let pilout = pb::PilOut::default();
+        let pilout = PiloutCore::header_of(&pb::PilOut::default()).unwrap();
         let settings = StarkStructsConfig::default();
         for arity in proofman_common::global_info::VALID_AGGREGATION_ARITIES {
             let v = super::global_info_json(
@@ -275,7 +275,7 @@ mod agg_arity_tests {
 
     #[test]
     fn the_builder_emits_the_setup_version_only_when_given() {
-        let pilout = pb::PilOut::default();
+        let pilout = PiloutCore::header_of(&pb::PilOut::default()).unwrap();
         let settings = StarkStructsConfig::default();
         let v =
             super::global_info_json(&pilout, "t", &settings, HashFamily::Poseidon2, 3, true, None, &Default::default())

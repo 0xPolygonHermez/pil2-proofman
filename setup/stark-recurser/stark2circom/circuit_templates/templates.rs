@@ -4,10 +4,10 @@
 //! Solidity contracts are static too (`sol/`): [`gen_solidity`] and [`gen_iverifier`] fill in their
 //! `__TOKEN__`s.
 
-use anyhow::{bail, Context, Result};
+use anyhow::{bail, Result};
 use serde_json::Value;
 
-use super::get_sha256_inputs::sha256_defs;
+use super::get_sha256_inputs::{sha256_defs, ProgramVk};
 use super::vadcop_inputs::{air_id_vars, vadcop_data};
 use super::verify_global_constraints::gen_verify_global_constraints;
 use super::CircomGenOptions;
@@ -72,12 +72,18 @@ pub fn gen_recursion_final(
     verifier_filenames: &[String],
     publics: Option<&Value>,
 ) -> Result<String> {
-    let vk_pos = program_vk_pos(publics)?;
-    let (n_sha, n_defs, defs) = sha256_defs(publics.unwrap_or(&Value::Null))?;
+    let sha = sha256_defs(publics)?;
     let info = parse_stark_info(stark_info)?;
     // rootCVadcopFinal(4) | is_vadcop_final_proof(1) | the program's publics.
     if info.n_publics < 5 {
         bail!("gen_recursion_final: the recursivef has {} publics, fewer than rootC and the flag", info.n_publics);
+    }
+    if sha.n_publics + 5 != info.n_publics as usize {
+        bail!(
+            "gen_recursion_final: the publics info has {} publics, the recursivef {} past rootC and the flag",
+            sha.n_publics,
+            info.n_publics - 5
+        );
     }
     let (mut decl, mut wire, mut at) = (String::new(), String::new(), 0u64);
     for i in proof_inputs(&info).map_err(anyhow::Error::msg)? {
@@ -104,15 +110,17 @@ pub fn gen_recursion_final(
         }
     }
     Ok(head(verifier_filenames, "final_snark.circom", &[stark_info], false, info.stark_struct.merkle_tree_custom)
-        + &defs
+        + &sha.defs
         + &format!(
-            "\ntemplate Main() {{\n    signal output publicsHash;\n{decl}\n    component f = FinalSnark({n_sha}, {n_defs}, {});\n{wire}    publicsHash <== f.publicsHash;\n}}\n",
-            vk_pos.map_or(-1, |p| p as i64)
+            "\ntemplate Main() {{\n    signal output publicsHash;\n{decl}\n    component f = FinalSnark({}, {}, {});\n{wire}    publicsHash <== f.publicsHash;\n}}\n",
+            sha.n_publics,
+            sha.n_defs,
+            sha.vk.map_or(-1, |vk| vk.pos as i64)
         )
         + &main_line(&[], "Main()"))
 }
 
-/// The compressed vadcop_final circuit. The incoming proof commits `[is_vadcop_final_proof | vk(4) | inputs]`
+/// The compressed vadcop_final circuit. The incoming proof commits `[is_vadcop_final_proof | publics]`
 /// as ONE public array; this proof re-exposes the flag-free rest as `publics_stripped`.
 pub fn gen_final_compressed(
     stark_info: &Value,
@@ -280,17 +288,18 @@ pub fn gen_solidity(
     root_c: &[u64; 4],
     publics: Option<&Value>,
     verifier: &SnarkVerifier,
-) -> String {
+) -> Result<String> {
     let camel = capitalise(name);
 
-    let (has_program_vk, first_is_vk) = program_vk(publics);
-    let packed = match (has_program_vk, first_is_vk) {
-        (true, true) => "programVK, publicValues, rootCVadcopFinal",
-        (true, false) => "publicValues, programVK, rootCVadcopFinal",
-        (false, _) => "publicValues, rootCVadcopFinal",
+    let vk = sha256_defs(publics)?.vk;
+    let packed = match vk {
+        Some(ProgramVk { first: true, .. }) => "programVK, publicValues, rootCVadcopFinal",
+        Some(ProgramVk { first: false, .. }) => "publicValues, programVK, rootCVadcopFinal",
+        None => "publicValues, rootCVadcopFinal",
     };
+    let has_program_vk = vk.is_some();
     let root_c = root_c.map(|r| r.to_string());
-    fill(
+    Ok(fill(
         VERIFIER_SOL,
         &[
             ("__SNARK_SOURCE__", &verifier.source()),
@@ -306,15 +315,14 @@ pub fn gen_solidity(
             ("__PACKED__", packed),
             ("__PROOF_DECODE__", &verifier.proof_decode()),
         ],
-    )
+    ))
 }
 
 /// Port of `src/recursion/contracts/iverifier.sol.ejs`.
-pub fn gen_iverifier(name: &str, publics: Option<&Value>, verifier: &SnarkVerifier) -> String {
+pub fn gen_iverifier(name: &str, publics: Option<&Value>, verifier: &SnarkVerifier) -> Result<String> {
     let camel = capitalise(name);
 
-    let (has_program_vk, _) = program_vk(publics);
-    let (pin, pin_value, fold_tree, vk_doc, vk_param) = if has_program_vk {
+    let (pin, pin_value, fold_tree, vk_doc, vk_param) = if sha256_defs(publics)?.vk.is_some() {
         (
             "Both keys MUST be constants",
             "values",
@@ -327,7 +335,7 @@ pub fn gen_iverifier(name: &str, publics: Option<&Value>, verifier: &SnarkVerifi
     } else {
         ("The root MUST be a constant", "a value", "", "", "")
     };
-    fill(
+    Ok(fill(
         IVERIFIER_SOL,
         &[
             ("__SNARK_LABEL__", verifier.label()),
@@ -338,28 +346,7 @@ pub fn gen_iverifier(name: &str, publics: Option<&Value>, verifier: &SnarkVerifi
             ("__PROGRAM_VK_DOC__", vk_doc),
             ("__PROGRAM_VK_PARAM__", vk_param),
         ],
-    )
-}
-
-/// (the publics carry a program verification key, it is the first definition).
-fn program_vk(publics: Option<&Value>) -> (bool, bool) {
-    let defs = publics.and_then(|v| v["definitions"].as_array()).map_or(&[][..], Vec::as_slice);
-    let vk = |d: Option<&Value>| d.and_then(|d| d["verificationKey"].as_bool()).unwrap_or(false);
-    (vk(defs.first()) || vk(defs.last()), vk(defs.first()))
-}
-
-/// The program VK's position in the real publics (its `initialPos`), if the publics carry one.
-fn program_vk_pos(publics: Option<&Value>) -> Result<Option<u64>> {
-    let (has_vk, first_is_vk) = program_vk(publics);
-    if !has_vk {
-        return Ok(None);
-    }
-    let defs = publics.and_then(|v| v["definitions"].as_array()).context("publics: no definitions")?;
-    let d = if first_is_vk { defs.first() } else { defs.last() }.context("publics: no definitions")?;
-    match (d["initialPos"].as_u64(), d["nValues"].as_u64()) {
-        (Some(pos), Some(4)) => Ok(Some(pos)),
-        _ => bail!("publics: the program VK needs an initialPos and nValues 4"),
-    }
+    ))
 }
 
 fn capitalise(s: &str) -> String {
@@ -406,7 +393,7 @@ mod tests {
             "qDim": 3,
             "cExpId": 0,
             "security": {"regime": "test"},
-            "nPublics": 6,
+            "nPublics": 5,
             "nConstants": 3,
             "evMap": [{"type": "const", "id": 0, "prime": 0, "openingPos": 0}, {"type": "cm", "id": 0, "prime": 0, "openingPos": 0}],
             "cmPolsMap": [{"name": "q", "stage": 3, "stagePos": 0, "stageId": 0, "dim": 3}],
@@ -473,7 +460,7 @@ mod tests {
         assert_eq!(
             decls,
             [
-                "publics[6];",
+                "publics[5];",
                 "root1;",
                 "root2;",
                 "root3;",
@@ -499,28 +486,46 @@ mod tests {
         );
     }
 
-    /// FinalSnark needs rootC and the flag; it binds a program VK where it sits, and refuses a malformed one.
+    /// publics_info with an output and a program VK, first or last.
+    fn out_and_vk(vk_first: bool) -> Value {
+        let out = json!({"name": "out", "initialPos": if vk_first { 4 } else { 0 }, "nValues": 1, "chunks": [1, 64]});
+        let vk = json!({"name": "vk", "initialPos": if vk_first { 0 } else { 1 }, "nValues": 4, "chunks": [1, 64], "verificationKey": true});
+        let defs = if vk_first { [vk, out] } else { [out, vk] };
+        json!({"nPublics": 5, "definitions": defs})
+    }
+
+    /// FinalSnark needs rootC, the flag and as many publics as publics_info; it binds a program VK
+    /// where it sits, and refuses one it cannot bind.
     #[test]
     fn final_binds_the_program_vk_where_it_sits() {
         let mut si = recursivef_stark_info(false);
         si["nPublics"] = json!(4);
         assert!(gen_recursion_final(&si, &["v.circom".into()], None).unwrap_err().to_string().contains("publics"));
-        let si = recursivef_stark_info(false);
-        let vk = |n: u64| {
-            json!({"nPublics": 5, "definitions": [{"name": "out", "initialPos": 0, "nValues": 1, "chunks": [1, 64]},
-            {"name": "vk", "initialPos": 1, "nValues": n, "chunks": [1, 64], "verificationKey": true}]})
-        };
-        let out = gen_recursion_final(&si, &["v.circom".into()], Some(&vk(4))).unwrap();
-        assert!(out.lines().any(|l| l.contains("FinalSnark(") && l.ends_with(", 1);")), "{out}");
-        let err = gen_recursion_final(&si, &["v.circom".into()], Some(&vk(1))).unwrap_err().to_string();
-        assert!(err.contains("nValues 4"), "{err}");
+        si["nPublics"] = json!(10);
+        let err = gen_recursion_final(&si, &["v.circom".into()], None).unwrap_err().to_string();
+        assert!(err.contains("0 publics, the recursivef 5"), "{err}");
+        for (vk_first, pos) in [(true, ", 0);"), (false, ", 1);")] {
+            let out = gen_recursion_final(&si, &["v.circom".into()], Some(&out_and_vk(vk_first))).unwrap();
+            assert!(out.lines().any(|l| l.contains("FinalSnark(5, 2") && l.ends_with(pos)), "{out}");
+        }
+        let mut middle = out_and_vk(false);
+        middle["definitions"].as_array_mut().unwrap().push(json!({"name": "x", "initialPos": 5, "nValues": 0}));
+        let mut halves = out_and_vk(false);
+        halves["definitions"][1]["chunks"] = json!([2, 32]);
+        let mut two = out_and_vk(true);
+        two["definitions"][1]["verificationKey"] = json!(true);
+        for (publics, msg) in
+            [(middle, "first or the last"), (halves, "chunks [1, 64]"), (two, "second verificationKey")]
+        {
+            let err = gen_recursion_final(&si, &["v.circom".into()], Some(&publics)).unwrap_err().to_string();
+            assert!(err.contains(msg), "{err}");
+        }
     }
 
     /// The project's verifier of a program whose publics end with its verification key, extending
     /// `verifier`.
     fn project_verifier(verifier: &SnarkVerifier) -> String {
-        let publics = json!({"definitions": [{"name": "out"}, {"name": "rom_root", "verificationKey": true}]});
-        gen_solidity("build", "v0", &[1, 2, 3, u64::MAX], Some(&publics), verifier)
+        gen_solidity("build", "v0", &[1, 2, 3, u64::MAX], Some(&out_and_vk(false)), verifier).unwrap()
     }
 
     /// The lines of `verifier`'s project verifier that are not FFLONK's.
@@ -591,45 +596,51 @@ mod tests {
         let circom = root.join("setup/circom").join(if cfg!(target_os = "macos") { "circom_mac" } else { "circom" });
         let libraries = Path::new(env!("CARGO_MANIFEST_DIR")).join("stark2circom/circom_verifier");
 
-        let stark_info = recursivef_stark_info(true);
+        let mut stark_info = recursivef_stark_info(true);
+        stark_info["nPublics"] = json!(10);
         let verifier_info = json!({ "constraintDag": { "version": 1, "field": "gl", "extDim": 3, "nodes": [[5, 1, 0, 0]], "roots": [[0, 0, "c"]] } });
         let root_c = ["1".to_string(), "0".to_string(), "0".to_string(), "0".to_string()];
         let verifier =
             gen_stark_verifier_bn128(Some(&root_c), &stark_info, &verifier_info, &Pil2CircomOptions::default())
                 .unwrap();
-        let publics =
-            json!({"nPublics": 1, "definitions": [{"name": "x", "initialPos": 0, "nValues": 1, "chunks": [1, 64]}]});
-        let circuit =
-            gen_recursion_final(&stark_info, &["recursivef.verifier.circom".to_string()], Some(&publics)).unwrap();
+        // FinalSnark binds the VK (vkPos >= 0) where it sits: first and last.
+        for vk_first in [true, false] {
+            let circuit = gen_recursion_final(
+                &stark_info,
+                &["recursivef.verifier.circom".to_string()],
+                Some(&out_and_vk(vk_first)),
+            )
+            .unwrap();
 
-        let dir = std::env::temp_dir().join(format!("custom_final_{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).unwrap();
-        fs::write(dir.join("recursivef.verifier.circom"), verifier).unwrap();
-        fs::write(dir.join("final.circom"), circuit).unwrap();
+            let dir = std::env::temp_dir().join(format!("custom_final_{}_{vk_first}", std::process::id()));
+            let _ = fs::remove_dir_all(&dir);
+            fs::create_dir_all(&dir).unwrap();
+            fs::write(dir.join("recursivef.verifier.circom"), &verifier).unwrap();
+            fs::write(dir.join("final.circom"), circuit).unwrap();
 
-        // The libraries of `snark_setup.rs`'s final compile, in its order.
-        let out = Command::new(&circom)
-            .arg(dir.join("final.circom"))
-            .args(["--O1", "--r1cs", "-o"])
-            .arg(&dir)
-            .arg("-l")
-            .arg(libraries.join("helper_circuits"))
-            .arg("-l")
-            .arg(libraries.join("circuits.bn128"))
-            .arg("-l")
-            .arg(&circomlib)
-            .output()
-            .unwrap_or_else(|e| panic!("run {}: {e}", circom.display()));
-        let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
-        assert!(out.status.success(), "circom failed:\n{stderr}{}", String::from_utf8_lossy(&out.stdout));
+            // The libraries of `snark_setup.rs`'s final compile, in its order.
+            let out = Command::new(&circom)
+                .arg(dir.join("final.circom"))
+                .args(["--O1", "--r1cs", "-o"])
+                .arg(&dir)
+                .arg("-l")
+                .arg(libraries.join("helper_circuits"))
+                .arg("-l")
+                .arg(libraries.join("circuits.bn128"))
+                .arg("-l")
+                .arg(&circomlib)
+                .output()
+                .unwrap_or_else(|e| panic!("run {}: {e}", circom.display()));
+            let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+            assert!(out.status.success(), "circom failed:\n{stderr}{}", String::from_utf8_lossy(&out.stdout));
 
-        let r1cs = read_r1cs_from_bytes::<Bn128>(&fs::read(dir.join("final.r1cs")).unwrap()).unwrap();
-        let mut names: Vec<String> = r1cs.custom_gates.iter().map(|g| g.template_name.clone()).collect();
-        names.sort();
-        names.dedup();
-        assert!(names.contains(&"PoseidonT".to_string()) && names.contains(&"Num2Bytes".to_string()), "{names:?}");
-        let _ = fs::remove_dir_all(&dir);
+            let r1cs = read_r1cs_from_bytes::<Bn128>(&fs::read(dir.join("final.r1cs")).unwrap()).unwrap();
+            let mut names: Vec<String> = r1cs.custom_gates.iter().map(|g| g.template_name.clone()).collect();
+            names.sort();
+            names.dedup();
+            assert!(names.contains(&"PoseidonT".to_string()) && names.contains(&"Num2Bytes".to_string()), "{names:?}");
+            let _ = fs::remove_dir_all(&dir);
+        }
     }
 }
 
@@ -745,7 +756,8 @@ mod solidity_version_tests {
 
     #[test]
     fn the_verifier_returns_the_given_version() {
-        let sol = gen_solidity("zisk", "v9.9.9-test", &[1, 2, 3, 4], Some(&zisk_publics()), &SnarkVerifier::Plonk);
+        let sol =
+            gen_solidity("zisk", "v9.9.9-test", &[1, 2, 3, 4], Some(&zisk_publics()), &SnarkVerifier::Plonk).unwrap();
         assert!(sol.contains(r#"return "v9.9.9-test";"#), "{sol}");
         assert!(sol.contains("contract ZiskVerifier is PlonkVerifier, IZiskVerifier"));
         assert!(sol.contains("must be a constant of the calling contract"));
@@ -754,17 +766,17 @@ mod solidity_version_tests {
     /// The interface carries the key-binding rules a caller needs to verify safely.
     #[test]
     fn the_interface_documents_how_to_pin_the_keys() {
-        let isol = gen_iverifier("zisk", Some(&zisk_publics()), &SnarkVerifier::Plonk);
+        let isol = gen_iverifier("zisk", Some(&zisk_publics()), &SnarkVerifier::Plonk).unwrap();
         assert!(isol.contains("Both keys MUST be constants of the calling contract"), "{isol}");
         assert!(isol.contains("@param programVK"));
         assert!(isol.contains("@param rootCVadcopFinal"));
         assert!(isol.contains("the inherited raw PLONK verifier"));
 
-        let fflonk = gen_iverifier("zisk", Some(&zisk_publics()), &SnarkVerifier::Fflonk);
+        let fflonk = gen_iverifier("zisk", Some(&zisk_publics()), &SnarkVerifier::Fflonk).unwrap();
         assert!(fflonk.contains("the inherited raw FFLONK verifier"));
 
         // Without a program key there is one key to pin, and no programVK parameter.
-        let no_vk = gen_iverifier("zisk", None, &SnarkVerifier::Plonk);
+        let no_vk = gen_iverifier("zisk", None, &SnarkVerifier::Plonk).unwrap();
         assert!(no_vk.contains("The root MUST be a constant of the calling contract"), "{no_vk}");
         assert!(!no_vk.contains("programVK"));
     }

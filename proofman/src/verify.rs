@@ -7,20 +7,14 @@ use proofman_starks_lib_c::{
 
 use colored::*;
 
-use proofman_common::{check_key_version, ProofCtx, ProofType, ProofmanResult, Setup};
+use proofman_common::stark_info::check_key_version_file;
+use proofman_common::{ProofCtx, ProofType, ProofmanResult, Setup};
 
 use std::os::raw::c_void;
 
 /// `<base>.{starkinfo,verifierinfo,verkey}.json`.
 fn key_paths(base: &str) -> (String, String, String) {
     (format!("{base}.starkinfo.json"), format!("{base}.verifierinfo.json"), format!("{base}.verkey.json"))
-}
-
-/// The keyVersion gate in Rust: C++ `StarkInfo::load` exits the process on a stale key.
-fn starkinfo_readable(stark_info_path: &str) -> Result<(), String> {
-    let json = std::fs::read_to_string(stark_info_path).map_err(|e| format!("cannot read it: {e}"))?;
-    let value: serde_json::Value = serde_json::from_str(&json).map_err(|e| e.to_string())?;
-    check_key_version(&value).map_err(|e| e.to_string())
 }
 
 fn refuse(stark_info_path: &str, reason: &str) -> bool {
@@ -41,11 +35,16 @@ pub fn verify_proof<F: PrimeField64>(
     global_challenge: Option<Vec<F>>,
 ) -> bool {
     let (stark_info_path, verifier_info_path, verkey_path) = key_paths(base);
-    if let Err(reason) = starkinfo_readable(&stark_info_path) {
-        return refuse(&stark_info_path, &reason);
+    // C++ `StarkInfo::load` exits the process on a stale key.
+    if let Err(e) = check_key_version_file(std::path::Path::new(&stark_info_path)) {
+        return refuse(&stark_info_path, &e.to_string());
     }
     let p_stark_info = stark_info_new_c(stark_info_path.as_str(), false, false, false, true, false);
     let p_constraint_dag = constraint_dag_new_c(verifier_info_path.as_str(), p_stark_info);
+    if p_constraint_dag.is_null() {
+        stark_info_free_c(p_stark_info);
+        return refuse(&verifier_info_path, "missing, pre-DAG or not this starkinfo's");
+    }
 
     let proof_size = get_proof_size_c(p_stark_info) as usize;
     let n_publics = get_n_publics_c(p_stark_info) as usize;
@@ -104,6 +103,10 @@ pub fn verify_proof_bn128<F: PrimeField64>(p_proof: *mut c_void, setup: &Setup<F
 
     let p_stark_info = stark_info_new_c(stark_info_path.as_str(), false, false, false, true, false);
     let p_constraint_dag = constraint_dag_new_c(verifier_info_path.as_str(), p_stark_info);
+    if p_constraint_dag.is_null() {
+        stark_info_free_c(p_stark_info);
+        return false;
+    }
 
     let publics_ptr = match publics {
         Some(ref publics) => publics.as_ptr() as *mut u8,

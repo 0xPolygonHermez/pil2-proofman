@@ -1,5 +1,5 @@
-//! Synthetic airs: a plonk addition and multiplication over 3 connected columns, a public, and one
-//! custom-gate use placed as [`gates_of`] says. The untampered air is accepted; each tampering is
+//! Synthetic airs: a plonk addition and multiplication over 3 connected columns, a public, and
+//! custom-gate uses placed as [`gates_of`] says. The untampered air is accepted; each tampering is
 //! rejected for the reason it names.
 
 use std::collections::BTreeMap;
@@ -37,7 +37,8 @@ struct Air<F> {
     map: Vec<Vec<u32>>,
     constraints: Vec<Expr>,
     template: Template,
-    gate: Option<(CustomGate<F>, Vec<CustomGateUse>)>,
+    /// One use per gate, its signals after the previous gates'.
+    gates: Vec<(CustomGate<F>, Vec<CustomGateUse>)>,
     n_signals: usize,
     /// The pilout's publics (the r1cs has 1).
     publics: usize,
@@ -61,7 +62,7 @@ impl<F: PlonkField> Air<F> {
             map,
             constraints: vec![],
             template,
-            gate: None,
+            gates: vec![],
             n_signals: 0,
             publics: 1,
             add: [1, 1],
@@ -124,9 +125,10 @@ impl<F: PlonkField> Air<F> {
     /// One use of `name` at `base`, as the template places it, with `params`.
     fn gate(mut self, name: &str, base: usize, params: Vec<F>) -> Self {
         let g = gates_of(&self.template).unwrap().into_iter().find(|g| g.name == name).unwrap();
-        self.n_signals = g.n_signals;
+        let first = self.addition_wire();
+        self.n_signals += g.n_signals;
         for c in &g.shapes[0] {
-            self.map[(base as i64 + c.off) as usize % self.n][c.col as usize] = 4 + c.sig as u32;
+            self.map[(base as i64 + c.off) as usize % self.n][c.col as usize] = first + c.sig as u32;
         }
         self.set(g.anchor, base, F::ONE);
         for (c, offs) in &g.band {
@@ -147,7 +149,7 @@ impl<F: PlonkField> Air<F> {
         }
         // a constraint that reads the anchor and every bound column (tier C)
         let mut e = self.col(g.anchor);
-        let mut cols: Vec<u32> = g.shapes[0].iter().map(|c| c.col).collect();
+        let mut cols: Vec<u32> = g.shapes.iter().flatten().map(|c| c.col).collect();
         cols.sort();
         cols.dedup();
         for c in cols {
@@ -155,8 +157,9 @@ impl<F: PlonkField> Air<F> {
         }
         self.constraints.push(e);
         let template_name = name.split('/').next().unwrap().to_string();
-        let signals = (0..g.n_signals as u64).map(|s| 4 + s).collect();
-        self.gate = Some((CustomGate { template_name, parameters: params }, vec![CustomGateUse { id: 0, signals }]));
+        let signals = (0..g.n_signals as u64).map(|s| u64::from(first) + s).collect();
+        let id = self.gates.len() as u32;
+        self.gates.push((CustomGate { template_name, parameters: params }, vec![CustomGateUse { id, signals }]));
         self
     }
 
@@ -236,7 +239,8 @@ impl<F: PlonkField> Air<F> {
         };
         let n_vars = self.addition_wire();
         let lc = |t: &[(u32, u64)]| t.iter().map(|&(w, c)| (w, k::<F>(c))).collect();
-        let (gates, uses) = self.gate.clone().map_or((vec![], vec![]), |(g, u)| (vec![g], u));
+        let (gates, uses): (Vec<_>, Vec<_>) = self.gates.iter().cloned().unzip();
+        let uses: Vec<CustomGateUse> = uses.concat();
         let r1cs = R1csFile {
             header: R1csHeader {
                 n8: 0,
@@ -335,7 +339,7 @@ fn a_blake3_block_is_located_and_its_flags_checked() {
     let e = tampered(&air, |a| a.set("FLAGS", 10, k(2)));
     assert!(matches!(e, CheckError::GateParam { .. }), "{e}");
     // a use with fewer signals than its template would bind fewer cells
-    let e = tampered(&air, |a| _ = a.gate.as_mut().unwrap().1[0].signals.pop());
+    let e = tampered(&air, |a| _ = a.gates[0].1[0].signals.pop());
     assert!(matches!(e, CheckError::GateParam { .. }), "{e}");
 }
 
@@ -345,7 +349,7 @@ fn two_uses_sharing_an_unbound_signal_are_rejected() {
     let air = Air::<Goldilocks>::new(8, 21, "poseidon2/aggregator", &[]).gate("EvPol4", 0, vec![]).plonk(4);
     assert_eq!(air.check().unwrap().gates.uses, 1);
     let e = tampered(&air, |a| {
-        let uses = &mut a.gate.as_mut().unwrap().1;
+        let uses = &mut a.gates[0].1;
         uses.push(uses[0].clone());
     });
     assert!(matches!(&e, CheckError::GateParam { why, .. } if why.contains("shared")), "{e}");
@@ -389,6 +393,30 @@ fn the_blake3_wrap_checks_its_message_bus_and_iv() {
         let e = tampered(&air, |a| a.set(col, row, k(99)));
         assert!(matches!(&e, CheckError::FixedPattern { column, .. } if column == col), "{col}: {e}");
     }
+}
+
+/// The blake3 wrap packs a range check inside a block: accepted there, RANGE_CHECK still exact, blocks still disjoint.
+#[test]
+fn blake3_wrap_range_check_shares_a_block() {
+    let parent = || vec![k::<Bn128>(4), Bn128::ONE];
+    // width 18: the three range-check slots
+    let air = Air::new(128, 18, "blake3_bn128/wrap", &[]).gate("Blake3Compress/parent", 0, parent());
+    let mut air = air.gate("Num2Bytes", 8, vec![k(80)]).plonk(64);
+    let mut w = Bn128::ONE;
+    for j in 0..5 {
+        air.set(&format!("C[{j}]"), 8, w);
+        w *= k(1 << 16);
+    }
+    let rep = air.check().unwrap();
+    assert_eq!((rep.gates.uses, rep.gates.bands), (2, 2));
+    for (row, v) in [(100, -Bn128::ONE), (8, k(2))] {
+        let e = tampered(&air, |a| a.set("RANGE_CHECK", row, v));
+        assert!(matches!(&e, CheckError::FixedPattern { column, .. } if column == "RANGE_CHECK"), "{row}: {e}");
+    }
+    // a second block inside the first (placed first, so the first's constants stand)
+    let air = Air::new(128, 18, "blake3_bn128/wrap", &[]).gate("Blake3Compress/parent", 32, parent());
+    let e = air.gate("Blake3Compress/parent", 0, parent()).plonk(64).check().unwrap_err();
+    assert!(matches!(&e, CheckError::FixedPattern { why, .. } if why == "two bands overlap"), "{e}");
 }
 
 #[test]

@@ -274,7 +274,7 @@ fn run_stats_proving_key(opts: &StatsOptions) -> Result<()> {
             security
         ));
         stats_lines.push(format!("Circuit: {name} ({group}, {ldt}, hash {family})"));
-        stats_lines.push(format!("Verifier hashes ({}):", opts.hash));
+        stats_lines.push(format!("Verifier hashes ({family}):"));
         stats_lines.push(format!(
             "    total: {:>9} | leaf: {:>8} merkle: {:>8} ldt: {:>8} transcript: {:>5} grinding: {} \
              (arity {}, {} queries, llv {}, {} grinding bits, standalone transcript)",

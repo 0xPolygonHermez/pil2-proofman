@@ -4,7 +4,7 @@
 
 use pil2_pilout::pilout as pb;
 use pil_info::core::ir::NamedValue;
-use pil_info::core::pilout_core::{PiloutCore, PiloutError};
+use pil_info::core::pilout_core::{Air, AirGroupValue, PiloutCore, PiloutError};
 use pil_info::output::global_info::global_values_maps;
 use proofman_pilfflonk::tag::{Backend, Field, Modulus, Transcript};
 use proofman_pilfflonk::{AggType, GlobalInfoAir, NameStageEntry, PilfflonkGlobalInfo, SetupParams, FORMAT_VERSION};
@@ -17,17 +17,11 @@ pub fn pilout_name(pilout: &pb::PilOut) -> String {
     pilout.name.clone().unwrap_or_else(|| "pilout".to_string())
 }
 
-/// The name of an airgroup, `<airgroup>` in the `provingKey/`: the STARK setup's name for its
-/// directory (`commands/setup.rs`). The STARK's globalInfo calls an airgroup without a name
-/// `"unnamed"` instead; here the globalInfo and the directory agree, as the paths of the
-/// `provingKey/` are derived from the globalInfo.
-fn airgroup_name(airgroup_id: usize, airgroup: &pb::AirGroup) -> String {
-    airgroup.name.clone().unwrap_or_else(|| format!("airgroup_{airgroup_id}"))
-}
-
-/// The name of an AIR, `<air>` in the `provingKey/`: as [`airgroup_name`].
-fn air_name(air_id: usize, air: &pb::Air) -> String {
-    air.name.clone().unwrap_or_else(|| format!("air_{air_id}"))
+/// The name of an airgroup or AIR, `<airgroup>`/`<air>` in the `provingKey/`: the STARK setup's name for its
+/// directory (`commands/setup.rs`). The STARK's globalInfo calls an unnamed one `"unnamed"` instead; here the
+/// globalInfo and the directory agree, as the paths of the `provingKey/` are derived from the globalInfo.
+fn dir_name(name: &Option<String>, prefix: &str, id: usize) -> String {
+    name.clone().unwrap_or_else(|| format!("{prefix}_{id}"))
 }
 
 /// The entries of a map `pil-info` builds as JSON, as the globalInfo types them.
@@ -48,36 +42,20 @@ fn name_stage_entries(values: Vec<NamedValue>) -> Vec<NameStageEntry> {
 /// publics maps, which `pil-info` builds for both setups.
 pub fn global_info(pilout: &pb::PilOut, setup_params: SetupParams) -> Result<PilfflonkGlobalInfo, SetupError> {
     let invalid = |e: PiloutError| SetupError::InvalidPilout(e.to_string());
-    let (proof_values, publics) =
-        global_values_maps(&PiloutCore::from_pb(pilout).map_err(invalid)?).map_err(invalid)?;
-    let mut airs = Vec::with_capacity(pilout.air_groups.len());
-    let mut air_groups = Vec::with_capacity(pilout.air_groups.len());
-    let mut agg_types = Vec::with_capacity(pilout.air_groups.len());
-    for (airgroup_id, airgroup) in pilout.air_groups.iter().enumerate() {
-        air_groups.push(airgroup_name(airgroup_id, airgroup));
-        airs.push(
-            airgroup
-                .airs
-                .iter()
-                .enumerate()
-                .map(|(air_id, air)| GlobalInfoAir {
-                    name: air_name(air_id, air),
-                    num_rows: u64::from(air.num_rows.unwrap_or(0)),
-                })
-                .collect(),
-        );
-        let aggs = airgroup
-            .air_group_values
-            .iter()
-            .map(|v| match u64::try_from(v.agg_type) {
-                Ok(agg_type) => Ok(AggType { agg_type, stage: u64::from(v.stage) }),
-                Err(_) => Err(SetupError::InvalidPilout(format!(
-                    "an airgroup value of airgroup {airgroup_id} aggregates by {}",
-                    v.agg_type
-                ))),
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        agg_types.push(aggs);
+    let core = PiloutCore::header_of(pilout).map_err(invalid)?;
+    let (proof_values, publics) = global_values_maps(&core).map_err(invalid)?;
+    let mut airs = Vec::with_capacity(core.air_groups.len());
+    let mut air_groups = Vec::with_capacity(core.air_groups.len());
+    let mut agg_types = Vec::with_capacity(core.air_groups.len());
+    for (airgroup_id, airgroup) in core.air_groups.iter().enumerate() {
+        air_groups.push(dir_name(&airgroup.name, "airgroup", airgroup_id));
+        let air = |(air_id, air): (usize, &Air)| GlobalInfoAir {
+            name: dir_name(&air.name, "air", air_id),
+            num_rows: u64::from(air.num_rows),
+        };
+        airs.push(airgroup.airs.iter().enumerate().map(air).collect());
+        let agg = |v: &AirGroupValue| AggType { agg_type: v.agg_type as u64, stage: u64::from(v.stage) };
+        agg_types.push(airgroup.air_group_values.iter().map(agg).collect());
     }
 
     let num_challenges = if pilout.num_challenges.is_empty() {

@@ -710,8 +710,8 @@ fn write_project_verifier(
             Some(f) => f.to_uppercase().to_string() + c.as_str(),
         }
     };
-    let sol = gen_solidity(config.name, config.contract_version, const_root, publics_ref, verifier);
-    let isol = gen_iverifier(config.name, publics_ref, verifier);
+    let sol = gen_solidity(config.name, config.contract_version, const_root, publics_ref, verifier)?;
+    let isol = gen_iverifier(config.name, publics_ref, verifier)?;
     fs::write(final_dir.join(format!("{camel}Verifier.sol")), sol)?;
     fs::write(final_dir.join(format!("I{camel}Verifier.sol")), isol)?;
     Ok(())

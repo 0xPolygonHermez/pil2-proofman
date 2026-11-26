@@ -194,17 +194,18 @@ pub fn report_built(
 ) -> Result<SecurityReport, SecurityError> {
     use proofman_common::LowDegreeTest as Built;
     let bits = (ss.n_bits as usize, ss.n_bits_ext as usize);
-    let params = match &ss.low_degree_test {
-        Built::Fri(f) => {
-            let counts = (vec![f.num_queries], vec![f.grinding_bits_queries as u32], vec![]);
-            params((false, bits, [&f.folding_factors[..], &f.log_degrees, &f.log_domain_sizes]), counts, batch_size)
-        }
+    let (geometry, counts) = match &ss.low_degree_test {
+        Built::Fri(f) => (
+            (false, bits, [&f.folding_factors[..], &f.log_degrees, &f.log_domain_sizes]),
+            (vec![f.num_queries], vec![f.grinding_bits_queries as u32], vec![]),
+        ),
         Built::Stir(s) => {
             let ood = vec![1; s.folding_factors.len().saturating_sub(1)];
             let counts = (s.num_queries.clone(), u32s(&s.grinding_bits_queries), ood);
-            params((true, bits, [&s.folding_factors[..], &s.log_degrees, &s.log_domain_sizes]), counts, batch_size)
+            ((true, bits, [&s.folding_factors[..], &s.log_degrees, &s.log_domain_sizes]), counts)
         }
     };
+    let params = params(geometry, counts, batch_size);
     schedule::validate(&params).map_err(SecurityError::Schedule)?;
     let regime = regime_of(regime, proximity_gap, params.mu(0))?;
     report_params(&params, &regime)

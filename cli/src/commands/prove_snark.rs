@@ -56,9 +56,6 @@ impl ProveSnarkCmd {
             .map_err(|e| format!("Failed to load VadcopFinalProof from file {}: {}", self.proof, e))?;
 
         if self.only_recursivef {
-            if proof.hash == "blake3" {
-                return Err("a blake3 key's recursivef is a STARK of its proving key, not of setup-snark".into());
-            }
             let valid = generate_and_verify_recursivef::<Goldilocks>(
                 &self.proving_key_snark,
                 &proof,

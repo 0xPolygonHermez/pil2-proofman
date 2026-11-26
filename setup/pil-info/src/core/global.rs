@@ -154,13 +154,7 @@ pub fn global_from_core(core: &PiloutCore, field: &FieldCfg) -> Result<GlobalSys
     })
 }
 
-/// `global_from_core` over the pilout's global tables.
+/// `global_from_core` over the pilout's header.
 pub fn global_from_pilout(pilout: &pb::PilOut, field: &FieldCfg) -> Result<GlobalSystem, PiloutError> {
-    let mut core = PiloutCore::globals_of(pilout)?;
-    core.air_groups = (pilout.air_groups.iter())
-        .map(|g| {
-            Ok(pc::AirGroup { name: g.name.clone(), air_group_values: pc::air_group_values(g)?, airs: Vec::new() })
-        })
-        .collect::<Result<_, PiloutError>>()?;
-    global_from_core(&core, field)
+    global_from_core(&PiloutCore::header_of(pilout)?, field)
 }

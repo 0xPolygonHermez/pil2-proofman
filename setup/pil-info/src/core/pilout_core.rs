@@ -39,8 +39,6 @@ pub enum PiloutError {
     MissingCommitId { symbol: String },
     #[error("air {air} of airgroup {airgroup} has no constraints")]
     NoConstraints { airgroup: usize, air: usize },
-    #[error("the pilout declares {declared} public values and its symbols name {named}")]
-    PublicCount { declared: u32, named: usize },
     #[error("the pilout declares {what} {declared:?} and its symbols name {named:?}")]
     SymbolCount { what: &'static str, declared: Vec<u32>, named: Vec<u32> },
     #[error("custom commit `{commit}` binds public {idx}, past the {declared} public values")]
@@ -306,9 +304,21 @@ fn input(why: String) -> PiloutError {
 impl PiloutCore {
     /// The only protobuf reader on the trusted path: a structural copy, every absent required field an error.
     pub fn from_pb(p: &pb::PilOut) -> Result<Self, PiloutError> {
+        Self::with_airs(p, air_of)
+    }
+
+    /// `from_pb` with each air cut to its name and `num_rows`: the globalInfo writers' input.
+    pub fn header_of(p: &pb::PilOut) -> Result<Self, PiloutError> {
+        Self::with_airs(p, air_header)
+    }
+
+    fn with_airs(
+        p: &pb::PilOut,
+        air: fn(&pb::Air, usize, usize) -> Result<Air, PiloutError>,
+    ) -> Result<Self, PiloutError> {
         let mut air_groups = Vec::with_capacity(p.air_groups.len());
         for (g, ag) in p.air_groups.iter().enumerate() {
-            let airs = ag.airs.iter().enumerate().map(|(a, x)| air_of(x, g, a)).collect::<Result<_, _>>()?;
+            let airs = ag.airs.iter().enumerate().map(|(a, x)| air(x, g, a)).collect::<Result<_, _>>()?;
             air_groups.push(AirGroup { name: ag.name.clone(), air_group_values: air_group_values(ag)?, airs });
         }
         Ok(PiloutCore { air_groups, ..Self::globals_of(p)? })
@@ -355,13 +365,25 @@ fn agg_type(v: i32) -> Result<AggType, PiloutError> {
     }
 }
 
+fn air_header(a: &pb::Air, airgroup: usize, air: usize) -> Result<Air, PiloutError> {
+    Ok(Air {
+        name: a.name.clone(),
+        num_rows: a.num_rows.ok_or(PiloutError::MissingNumRows { airgroup, air })?,
+        stage_widths: Vec::new(),
+        n_fixed_cols: 0,
+        n_periodic_cols: 0,
+        air_values: Vec::new(),
+        custom_commits: Vec::new(),
+        expressions: Vec::new(),
+        constraints: Vec::new(),
+    })
+}
+
 pub(crate) fn air_of(a: &pb::Air, airgroup: usize, air: usize) -> Result<Air, PiloutError> {
     let len = |n: usize, what: &str| u32::try_from(n).map_err(|_| input(format!("too many {what}")));
     let expressions = a.expressions.iter().enumerate().map(|(i, e)| expression_of(e, i)).collect::<Result<_, _>>()?;
     let constraints = a.constraints.iter().enumerate().map(|(k, c)| constraint_of(c, k)).collect::<Result<_, _>>()?;
     Ok(Air {
-        name: a.name.clone(),
-        num_rows: a.num_rows.ok_or(PiloutError::MissingNumRows { airgroup, air })?,
         stage_widths: a.stage_widths.clone(),
         n_fixed_cols: len(a.fixed_cols.len(), "fixed columns")?,
         n_periodic_cols: len(a.periodic_cols.len(), "periodic columns")?,
@@ -377,6 +399,7 @@ pub(crate) fn air_of(a: &pb::Air, airgroup: usize, air: usize) -> Result<Air, Pi
             .collect::<Result<_, PiloutError>>()?,
         expressions,
         constraints,
+        ..air_header(a, airgroup, air)?
     })
 }
 

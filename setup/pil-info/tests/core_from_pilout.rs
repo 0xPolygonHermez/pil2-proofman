@@ -238,7 +238,7 @@ fn publics_are_tied_to_num_public_values() {
     p.num_public_values = 2;
     p.symbols.push(symbol("p", SymbolType::PublicValue, 1, 0));
     let err = from_pilout(&p, 0, 0, &gl(), Opening::Deep).unwrap_err();
-    assert_eq!(err, PiloutError::PublicCount { declared: 2, named: 1 });
+    assert_eq!(err, PiloutError::SymbolCount { what: "public values", declared: vec![2], named: vec![1] });
     p.symbols.push(symbol("q", SymbolType::PublicValue, 1, 1));
     p.air_groups[0].airs[0].custom_commits = vec![pb::CustomCommit {
         name: Some("rom".into()),
@@ -295,7 +295,7 @@ fn rejects_a_value_named_twice() {
     p.num_public_values = 1;
     p.symbols.extend([symbol("p", SymbolType::PublicValue, 1, 0), symbol("q", SymbolType::PublicValue, 1, 0)]);
     let err = from_pilout(&p, 0, 0, &gl(), Opening::Deep).unwrap_err();
-    assert!(matches!(err, PiloutError::BadOperand { why, .. } if why.contains("two symbols")), "{err:?}");
+    assert_eq!(err, PiloutError::SymbolCount { what: "public values", declared: vec![1], named: vec![2] });
 }
 
 /// Declared proof values and air values each need a symbol; a proof value operand its symbol's stage.

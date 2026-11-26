@@ -469,6 +469,7 @@ fn values_impl(input: TokenStream2) -> Result<TokenStream2> {
             pub fn from_vec_guard(
                 mut external_buffer_rw: std::sync::RwLockWriteGuard<Vec<#generics>>,
             ) -> Self {
+                assert!(external_buffer_rw.len() >= #row_struct_name::<#generics>::TOTAL_SIZE, "values buffer too short");
                 let slice_values = unsafe {
                     let ptr = external_buffer_rw.as_mut_ptr() as *mut #row_struct_name<#generics>;
                     &mut *ptr

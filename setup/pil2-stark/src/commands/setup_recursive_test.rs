@@ -45,7 +45,7 @@ fn resolve_hash_circom_path(circom_path: &str, hash: proofman_common::hash_famil
 ///
 /// Ports `main_setup_recursive.js` behaviour for the test-recursive CI job.
 pub fn run_setup_recursive_test(opts: &SetupRecursiveTestOptions) -> Result<()> {
-    proofman_starks_lib_c::set_hash_family_c(opts.hash.as_str());
+    proofman_starks_lib_c::set_hash_family_c(opts.hash.ffi_id());
     let tools = Tools::from_env();
     let witness_tracker = witness_tracker_from_env();
 

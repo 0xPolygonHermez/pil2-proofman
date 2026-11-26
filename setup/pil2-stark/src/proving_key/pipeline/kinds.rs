@@ -28,7 +28,7 @@ pub struct TestCfg {
 
 pub struct CompressedFinalCfg {
     pub family: HashFamily,
-    /// `None` is the family's (`compressed_final_stir`).
+    /// `None` is STIR.
     pub low_degree_test: Option<LowDegreeTestKind>,
 }
 
@@ -157,19 +157,15 @@ fn gl_verifier(family: HashFamily, verkey_input: bool, enable_input: bool, input
     })
 }
 
-/// The compressed final's stark struct at 2^`n_bits` and whether its proof is a multiproof: no wrap
-/// reads this proof, so its geometry is a proof-size knob.
+/// The compressed final's stark struct at 2^`n_bits`; its proof is a multiproof (Fibonacci STIR: blake3 249,359 B
+/// against 264,935 flat). No wrap reads this proof, so its geometry is a proof-size knob.
 pub fn compressed_final_settings(
     family: HashFamily,
     low_degree_test: Option<LowDegreeTestKind>,
     n_bits: usize,
-) -> Result<(StarkStruct, bool)> {
-    let ldt = low_degree_test.unwrap_or(if hf::compressed_final_stir(family) {
-        LowDegreeTestKind::Stir
-    } else {
-        LowDegreeTestKind::Fri
-    });
-    let multiproof = hf::compressed_final_multiproof(family);
+) -> Result<StarkStruct> {
+    // STIR: Fibonacci blake3 249,359 B against 274,719 FRI, Poseidon2 201,826 against 254,826.
+    let ldt = low_degree_test.unwrap_or(LowDegreeTestKind::Stir);
     let blowup = hf::compressed_final_blowup_factor(family);
     // A pinned schedule applies only at the air size and blowup it was measured at.
     let here = (n_bits, blowup);
@@ -194,11 +190,8 @@ pub fn compressed_final_settings(
         initial_folding_factor: Some(if family.is_blake3() { 4 } else { 3 }),
         grinding_bits: Some(hf::compressed_final_grinding_bits(family)),
         merkle_tree_arity: (!family.is_blake3()).then_some(2),
-        last_level_verification: if multiproof {
-            Some(0)
-        } else {
-            hf::compressed_final_last_level_verification(family)
-        },
+        // a multiproof shares the tree tops already
+        last_level_verification: Some(0),
         // final_degree is a log degree here; the helper gives the terminal FRI domain.
         final_degree: Some(hf::compressed_final_fri_terminal_degree(family) - blowup),
         low_degree_test: Some(ldt),
@@ -208,10 +201,10 @@ pub fn compressed_final_settings(
     };
     let ss = generate_stark_struct(&settings, n_bits, family);
     let (mta, ta) = (ss.merkle_tree_arity, ss.transcript_arity);
-    if multiproof && !hf::has_multiproof_codec(family, mta as u64, ta as u64) {
+    if !hf::has_multiproof_codec(family, mta as u64, ta as u64) {
         bail!("no {family} multiproof codec at tree arity {mta}, transcript arity {ta}");
     }
-    Ok((ss, multiproof))
+    Ok(ss)
 }
 
 pub fn steps_for_compressed_final(cfg: &CompressedFinalCfg) -> Vec<Step> {
@@ -224,9 +217,8 @@ pub fn steps_for_compressed_final(cfg: &CompressedFinalCfg) -> Vec<Step> {
     let settings = Step::Custom {
         name: "compressed_settings",
         run: Box::new(move |c| {
-            let (ss, multiproof) = compressed_final_settings(family, ldt, c.plonk()?.n_bits)?;
-            c.stark_struct = Some(ss);
-            c.key.multiproof = multiproof;
+            c.stark_struct = Some(compressed_final_settings(family, ldt, c.plonk()?.n_bits)?);
+            c.key.multiproof = true;
             Ok(())
         }),
     };

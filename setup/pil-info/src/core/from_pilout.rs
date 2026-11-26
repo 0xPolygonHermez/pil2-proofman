@@ -353,12 +353,15 @@ pub(crate) fn declared_stage(s: &pc::Symbol) -> Result<u32, PiloutError> {
     s.stage.ok_or_else(|| PiloutError::MissingStage { symbol: s.name.clone() })
 }
 
-/// `mk(symbol, cell)` of `symbols` (arrays expanded) placed at their ids; a hole or a slot named twice is an error.
+/// `mk(symbol, cell)` of `symbols` (arrays expanded) placed at their ids; each of the `declared` slots named once.
 pub(crate) fn named<'a, T>(
+    what: &'static str,
+    declared: u64,
     symbols: impl Iterator<Item = &'a pc::Symbol>,
     mk: impl Fn(&pc::Symbol, usize) -> Result<T, PiloutError>,
 ) -> Result<Vec<T>, PiloutError> {
-    let mut v: Vec<Option<T>> = Vec::new();
+    let n = |x: u64| u32::try_from(x).unwrap_or(u32::MAX);
+    let (mut v, mut cells, mut twice): (Vec<Option<T>>, u64, bool) = (Vec::new(), 0, false);
     for s in symbols {
         for k in 0..symbol_len(s) {
             let idx = (s.id as usize).saturating_add(k);
@@ -366,42 +369,32 @@ pub(crate) fn named<'a, T>(
             if v.len() <= idx {
                 v.resize_with(idx + 1, || None);
             }
-            within(v[idx].is_none(), idx, "a value named by two symbols")?;
+            cells += 1;
+            twice |= v[idx].is_some();
             v[idx] = Some(mk(s, k)?);
         }
     }
-    v.into_iter().enumerate().map(|(i, x)| x.ok_or_else(|| bad(i, "a value with no symbol"))).collect()
-}
-
-/// `named` symbol cells against the `declared` count.
-fn check_total(what: &'static str, declared: u64, named: usize) -> Result<(), PiloutError> {
-    if declared == named as u64 {
-        return Ok(());
+    match v.into_iter().collect::<Option<Vec<T>>>() {
+        Some(v) if !twice && v.len() as u64 == declared => Ok(v),
+        _ => Err(PiloutError::SymbolCount { what, declared: vec![n(declared)], named: vec![n(cells)] }),
     }
-    let n = |x: u64| u32::try_from(x).unwrap_or(u32::MAX);
-    Err(PiloutError::SymbolCount { what, declared: vec![n(declared)], named: vec![n(named as u64)] })
 }
 
 /// The proof values by id, every declared one named exactly once.
 pub fn proof_values(core: &PiloutCore) -> Result<Vec<NamedValue>, PiloutError> {
-    let v = named(global(core, SymbolKind::ProofValue), |s, k| {
+    let declared = core.num_proof_values.iter().map(|n| u64::from(*n)).sum();
+    named("proof values", declared, global(core, SymbolKind::ProofValue), |s, k| {
         let (name, lengths) = cell(s, k);
         Ok(NamedValue { name, stage: proof_value_stage(s), lengths, ..Default::default() })
-    })?;
-    check_total("proof values", core.num_proof_values.iter().map(|n| u64::from(*n)).sum(), v.len())?;
-    Ok(v)
+    })
 }
 
 /// The publics by id (stage 1), every declared one named exactly once.
 pub fn publics(core: &PiloutCore) -> Result<Vec<NamedValue>, PiloutError> {
-    let v = named(global(core, SymbolKind::PublicValue), |s, k| {
+    named("public values", u64::from(core.num_public_values), global(core, SymbolKind::PublicValue), |s, k| {
         let (name, lengths) = cell(s, k);
         Ok(NamedValue { name, stage: 1, lengths, ..Default::default() })
-    })?;
-    if v.len() != core.num_public_values as usize {
-        return Err(PiloutError::PublicCount { declared: core.num_public_values, named: v.len() });
-    }
-    Ok(v)
+    })
 }
 
 pub(crate) fn global(core: &PiloutCore, kind: SymbolKind) -> impl Iterator<Item = &pc::Symbol> {
@@ -438,15 +431,10 @@ pub(crate) fn hint_entries(fields: &[pc::HintField]) -> &[pc::HintField] {
     }
 }
 
-/// Pairs the declared `(stage, aggType)` with the symbol cells, one each.
-fn staged(
-    what: &'static str,
-    cells: Vec<(String, Lengths)>,
-    declared: impl ExactSizeIterator<Item = (u32, AggType)>,
-) -> Result<Vec<NamedValue>, PiloutError> {
-    check_total(what, declared.len() as u64, cells.len())?;
+/// Pairs the declared `(stage, aggType)` with the symbol cells (`named` checked the count).
+fn staged(cells: Vec<(String, Lengths)>, declared: impl Iterator<Item = (u32, AggType)>) -> Vec<NamedValue> {
     let value = |((name, lengths), (stage, agg_type))| NamedValue { name, stage, lengths, agg_type };
-    Ok(cells.into_iter().zip(declared).map(value).collect())
+    cells.into_iter().zip(declared).map(value).collect()
 }
 
 /// The pilout-wide tables, the airgroup values and the air (`airgroup`, `air`) of `pilout`.
@@ -643,11 +631,12 @@ fn lower(
         })
         .collect::<Result<_, _>>()?;
     let publics = publics(core)?;
-    let cells = |kind, air| named(of_air(core, kind, g32, air), |s, k| Ok(cell(s, k)));
+    let cells = |what, n: usize, kind, air| named(what, n as u64, of_air(core, kind, g32, air), |s, k| Ok(cell(s, k)));
     let air_value_stages = a.air_values.iter().map(|s| (*s, AggType::Sum));
-    let air_values = staged("air values", cells(SymbolKind::AirValue, Some(a32))?, air_value_stages)?;
+    let air_values =
+        staged(cells("air values", a.air_values.len(), SymbolKind::AirValue, Some(a32))?, air_value_stages);
     let agv = agvs.iter().map(|v| (v.stage, v.agg_type));
-    let airgroup_values = staged("airgroup values", cells(SymbolKind::AirGroupValue, None)?, agv)?;
+    let airgroup_values = staged(cells("airgroup values", agvs.len(), SymbolKind::AirGroupValue, None)?, agv);
 
     // n_stages = max(highest declared witness/value stage, numChallenges.len(), 1); extra stages have no challenges
     let declared = witness

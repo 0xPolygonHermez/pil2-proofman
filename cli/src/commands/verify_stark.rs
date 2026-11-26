@@ -54,7 +54,7 @@ impl VerifyStark {
         // family the prover used travels with the proof; a wrong one here only costs a failed
         // verification, never a false accept, because it changes the transcript and the roots.
         let hash: HashFamily = proof.hash.parse().map_err(|e| format!("the proof's {e}"))?;
-        proofman_starks_lib_c::set_hash_family_c(hash.as_str());
+        proofman_starks_lib_c::set_hash_family_c(hash.ffi_id());
 
         // The C++ verifier reads the flat proof.
         let stark_info: Option<StarkInfo> = match proof.compressed {

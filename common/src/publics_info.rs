@@ -14,9 +14,17 @@ pub struct PublicDefinition {
     pub initial_pos: usize,
     #[serde(rename = "nValues")]
     pub n_values: usize,
+    /// `[nChunks, bitsPerChunk]`; the setup defaults it to one 64-bit chunk.
+    #[serde(default = "one_word")]
     pub chunks: [usize; 2],
     #[serde(default, rename = "verificationKey")]
     pub verification_key: bool,
+    #[serde(default, rename = "avoidAlias")]
+    pub avoid_alias: bool,
+}
+
+fn one_word() -> [usize; 2] {
+    [1, 64]
 }
 
 #[derive(Clone, Deserialize, Debug)]
@@ -24,8 +32,6 @@ pub struct PublicsInfo {
     #[serde(rename = "nPublics")]
     pub n_publics: usize,
     pub definitions: Vec<PublicDefinition>,
-    #[serde(default, rename = "hasProgramVK")]
-    pub has_program_vk: bool,
 }
 
 impl PublicsInfo {
@@ -116,14 +122,13 @@ mod tests {
     use super::*;
 
     fn def(name: &str, initial_pos: usize, n_values: usize, chunks: [usize; 2], vk: bool) -> PublicDefinition {
-        PublicDefinition { name: name.into(), initial_pos, n_values, chunks, verification_key: vk }
+        PublicDefinition { name: name.into(), initial_pos, n_values, chunks, verification_key: vk, avoid_alias: false }
     }
 
     /// ZisK's layout: a 4-limb program VK, then the program's outputs.
     fn vk_then_inputs(n_inputs: usize) -> PublicsInfo {
         PublicsInfo {
             n_publics: 4 + n_inputs,
-            has_program_vk: true,
             definitions: vec![def("rom_root", 0, 4, [1, 64], true), def("inputs", 4, n_inputs, [1, 64], false)],
         }
     }
@@ -166,13 +171,21 @@ mod tests {
     /// from its `initialPos`, not from wherever the previous section ended.
     #[test]
     fn chunks_are_ascending_and_sections_start_at_their_position() {
-        let info =
-            PublicsInfo { n_publics: 3, has_program_vk: false, definitions: vec![def("w", 1, 1, [2, 32], false)] };
+        let info = PublicsInfo { n_publics: 3, definitions: vec![def("w", 1, 1, [2, 32], false)] };
         let got = info.solidity_public_bytes(&[0xFF, 0x1122_3344, 0x5566_7788]).unwrap();
         assert_eq!(got, vec![0x44, 0x33, 0x22, 0x11, 0x88, 0x77, 0x66, 0x55]);
 
         // A value wider than its chunk has no circuit encoding.
         assert!(info.solidity_public_bytes(&[0, 1 << 32, 0]).is_err());
+    }
+
+    /// A definition without chunks is one 64-bit word, as the setup reads it.
+    #[test]
+    fn chunks_default_to_one_word() {
+        let info: PublicsInfo =
+            serde_json::from_str(r#"{"nPublics": 1, "definitions": [{"name": "x", "initialPos": 0, "nValues": 1}]}"#)
+                .unwrap();
+        assert_eq!(info.definitions[0].chunks, [1, 64]);
     }
 
     #[test]

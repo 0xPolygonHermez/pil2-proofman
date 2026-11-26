@@ -196,7 +196,7 @@ impl GlobalInfo {
             )));
         }
 
-        proofman_starks_lib_c::set_hash_family_c(global_info.hash.as_str());
+        proofman_starks_lib_c::set_hash_family_c(global_info.hash.ffi_id());
 
         Ok(global_info)
     }

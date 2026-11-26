@@ -177,15 +177,8 @@ pub fn get_proof_values_size_c(p_stark_info: *mut c_void) -> u64 {
     unsafe { get_proof_values_size(p_stark_info) }
 }
 
-pub fn set_hash_family_c(family: &str) {
-    let fam: u8 = match family {
-        "Poseidon1" => 1,
-        "Poseidon2" => 2,
-        "blake3" => 3,
-        other => panic!(
-            "set_hash_family_c: unknown hash family {other:?} (expected \"Poseidon1\", \"Poseidon2\" or \"blake3\")"
-        ),
-    };
+/// `fam` is `HashFamily::ffi_id()` (1 = Poseidon1, 2 = Poseidon2, 3 = blake3).
+pub fn set_hash_family_c(fam: u8) {
     unsafe { set_hash_family(fam) }
 }
 
@@ -382,6 +375,7 @@ pub fn expressions_bin_new_c(filename: &str, global: bool) -> *mut c_void {
     }
 }
 
+/// Null when the verifierinfo is missing, pre-DAG or does not match the starkinfo.
 pub fn constraint_dag_new_c(filename: &str, p_stark_info: *mut c_void) -> *mut c_void {
     let filename = CString::new(filename).unwrap();
     unsafe { constraint_dag_new(filename.as_ptr() as *mut std::os::raw::c_char, p_stark_info) }

@@ -317,6 +317,8 @@ pub enum StarkInfoError {
     KeyVersion(Option<u64>),
     #[error("starkinfo: {0}")]
     Json(#[from] serde_json::Error),
+    #[error("starkinfo: {0}")]
+    Io(#[from] std::io::Error),
 }
 
 /// The only `keyVersion` gate of the Rust starkinfo readers.
@@ -329,6 +331,13 @@ pub fn check_key_version(j: &serde_json::Value) -> Result<(), StarkInfoError> {
     }
 }
 
+/// The starkinfo JSON at `path`, `check_key_version`ed without the full parse.
+pub fn check_key_version_file(path: &std::path::Path) -> Result<serde_json::Value, StarkInfoError> {
+    let j = serde_json::from_str(&std::fs::read_to_string(path)?)?;
+    check_key_version(&j)?;
+    Ok(j)
+}
+
 impl StarkInfo {
     /// A key of another `keyVersion` (checked before the full parse) or malformed JSON is an error.
     pub fn try_from_value(j: &serde_json::Value) -> Result<Self, StarkInfoError> {
@@ -338,11 +347,6 @@ impl StarkInfo {
 
     pub fn try_from_json(stark_info_json: &str) -> Result<Self, StarkInfoError> {
         Self::try_from_value(&serde_json::from_str(stark_info_json)?)
-    }
-
-    /// `try_from_json`, panicking on its error.
-    pub fn from_json(stark_info_json: &str) -> Self {
-        Self::try_from_json(stark_info_json).unwrap_or_else(|e| panic!("{e}"))
     }
 
     /// The flat proof's geometry, shared by the prover, the CLI and the generated verifiers.

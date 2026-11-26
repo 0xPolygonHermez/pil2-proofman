@@ -105,7 +105,7 @@ fn a_proof_value_without_a_symbol_below_the_last_is_an_error() {
     let mut s = symbol("pv", SymbolType::ProofValue, 1, 1);
     s.air_group_id = None;
     p.symbols.push(s);
-    assert!(matches!(lower(&p), Err(PiloutError::BadOperand { .. })), "{:?}", lower(&p).map(|c| c.proof_values));
+    assert!(matches!(lower(&p), Err(PiloutError::SymbolCount { .. })), "{:?}", lower(&p).map(|c| c.proof_values));
 }
 
 /// A symbol of unknown type anywhere fails both entries alike.

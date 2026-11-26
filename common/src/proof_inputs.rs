@@ -170,6 +170,7 @@ impl Inputs {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proofman_verifier::ProofLayout;
     use serde_json::json;
 
     /// Arity 4, one last level, an empty stage 2, no grinding: every word the prover writes is an input.
@@ -193,21 +194,57 @@ mod tests {
         proof_inputs(si).unwrap().iter().map(ProofInput::words).sum()
     }
 
-    /// The inputs cover exactly the flat proof the prover writes (`ProofLayout`, `proof2pointer`).
+    /// Where each input starts in the flat proof.
+    fn offset(si: &StarkInfo, name: &str) -> usize {
+        let inputs = proof_inputs(si).unwrap();
+        let at = inputs.iter().position(|i| i.name == name).unwrap_or_else(|| panic!("no input {name}"));
+        inputs[..at].iter().map(ProofInput::words).sum::<u64>() as usize
+    }
+
+    /// The inputs cover exactly the flat proof the prover writes (`ProofLayout`, `proof2pointer`),
+    /// each section where the layout has it.
     #[test]
     fn inputs_cover_the_flat_proof() {
+        use proofman_fields::PrimeField64;
+        use proofman_verifier::{parse_stir_section, stir_section_size_words, LowDegreeLayout};
+
         let fri = stark_info(json!({
             "numQueries": 5, "grindingBitsQueries": 0, "foldingFactors": [], "logDegrees": [], "logDomainSizes": [10, 7, 4]
         }));
-        assert_eq!(words(&fri), fri.proof_layout().flat_proof_words() as u64);
+        let layout = fri.proof_layout();
+        let n = layout.flat_proof_words();
+        assert_eq!(words(&fri), n as u64);
         let unread: Vec<_> =
             proof_inputs(&fri).unwrap().into_iter().filter(|i| i.origin == Origin::Unread).map(|i| i.name).collect();
         assert_eq!(unread, ["s0_siblings2", "s0_last_levels2", "nonce"]);
+        // Roots, evals, the stage trees (a FRI of no folds: they, the final polynomial and the nonce), the folds.
+        assert_eq!(offset(&fri, "evals"), 4 * (layout.n_stages as usize + 1));
+        let no_folds = ProofLayout { ldt: LowDegreeLayout::Fri { steps: vec![10], n_queries: 5 }, ..layout.clone() };
+        assert_eq!(offset(&fri, "s1_root"), no_folds.flat_proof_words() - (3 << 10) - 1);
+        assert_eq!((offset(&fri, "finalPol"), offset(&fri, "nonce")), (n - (3 << 4) - 1, n - 1));
+
         let stir = stark_info(json!({
             "lowDegreeTest": "STIR", "foldingFactors": [2, 2], "logDegrees": [8, 6, 4], "logDomainSizes": [10, 9, 8],
             "numQueries": [5, 3], "grindingBitsQueries": [0, 0]
         }));
-        assert_eq!(words(&stir), stir.proof_layout().flat_proof_words() as u64);
+        let layout = stir.proof_layout();
+        let LowDegreeLayout::Stir(params) = &layout.ldt else { unreachable!() };
+        let n = layout.flat_proof_words();
+        assert_eq!(words(&stir), n as u64);
+        // Word i of the proof is i: each parsed STIR field starts at its input's offset.
+        let (proof, mut p) = ((0..n as u64).collect::<Vec<_>>(), n - stir_section_size_words(params));
+        assert_eq!(p, offset(&stir, "s1_root"));
+        let sec = parse_stir_section(&proof, &mut p, params);
+        assert_eq!(p, n);
+        let at = |g: &proofman_fields::Goldilocks| g.as_canonical_u64() as usize;
+        for f in 0..2 {
+            let s = format!("s{}_", f + 1);
+            assert_eq!(at(&sec.roots[f][0]), offset(&stir, &format!("{s}root")));
+            assert_eq!(at(&sec.cosets[f][0][0]), offset(&stir, &format!("{s}vals")));
+            assert_eq!(at(&sec.siblings[f][0][0]), offset(&stir, &format!("{s}siblings")));
+            assert_eq!(at(&sec.last_levels[f][0]), offset(&stir, &format!("{s}last_levels")));
+        }
+        assert_eq!(sec.nonces[0] as usize, offset(&stir, "nonces"));
     }
 
     #[test]

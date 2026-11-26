@@ -366,11 +366,11 @@ mod tests {
         let with = StarkInfoOutput { circuit_type: Some(4), security: security.clone(), ..Default::default() };
         let json = crate::output::json::to_json_string(&with).unwrap();
         assert!(json.contains("\"circuitType\": 4") || json.contains("\"circuitType\":4"), "{json}");
-        assert_eq!(proofman_common::StarkInfo::from_json(&json).circuit_type, Some(4));
+        assert_eq!(proofman_common::StarkInfo::try_from_json(&json).unwrap().circuit_type, Some(4));
 
         let without = crate::output::json::to_json_string(&StarkInfoOutput { security, ..Default::default() }).unwrap();
         assert!(!without.contains("circuitType"), "{without}");
-        assert_eq!(proofman_common::StarkInfo::from_json(&without).circuit_type, None);
+        assert_eq!(proofman_common::StarkInfo::try_from_json(&without).unwrap().circuit_type, None);
     }
 
     /// The GPU sizes its query buffers for round 0; a schedule that needs more later fails at setup.

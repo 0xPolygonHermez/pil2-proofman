@@ -114,11 +114,12 @@ fn poseidon(
 }
 
 /// A range-check row: `RANGE_CHECK` is the lookup's selector, so it is exactly 1 on located rows, 0 elsewhere.
-fn num2bytes(n: usize) -> Gate {
+/// `shares`: it may sit inside another band (only the blake3 wrap packs range checks in its blocks).
+fn num2bytes(n: usize, shares: bool) -> Gate {
     Gate {
         band_rows: 1,
         band: vec![("RANGE_CHECK", vec![0])],
-        shares_rows: true,
+        shares_rows: shares,
         ..plain("Num2Bytes", n, "RANGE_CHECK")
     }
 }
@@ -226,7 +227,7 @@ pub fn gates_of(t: &Template) -> Result<Vec<Gate>, CheckError> {
                     param: Param::Width(W as u64),
                     fill: Fill::PoseidonK,
                 },
-                Gate { shapes: vec![rc], param: Param::Weights("K"), ..num2bytes(1 + W) },
+                Gate { shapes: vec![rc], param: Param::Weights("K"), ..num2bytes(1 + W, false) },
             ]
         }
         "blake3_bn128/wrap" => {
@@ -296,7 +297,7 @@ pub fn gates_of(t: &Template) -> Result<Vec<Gate>, CheckError> {
                     8,
                     vec![("BLOCKLEN_ROW", vec![2])],
                 ),
-                Gate { shapes: slots, param: Param::Weights("C"), ..num2bytes(6) },
+                Gate { shapes: slots, param: Param::Weights("C"), ..num2bytes(6, true) },
             ]
         }
         other => return Err(CheckError::Artefact(format!("no gate table for template {other}"))),

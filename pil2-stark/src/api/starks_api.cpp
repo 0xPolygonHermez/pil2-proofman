@@ -460,7 +460,7 @@ void *expressions_bin_new(char* filename, bool global)
     return expressionsBin;
 };
 
-// <air>.verifierinfo.json's constraintDag, read and checked against the starkinfo once, for stark_verify*.
+// <air>.verifierinfo.json's constraintDag, read and checked against the starkinfo once, for stark_verify*; null on error.
 void *constraint_dag_new(char *filename, void *pStarkInfo)
 {
     json j;
@@ -474,7 +474,8 @@ void *constraint_dag_new(char *filename, void *pStarkInfo)
     } catch (const std::exception &e) { err = e.what(); } // a json type error must not cross extern "C"
     if(!ok) {
         zklog.error(std::string(filename) + ": " + err + "; regenerate the setup");
-        exitProcess();
+        delete dag;
+        return nullptr;
     }
     return dag;
 }

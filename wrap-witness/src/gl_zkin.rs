@@ -78,28 +78,4 @@ mod tests {
         assert!(gl_proof_zkin(&si, &[proof.clone(), vec![0]].concat(), &[7; 5]).is_err());
         assert!(gl_proof_zkin(&si, &proof, &[7; 4]).is_err());
     }
-
-    /// The final circuit's main declares exactly the inputs this zkin fills, with their shapes.
-    #[test]
-    fn the_zkin_is_the_final_mains_inputs() {
-        let shape = |v: &Value| {
-            let (mut out, mut v) = (String::new(), v);
-            while let Value::Array(a) = v {
-                out += &format!("[{}]", a.len());
-                v = &a[0];
-            }
-            out
-        };
-        let si = stark_info();
-        let n = proof_inputs(&StarkInfo::try_from_value(&si).unwrap()).unwrap().iter().map(|i| i.words()).sum::<u64>();
-        let zkin = gl_proof_zkin(&si, &vec![0; n as usize], &[0; 5]).unwrap();
-        let mut made: Vec<String> =
-            zkin.as_object().unwrap().iter().map(|(k, v)| format!("{k}{};", shape(v))).collect();
-        let main = pil2_stark_recurser::stark2circom::gen_recursion_final(&si, &["v.circom".into()], None).unwrap();
-        let mut declared: Vec<String> =
-            main.lines().filter_map(|l| l.trim().strip_prefix("signal input ")).map(String::from).collect();
-        made.sort();
-        declared.sort();
-        assert_eq!(made, declared);
-    }
 }

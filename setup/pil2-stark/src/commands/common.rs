@@ -129,7 +129,7 @@ impl RecursiveKey {
             .with_context(|| format!("'hash' missing from {}; re-run `setup --recursive`", global_info_path.display()))?
             .parse()
             .map_err(anyhow::Error::msg)?;
-        proofman_starks_lib_c::set_hash_family_c(hash.as_str());
+        proofman_starks_lib_c::set_hash_family_c(hash.ffi_id());
         Ok(Self {
             build_dir: build_dir.into(),
             name: global_info["name"].as_str().unwrap_or("pilout").to_string(),
