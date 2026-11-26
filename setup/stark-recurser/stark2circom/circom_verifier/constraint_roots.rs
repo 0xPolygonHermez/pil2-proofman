@@ -317,7 +317,10 @@ mod tests {
     #[test]
     fn bn128_minus_zero_is_the_operand() {
         let zero = DagNode::Const { value: "0".into() };
-        let d = dag(vec![DagNode::Public { id: 0 }, zero, DagNode::Sub { a: 0, b: 1 }, cm(0), DagNode::Mul { a: 2, b: 3 }], &[4]);
+        let d = dag(
+            vec![DagNode::Public { id: 0 }, zero, DagNode::Sub { a: 0, b: 1 }, cm(0), DagNode::Mul { a: 2, b: 3 }],
+            &[4],
+        );
         let out = constraint_eval_bn128(&d, &ctx()).unwrap();
         assert!(!out.contains("GLSub") && !out.contains("GLCSub"), "{out}");
         assert!(out.contains("GLC3()(publics[0])"), "x - 0 reads x: {out}");

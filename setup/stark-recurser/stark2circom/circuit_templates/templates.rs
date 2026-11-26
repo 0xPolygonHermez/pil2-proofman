@@ -364,7 +364,9 @@ mod tests {
     use std::process::Command;
 
     use super::*;
-    use crate::stark2circom::circom_verifier::{gen_stark_verifier_bn128, gen_stark_verifier_bn128_blake3, Pil2CircomOptions};
+    use crate::stark2circom::circom_verifier::{
+        gen_stark_verifier_bn128, gen_stark_verifier_bn128_blake3, Pil2CircomOptions,
+    };
     use crate::plonk2pil::r1cs::types::read_r1cs_from_bytes;
     use proofman_fields::Bn128;
     use serde_json::json;
@@ -584,7 +586,12 @@ mod tests {
     ///
     /// Needs circomlib, from `npm install` in `setup/pil2-stark`; without it the test says so and
     /// passes (`None`).
-    fn compile_final(label: &str, verifier: &str, stark_info: &Value, vk_first: bool) -> Option<crate::plonk2pil::r1cs::types::R1csFile<Bn128>> {
+    fn compile_final(
+        label: &str,
+        verifier: &str,
+        stark_info: &Value,
+        vk_first: bool,
+    ) -> Option<crate::plonk2pil::r1cs::types::R1csFile<Bn128>> {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let circomlib = root.join("setup/pil2-stark/node_modules/circomlib/circuits");
         if !circomlib.is_dir() {
@@ -749,7 +756,9 @@ mod main_tests {
         let rec2 = gen_recursive2(&si(1), &["v.circom".into()], &vadcop, 1, std::slice::from_ref(&vk), &o).unwrap();
         assert!(rec2.contains("function vadcop_airgroupId() { return 1; }"), "{rec2}");
         assert!(
-            rec2.contains("function vadcop_nBasics(i) { if (i == 0) { return 0; } if (i == 1) { return 1; } return 0; }"),
+            rec2.contains(
+                "function vadcop_nBasics(i) { if (i == 0) { return 0; } if (i == 1) { return 1; } return 0; }"
+            ),
             "{rec2}"
         );
         assert!(rec2.ends_with("= Recursive2(2);\n"), "{rec2}");

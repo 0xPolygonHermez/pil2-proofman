@@ -57,11 +57,16 @@ pub fn vadcop_data(
         .map_or(Ok(vec![]), |a| a.iter().map(|v| stage(v, "a proofValuesMap entry")).collect())?;
     let n_publics = if vi.is_null() { 0 } else { vi["nPublics"].as_u64().context("vadcopInfo has no nPublics")? };
 
-    let mut out =
-        format!("\nfunction vadcop_airgroupId() {{ return {airgroup_id}; }}\nfunction vadcop_airId() {{ return {air_id}; }}\n");
+    let mut out = format!(
+        "\nfunction vadcop_airgroupId() {{ return {airgroup_id}; }}\nfunction vadcop_airId() {{ return {air_id}; }}\n"
+    );
     out += &format!("function vadcop_nPublics() {{ return {n_publics}; }}\n");
     out += &format!("function vadcop_nProofValues() {{ return {}; }}\n", parse_num_proof_values(&vi["numProofValues"]));
-    out += &format!("function vadcop_nPVMap() {{ return {}; }}\nfunction vadcop_PV() {{ return {}; }}\n", pv.len(), list(&pv));
+    out += &format!(
+        "function vadcop_nPVMap() {{ return {}; }}\nfunction vadcop_PV() {{ return {}; }}\n",
+        pv.len(),
+        list(&pv)
+    );
     out += &format!("function vadcop_W() {{ return {w}; }}\nfunction vadcop_ec() {{ return {}; }}\n", u8::from(ec));
     for k in ["A", "B", "Z", "C1", "C2"] {
         let v = if ec {
