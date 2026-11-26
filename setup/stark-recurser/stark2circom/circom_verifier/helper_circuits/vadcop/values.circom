@@ -9,6 +9,44 @@ include "vadcop/hashes.circom";
 //   (W = the lattice hash size, or 10: an EC point's two Fp5 limbs).
 
 function vadcopValuesSize(nAgg, W) { return 2 + 4 * nAgg + W; }
+// Where airgroupvalues and stage1Hash start in vadcopValues.
+function airgroupValuesOffset(nAgg) { return 2 + nAgg; }
+function stage1HashOffset(nAgg) { return 2 + 4 * nAgg; }
+
+// vadcopValues into its fields, and back.
+template SplitVadcopValues(nAgg, W) {
+    signal input vadcopValues[vadcopValuesSize(nAgg, W)];
+    signal output circuitType;
+    signal output aggregatedProofs;
+    signal output aggregationTypes[nAgg];
+    signal output airgroupvalues[nAgg][3];
+    signal output stage1Hash[W];
+
+    circuitType <== vadcopValues[0];
+    aggregatedProofs <== vadcopValues[1];
+    for (var i = 0; i < nAgg; i++) {
+        aggregationTypes[i] <== vadcopValues[2 + i];
+        for (var e = 0; e < 3; e++) { airgroupvalues[i][e] <== vadcopValues[airgroupValuesOffset(nAgg) + 3 * i + e]; }
+    }
+    for (var i = 0; i < W; i++) { stage1Hash[i] <== vadcopValues[stage1HashOffset(nAgg) + i]; }
+}
+
+template JoinVadcopValues(nAgg, W) {
+    signal input circuitType;
+    signal input aggregatedProofs;
+    signal input aggregationTypes[nAgg];
+    signal input airgroupvalues[nAgg][3];
+    signal input stage1Hash[W];
+    signal output vadcopValues[vadcopValuesSize(nAgg, W)];
+
+    vadcopValues[0] <== circuitType;
+    vadcopValues[1] <== aggregatedProofs;
+    for (var i = 0; i < nAgg; i++) {
+        vadcopValues[2 + i] <== aggregationTypes[i];
+        for (var e = 0; e < 3; e++) { vadcopValues[airgroupValuesOffset(nAgg) + 3 * i + e] <== airgroupvalues[i][e]; }
+    }
+    for (var i = 0; i < W; i++) { vadcopValues[stage1HashOffset(nAgg) + i] <== stage1Hash[i]; }
+}
 
 // The stage-1 contribution of a proof of key k: its rootC, root1 and air values, as a lattice or EC point.
 template Stage1Hash(k, circuitType) {
@@ -40,18 +78,14 @@ template BasicValues(k, circuitType, nAgg, nullable) {
     signal input rootC[4];
     signal input proof[key_proofSize(k)];
     signal input isNull[nullable];
-    signal output circuitTypeOut;
-    signal output aggregatedProofs;
-    signal output aggregationTypes[nAgg];
-    signal output airgroupvalues[nAgg][3];
-    signal output stage1Hash[W];
+    signal output vadcopValues[vadcopValuesSize(nAgg, W)];
 
-    if (nullable == 1) { circuitTypeOut <== (1 - isNull[0]) * circuitType; } else { circuitTypeOut <== circuitType; }
+    if (nullable == 1) { vadcopValues[0] <== (1 - isNull[0]) * circuitType; } else { vadcopValues[0] <== circuitType; }
     // Stays 1 for an empty slot too: AggregateProofsNull multiplies it out.
-    aggregatedProofs <== 1;
+    vadcopValues[1] <== 1;
     for (var i = 0; i < nAgg; i++) {
-        aggregationTypes[i] <== AGG[i];
-        for (var e = 0; e < 3; e++) { airgroupvalues[i][e] <== proof[offAirgroupValues + 3 * i + e]; }
+        vadcopValues[2 + i] <== AGG[i];
+        for (var e = 0; e < 3; e++) { vadcopValues[airgroupValuesOffset(nAgg) + 3 * i + e] <== proof[offAirgroupValues + 3 * i + e]; }
     }
     component h = Stage1Hash(k, circuitType);
     h.rootC <== rootC;
@@ -61,7 +95,7 @@ template BasicValues(k, circuitType, nAgg, nullable) {
     } else {
         h.airvalues <== [[0, 0, 0]];
     }
-    stage1Hash <== h.out;
+    for (var i = 0; i < W; i++) { vadcopValues[stage1HashOffset(nAgg) + i] <== h.out[i]; }
 }
 
 // The publics of a proof of airgroup `airgroupId` that carries vadcop values: vadcopValues, the run's publics and

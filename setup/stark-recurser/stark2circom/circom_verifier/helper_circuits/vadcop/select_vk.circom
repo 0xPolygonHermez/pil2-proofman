@@ -3,110 +3,45 @@ pragma circom 2.1.0;
 include "iszero.circom";
 include "vadcop/circuit_type.circom";
 
-// Given a circuit type, return the corresponding verification key
-template SelectVerificationKeyNull(nBasics, airgroupId) {
+/*
+    The verification key (rootC) of a child proof of airgroup `airgroupId`, by its circuit type:
+    circuitTypeOf(airgroupId, 0) is the airgroup's recursive2, whose key rootCAggregated is an input (it is
+    the circuit's own, unknown when it is compiled); circuitTypeOf(airgroupId, i + 1) is basic air i. When
+    nullable, type 0 is an empty slot, keyed [0, 0, 0, 0]. Any other type fails.
+*/
+template SelectVerificationKey(nBasics, airgroupId, nullable) {
+    var nTypes = nullable + 1 + nBasics;
 
-    // 0 -> Null
-    // circuitTypeOf(airgroupId, 0) -> Aggregated
-    // circuitTypeOf(airgroupId, i + 1) -> Basic i
     signal input circuitType;
-
-    // Basic verification keys;
     signal input rootCBasics[nBasics][4];
-
-    // Aggregated verification key. It needs to be provided as input because it is not known at compile time
     signal input rootCAggregated[4];
-    
-    // Verification key corresponding to the circuit type
     signal output verificationKey[4];
 
-    // The idea is to store an array of booleans which will indicate either 0 or 1 depending if the circuit type is equal to the index
-    // For instance, [0,1,0,0] would mean that the circuit type is aggregated.
-    // Then, we will calculate the verification key as the sum of all the verification keys multiplied by the corresponding boolean
-    signal isType[nBasics + 2];
-    var isValidType = 0;
-    for(var i = 0; i < nBasics + 2; i++) {
-        var expectedType = i == 0 ? 0 : circuitTypeOf(airgroupId, i - 1);
+    // isType[i]: circuitType is type i (empty slot first when nullable, then recursive2, then the basic
+    // airs); exactly one holds, and the key is the sum of the keys weighted by them.
+    signal isType[nTypes];
+    var nMatches = 0;
+    for (var i = 0; i < nTypes; i++) {
+        var expectedType = nullable == 1 && i == 0 ? 0 : circuitTypeOf(airgroupId, i - nullable);
         isType[i] <== IsZero()(expectedType - circuitType);
-        isValidType += isType[i];
+        nMatches += isType[i];
     }
+    nMatches === 1;
 
-    // Check that the type is supported
-    isValidType === 1;
+    signal keys[nTypes][4];
+    if (nullable == 1) { keys[0] <== [0, 0, 0, 0]; }
+    keys[nullable] <== rootCAggregated;
+    for (var i = 0; i < nBasics; i++) { keys[nullable + 1 + i] <== rootCBasics[i]; }
 
-    signal verificationKeys[nBasics + 2][4];
-    verificationKeys[0] <== [0,0,0,0];
-    verificationKeys[1] <== rootCAggregated;
-    for(var i = 0; i < nBasics; i++) {
-        verificationKeys[i + 2] <== rootCBasics[i];
-    }
-
-    signal accVK[nBasics + 2][4];
-
-    for(var i = 0; i < nBasics + 2; i++) {
-        if(i == 0) {
-            for(var j = 0; j < 4; j++) {
-                accVK[i][j] <== isType[i]*verificationKeys[i][j];
-            }
-        } else {
-            for(var j = 0; j < 4; j++) {
-                accVK[i][j] <== isType[i]*verificationKeys[i][j] + accVK[i - 1][j];
+    signal accKey[nTypes][4];
+    for (var i = 0; i < nTypes; i++) {
+        for (var j = 0; j < 4; j++) {
+            if (i == 0) {
+                accKey[i][j] <== isType[i] * keys[i][j];
+            } else {
+                accKey[i][j] <== isType[i] * keys[i][j] + accKey[i - 1][j];
             }
         }
     }
-
-    verificationKey <== accVK[nBasics + 1];
-}
-
-// Given a circuit type, return the corresponding verification key
-template SelectVerificationKey(nBasic, airgroupId) {
-
-    // circuitTypeOf(airgroupId, 0) -> Aggregated
-    // circuitTypeOf(airgroupId, i + 1) -> Basic i
-
-    signal input circuitType;
-    
-    // Basic verification keys;
-    signal input rootCBasics[nBasic][4];
-
-    // Aggregated verification key. It needs to be provided as input because it is not known at compile time
-    signal input rootCAggregated[4];
-
-    // Verification key corresponding to the circuit type
-    signal output verificationKey[4];
-
-    // The idea is to store an array of booleans which will indicate either 0 or 1 depending if the circuit type is equal to the index
-    // For instance, [0,1,0,0] would mean that the circuit type is a aggregated.
-    // Then, we will calculate the verification key as the sum of all the verification keys multiplied by the corresponding boolean
-    signal isType[nBasic + 1];
-    var isValidType = 0;
-    for(var i = 0; i < nBasic + 1; i++) {
-        isType[i] <== IsZero()(circuitTypeOf(airgroupId, i) - circuitType);
-        isValidType += isType[i];
-    }
-
-    // Check that the type is supported
-    isValidType === 1;
-
-    signal verificationKeys[nBasic + 1][4];
-    verificationKeys[0] <== rootCAggregated;
-    for(var i = 0; i < nBasic; i++) {
-        verificationKeys[i + 1] <== rootCBasics[i];
-    }
-
-    signal accVK[nBasic + 1][4];
-
-    for(var i = 0; i < nBasic + 1; i++) {
-        if(i == 0) {
-            for(var j = 0; j < 4; j++) {
-                accVK[i][j] <== isType[i]*verificationKeys[i][j];
-            }
-        } else {
-            for(var j = 0; j < 4; j++) {
-                accVK[i][j] <== isType[i]*verificationKeys[i][j] + accVK[i - 1][j];
-            }
-        }
-    }
-
-    verificationKey <== accVK[nBasic];
+    verificationKey <== accKey[nTypes - 1];
 }

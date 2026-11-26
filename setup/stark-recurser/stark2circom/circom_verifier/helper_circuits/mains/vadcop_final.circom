@@ -4,7 +4,7 @@ pragma custom_templates;
 include "iszero.circom";
 include "vadcop/values.circom";
 include "vadcop/agg_values.circom";
-include "vadcop/select_vk.circom";
+include "vadcop/verify_child.circom";
 include "vadcop/hashes.circom";
 
 /*
@@ -37,8 +37,8 @@ template VadcopFinal(nAg) {
     // Per airgroup: its recursive2's vadcop values, then its proof.
     signal input airgroups[T];
 
-    component vs[nAg];
-    component pubs[nAg];
+    // An airgroup's recursive2: its rootCAgg is a constant here, and the child's last four publics.
+    component child[nAg];
     signal {binary} isNull[nAg];
     signal nAggregatedProofs[nAg];
     signal stage1Hash[nAg][W];
@@ -46,45 +46,32 @@ template VadcopFinal(nAg) {
     for (var a = 0; a < nAg; a++) {
         var nAgg = vadcop_nAgg(a);
         var S = vadcopValuesSize(nAgg, W);
-        var nPubV = key_nPublics(a);
-        var nBasics = vadcop_nBasics(a);
-        var rootCBasics[nBasics][4] = vadcop_basics(a);
-        var rootCAgg[4] = vadcop_rootCAgg(a);
-        vs[a] = StarkVerifierGL(a);
-        for (var i = 0; i < key_proofSize(a); i++) { vs[a].proof[i] <== airgroups[OFF[a] + S + i]; }
-        for (var i = 0; i < key_nProofValues(a); i++) { vs[a].proofvalues[i] <== proofValues[i]; }
-        pubs[a] = VadcopPublics(a, nAgg, W, nPub, nPV, nPubV, nPubV - 4);
-        for (var i = 0; i < S; i++) { pubs[a].vadcopValues[i] <== airgroups[OFF[a] + i]; }
-        pubs[a].publics <== publics;
-        pubs[a].proofValues <== proofValues;
-        pubs[a].globalChallenge <== globalChallenge;
-        pubs[a].rootCAgg <== rootCAgg;
-        vs[a].publics <== pubs[a].out;
-        if (multiAir == 1) {
-            isNull[a] <== IsZero()(airgroups[OFF[a]]);
-            vs[a].enable[0] <== 1 - isNull[a];
-            vs[a].rootCIn <== SelectVerificationKeyNull(nBasics, a)(airgroups[OFF[a]], rootCBasics, rootCAgg);
-        } else {
-            isNull[a] <== IsZero()(airgroups[OFF[a]]);
-            vs[a].rootCIn <== SelectVerificationKey(nBasics, a)(airgroups[OFF[a]], rootCBasics, rootCAgg);
-        }
+        child[a] = VerifyChild(a, a, key_nPublics(a) - 4, multiAir);
+        for (var i = 0; i < S; i++) { child[a].vadcopValues[i] <== airgroups[OFF[a] + i]; }
+        for (var i = 0; i < key_proofSize(a); i++) { child[a].proof[i] <== airgroups[OFF[a] + S + i]; }
+        child[a].publics <== publics;
+        child[a].proofValues <== proofValues;
+        child[a].globalChallenge <== globalChallenge;
+        child[a].rootCAgg <== vadcop_rootCAgg(a);
+        if (multiAir == 1) { isNull[a] <== child[a].isNull[0]; } else { isNull[a] <== IsZero()(airgroups[OFF[a]]); }
+
         nAggregatedProofs[a] <== airgroups[OFF[a] + 1];
         for (var i = 0; i < W; i++) {
             if (maskNull == 1) {
-                stage1Hash[a][i] <== (1 - isNull[a]) * airgroups[OFF[a] + 2 + 4 * nAgg + i];
+                stage1Hash[a][i] <== (1 - isNull[a]) * airgroups[OFF[a] + stage1HashOffset(nAgg) + i];
             } else {
-                stage1Hash[a][i] <== airgroups[OFF[a] + 2 + 4 * nAgg + i];
+                stage1Hash[a][i] <== airgroups[OFF[a] + stage1HashOffset(nAgg) + i];
             }
         }
         var AGG[nonEmpty(nAgg)] = vadcop_AGG(a);
         for (var i = 0; i < maxAgg; i++) {
+            var o = OFF[a] + airgroupValuesOffset(nAgg) + 3 * i;
             if (i >= nAgg) {
                 agv[a][i] <== [0, 0, 0];
             } else if (maskNull == 1) {
-                var o = OFF[a] + 2 + nAgg + 3 * i;
                 agv[a][i] <== NullifyAirgroupValue(AGG[i])([airgroups[o], airgroups[o + 1], airgroups[o + 2]], isNull[a]);
             } else {
-                for (var e = 0; e < 3; e++) { agv[a][i][e] <== airgroups[OFF[a] + 2 + nAgg + 3 * i + e]; }
+                agv[a][i] <== [airgroups[o], airgroups[o + 1], airgroups[o + 2]];
             }
         }
     }

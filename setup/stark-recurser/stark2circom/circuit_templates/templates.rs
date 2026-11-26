@@ -146,9 +146,10 @@ pub fn gen_compressor(
 ) -> Result<String> {
     let (ag, air) = air_id_vars(stark_info)?;
     let vd = vadcop_data(vadcop_info, &[], &[], ag, air)?;
-    Ok(head(verifier_filenames, "mains/compressor.circom", keys, true, true)
+    // The compressor is recursive1 without its rootCAgg input.
+    Ok(head(verifier_filenames, "mains/recursive1.circom", keys, true, true)
         + &vd
-        + &main_line(&GLOBALS[..3], "Compressor()"))
+        + &main_line(&GLOBALS[..3], "Recursive1(0)"))
 }
 
 /// A recursive1: one basic proof, one compressor proof, or `batch_size > 1` proofs of one air.
@@ -167,7 +168,7 @@ pub fn gen_recursive1(
     let vd = vadcop_data(vadcop_info, &[], &[], ag, air)?;
     // Only a single compressor slot's values are public inputs; batched slots stay private (recursive2's nPublics).
     let main = match (k, opts.has_compressor) {
-        (1, false) => main_line(&GLOBALS, "Recursive1()"),
+        (1, false) => main_line(&GLOBALS, "Recursive1(1)"),
         (1, true) => main_line(&[&SV[..], &GLOBALS[..]].concat(), "Recursive1Compressed()"),
         (k, c) => main_line(&GLOBALS, &format!("Recursive1Batched({k}, {})", u8::from(c))),
     };
@@ -737,7 +738,7 @@ mod main_tests {
         let templates: Vec<&str> = out.lines().filter(|l| l.starts_with("template ")).collect();
         assert_eq!(templates, ["template ConstraintRootsAt(k) {"], "{out}");
         assert!(out
-            .ends_with("component main {public [publics, proofValues, globalChallenge, rootCAgg]} = Recursive1();\n"));
+            .ends_with("component main {public [publics, proofValues, globalChallenge, rootCAgg]} = Recursive1(1);\n"));
     }
 
     #[test]

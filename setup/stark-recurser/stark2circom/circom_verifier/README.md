@@ -10,8 +10,9 @@ circom_verifier/
 ├── helper_circuits/     what the circuits are made of (a -l root)
 │   ├── verifier/        the STARK verifier: transcript, FRI, STIR, DEEP, Merkle openings, key shape,
 │   │                    and one entry file per hash family (family_*.circom, bn128_open_*.circom)
-│   ├── vadcop/          what a proof carries for aggregation: values, folding, keys, hashes
-│   └── mains/           one file per recursion circuit: compressor, recursive1, recursive2,
+│   ├── vadcop/          what a proof carries for aggregation: values, folding, keys, hashes, a
+│   │                    verified child proof
+│   └── mains/           one file per recursion circuit: recursive1 (and the compressor), recursive2,
 │                        final_compressed, recursivef, vadcop_final, final_snark
 ├── circuits.gl/         Goldilocks: field gates, Fp5 and the EC, hash families (hash/), tree selectors
 └── circuits.bn128/      BN128: Goldilocks emulated over BN128, circomlib-based hashes, custom gates
