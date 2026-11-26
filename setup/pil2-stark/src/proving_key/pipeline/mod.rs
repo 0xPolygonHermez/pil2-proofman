@@ -1,6 +1,9 @@
 //! Declarative proving-key pipeline: a list of `Step`s per circuit kind, one executor.
 
 pub mod kinds;
+mod circom;
+mod plonk;
+mod stark;
 pub mod steps;
 
 use std::path::PathBuf;

@@ -1,24 +1,20 @@
 //! One variant per shared step; parameters live in the variant, behaviour in `run`.
+//! The step bodies live in `circom`, `plonk` and `stark`.
 
 use std::fs;
 use std::path::Path;
-use std::sync::Arc;
 
-use anyhow::{bail, Context, Result};
-use pil2_pilout::pilout_proxy::PilOutProxy;
-use pil2_stark_recurser::plonk2pil::{self, r1cs::types::PlonkOptions, SetupKind};
+use anyhow::{Context, Result};
+use pil2_stark_recurser::plonk2pil::{r1cs::types::PlonkOptions, SetupKind};
 use pil2_stark_recurser::stark2circom::{
-    gen_circom_circuit, gen_stark_verifier, gen_stark_verifier_bn128_blake3, CircuitTemplate, GenCircomCircuitInput,
-    KeyVerifier, StarkVerifierOptions,
+    gen_stark_verifier, gen_stark_verifier_bn128_blake3, CircuitTemplate, KeyVerifier, StarkVerifierOptions,
 };
 use serde_json::Value;
 
 use super::PipelineCtx;
-use crate::io::fixed_cols;
-use crate::output::json::to_json_string;
-use crate::proving_key::util::{exact_log2, require_const_file};
-use crate::proving_key::bctree;
-use crate::types::stark_info::{ExpressionsInfo, StarkInfo, VerifierInfo};
+use super::{circom, plonk, stark};
+
+pub(crate) use plonk::{check_plonk_result, compile_plonk_pil};
 
 /// circom optimisation level, a per-kind builder parameter.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -28,7 +24,7 @@ pub enum CircomOpt {
 }
 
 impl CircomOpt {
-    fn flag(self) -> &'static str {
+    pub(super) fn flag(self) -> &'static str {
         match self {
             CircomOpt::O1 => "--O1",
             CircomOpt::O2 => "--O2",
@@ -140,55 +136,18 @@ impl Step {
     pub fn run(&self, ctx: &mut PipelineCtx) -> Result<()> {
         match self {
             Step::CircomPrologue { verifier, circom_template, opt, prime } => {
-                circom_prologue(ctx, verifier.as_ref(), *circom_template, *opt, *prime)
+                circom::circom_prologue(ctx, verifier.as_ref(), *circom_template, *opt, *prime)
             }
-            Step::WitnessLib => {
-                let w = ctx.witness.as_ref().context("no witness tracker")?;
-                let stem = ctx.compiled.as_deref().context("witness library before the circom compile")?;
-                w.run_witness_library_generation(
-                    path_str(&ctx.build_dir)?,
-                    path_str(&ctx.files_dir)?,
-                    stem,
-                    &ctx.name,
-                    &ctx.tools.circom_helpers_dir,
-                );
-                Ok(())
-            }
-            Step::Plonk2Pil { kind, opts } => {
-                let stem = ctx.compiled.as_deref().context("plonk2pil before the circom compile")?;
-                let r1cs = ctx.build_dir.join("build").join(format!("{stem}.r1cs"));
-                let data = fs::read(&r1cs).with_context(|| format!("Failed to read R1CS: {}", r1cs.display()))?;
-                let r = plonk2pil::plonk2pil(&data, *kind, opts)
-                    .with_context(|| format!("plonk2pil failed for {}", ctx.circuit))?;
-                ctx.plonk = Some(r);
-                Ok(())
-            }
-            Step::WriteFixed { source: ConstSource::Plonk } => write_plonk_fixed(ctx),
-            Step::CheckPlonk => check_plonk(ctx),
-            Step::WriteFixed { source: ConstSource::Pilout } => write_basic_const(ctx, None),
-            Step::WriteFixed { source: ConstSource::UserFixed } => {
-                let fixed = ctx.fixed_dir.as_ref().map(|d| d.join(format!("{}.fixed", ctx.name)));
-                write_basic_const(ctx, fixed)
-            }
-            Step::CompilePil => {
-                let pil = ctx.build_dir.join("pil").join(format!("{}.pil", ctx.circuit));
-                let pilout = ctx.build_dir.join("build").join(format!("{}.pilout", ctx.circuit));
-                let includes = [ctx.tools.std_pil_path.clone(), ctx.tools.recurser_pil_path.clone()];
-                ctx.pilout = Some(Arc::new(compile_plonk_pil(&ctx.circuit, &pil, &pilout, &includes, None)?));
-                ctx.air = (0, 0);
-                Ok(())
-            }
-            Step::StarkTail { reuse, starkinfo_only } => stark_tail(ctx, *reuse, *starkinfo_only),
-            Step::ConstTree { required } => const_tree(ctx, *required),
-            Step::WriteVerifierRs => {
-                let (si, vi, _) = ctx.pil_info()?;
-                crate::output::verifier::write_verifier_rust_file(
-                    path_str(&ctx.file("verifier.rs"))?,
-                    &StarkInfo::from_json(si)?,
-                    &VerifierInfo::from_json(vi)?,
-                    ctx.family,
-                )
-            }
+            Step::WitnessLib => circom::witness_lib(ctx),
+            Step::Plonk2Pil { kind, opts } => plonk::plonk2pil_step(ctx, *kind, opts),
+            Step::WriteFixed { source: ConstSource::Plonk } => plonk::write_plonk_fixed(ctx),
+            Step::CheckPlonk => plonk::check_plonk(ctx),
+            Step::WriteFixed { source: ConstSource::Pilout } => plonk::write_basic_const(ctx, None),
+            Step::WriteFixed { source: ConstSource::UserFixed } => plonk::write_user_fixed_const(ctx),
+            Step::CompilePil => plonk::compile_pil_step(ctx),
+            Step::StarkTail { reuse, starkinfo_only } => stark::stark_tail(ctx, *reuse, *starkinfo_only),
+            Step::ConstTree { required } => stark::const_tree(ctx, *required),
+            Step::WriteVerifierRs => stark::write_verifier_rs(ctx),
             Step::WitnessWait => ctx.witness.as_ref().map_or(Ok(()), |w| w.await_all()),
             Step::Custom { run, .. } => run(ctx),
         }
@@ -199,377 +158,8 @@ pub(super) fn path_str(p: &Path) -> Result<&str> {
     p.to_str().with_context(|| format!("non-UTF-8 path {}", p.display()))
 }
 
-/// The argument list of the `circom` invocation (no process spawned).
-pub fn circom_args(opt: CircomOpt, prime: Prime, libs: &[String], circom_file: &Path, out_dir: &Path) -> Vec<String> {
-    let field = match prime {
-        Prime::Goldilocks => &["--prime", "goldilocks"][..],
-        Prime::Bn128 => &["--prime", "bn128", "--inspect", "--wasm"][..],
-    };
-    let mut a: Vec<String> =
-        [opt.flag(), "--r1cs"].iter().chain(field).chain(&["--c", "--verbose"]).map(|s| s.to_string()).collect();
-    for l in libs {
-        a.extend(["-l".to_string(), l.clone()]);
-    }
-    a.extend([circom_file.to_string_lossy().into_owned(), "-o".into(), out_dir.to_string_lossy().into_owned()]);
-    a
-}
-
-fn circom_prologue(
-    ctx: &mut PipelineCtx,
-    verifier: Option<&VerifierGen>,
-    template: Option<CircuitTemplate>,
-    opt: CircomOpt,
-    prime: Prime,
-) -> Result<()> {
-    let circom_dir = ctx.build_dir.join("circom");
-    let build = ctx.build_dir.join("build");
-    for d in [&circom_dir, &build, &ctx.build_dir.join("pil"), &ctx.files_dir] {
-        fs::create_dir_all(d)?;
-    }
-    // Each verifier's circom goes to its file, its data to the main.
-    let mut keys = Vec::new();
-    if let Some(gen) = verifier {
-        let mut gen = gen.clone();
-        // A batched circuit switches its slots off through `enable`.
-        gen.opts_mut().enable_input |= ctx.batch_size > 1;
-        for v in &ctx.verifiers {
-            let key = gen
-                .generate(&v.const_root, &v.stark_info, &v.verifier_info)
-                .with_context(|| format!("verifier {} of {}", v.file, ctx.circuit))?;
-            fs::write(circom_dir.join(&v.file), key.circom)?;
-            keys.push(key.data);
-        }
-    }
-    let circom_file = match template {
-        Some(template) => {
-            let input = ctx.circuit_input.as_ref().context("circuit circom without its input")?;
-            let mut options = input.opts.clone();
-            options.batch_size = ctx.batch_size.max(1);
-            let verifier_filenames: Vec<String> = ctx.verifiers.iter().map(|v| v.file.clone()).collect();
-            let src = gen_circom_circuit(&GenCircomCircuitInput {
-                template,
-                stark_infos: &input.stark_infos,
-                vadcop_info: &input.vadcop_info,
-                verifier_filenames: &verifier_filenames,
-                keys: &keys,
-                basic_vk: &input.basic_vk,
-                agg_vk: &input.agg_vk,
-                publics: &input.publics,
-                options: &options,
-            })
-            .with_context(|| format!("gen_circom failed for {}", ctx.circuit))?;
-            let p = circom_dir.join(format!("{}.circom", ctx.circuit));
-            fs::write(&p, src)?;
-            p
-        }
-        None => ctx.circom_file.clone().context("no circom file to compile")?,
-    };
-    let stem = circom_file.file_stem().and_then(|s| s.to_str()).context("circom file has no stem")?.to_string();
-
-    tracing::info!("Compiling {stem}...");
-    let out = std::process::Command::new(&ctx.tools.circom_exec)
-        .args(circom_args(opt, prime, &ctx.tools.libs, &circom_file, &build))
-        .output()
-        .with_context(|| format!("Failed to execute circom for {stem}"))?;
-    if !out.status.success() {
-        bail!("Circom compilation failed for {stem}: {}", String::from_utf8_lossy(&out.stderr));
-    }
-    let dat = build.join(format!("{stem}_cpp")).join(format!("{stem}.dat"));
-    if dat.exists() {
-        fs::copy(&dat, ctx.file("dat"))?;
-    }
-    ctx.compiled = Some(stem);
-    Ok(())
-}
-
-fn check_plonk(ctx: &mut PipelineCtx) -> Result<()> {
-    let stem = ctx.compiled.as_deref().context("check_plonk before the circom compile")?;
-    let r1cs = fs::read(ctx.build_dir.join("build").join(format!("{stem}.r1cs")))?;
-    check_plonk_result(&ctx.circuit, &r1cs, ctx.plonk()?, ctx.pilout()?.as_ref())
-}
-
-/// pil2com over `field` (Goldilocks if `None`) of plonk2pil's PIL `pil` into `pilout`, loaded.
-pub(crate) fn compile_plonk_pil(
-    circuit: &str,
-    pil: &Path,
-    pilout: &Path,
-    includes: &[String],
-    field: Option<&str>,
-) -> Result<pil2_pilout::pilout::PilOut> {
-    crate::commands::compile_pil::run_compile_pil(&crate::commands::compile_pil::CompilePilOptions {
-        pil_path: path_str(pil)?.to_string(),
-        output_path: path_str(pilout)?.to_string(),
-        include_paths: includes.to_vec(),
-        field: field.map(str::to_string),
-        ..Default::default()
-    })?;
-    let proxy = PilOutProxy::new(path_str(pilout)?)
-        .map_err(|e| anyhow::anyhow!("Failed to load pilout {}: {e}", pilout.display()))?;
-    if proxy.pilout.air_groups.first().is_none_or(|g| g.airs.is_empty()) {
-        bail!("{circuit} pilout has no AIR groups: {}", pilout.display());
-    }
-    Ok(proxy.pilout)
-}
-
-/// The trusted checker over plonk2pil's in-memory result (`WriteFixed` and the `.const` writer are trusted).
-pub(crate) fn check_plonk_result<V: plonk2pil::FixedValue>(
-    circuit: &str,
-    r1cs: &[u8],
-    res: &plonk2pil::PlonkResult<V>,
-    pilout: &pil2_pilout::pilout::PilOut,
-) -> Result<()> {
-    let report = plonk2pil::check::load::check_result(r1cs, res, pilout)
-        .with_context(|| format!("{circuit}: the plonk layout does not implement its r1cs"))?;
-    tracing::info!("{circuit} plonk check OK: {report}");
-    Ok(())
-}
-
-/// fixed.bin and `.pil` in `build/` and `pil/`, the exec buffer in the files dir.
-fn write_plonk_fixed(ctx: &mut PipelineCtx) -> Result<()> {
-    let p = ctx.plonk()?;
-    let fixed_info: Vec<(String, Vec<u32>, Vec<u64>)> =
-        p.fixed_pols.iter().map(|fp| (fp.name.clone(), vec![fp.index as u32], fp.values.clone())).collect();
-    let fixed_bin = ctx.build_dir.join("build").join(format!("{}.fixed.bin", ctx.circuit));
-    fixed_cols::write_fixed_pols_bin(
-        path_str(&fixed_bin)?,
-        &p.airgroup_name,
-        &p.air_name,
-        1u64 << p.n_bits,
-        &fixed_info,
-    )?;
-    fs::write(ctx.build_dir.join("pil").join(format!("{}.pil", ctx.circuit)), &p.pil_str)?;
-    write_exec(&ctx.file("exec"), &p.exec)
-}
-
-/// A basic air's `.const`: `fixed_file` when it exists, else the pilout's inline columns. An air
-/// with no fixed columns has none; one whose columns neither source supplies is an error.
-fn write_basic_const(ctx: &mut PipelineCtx, fixed_file: Option<std::path::PathBuf>) -> Result<()> {
-    fs::create_dir_all(&ctx.files_dir)?;
-    let pilout = ctx.pilout()?;
-    let air = &pilout.air_groups[ctx.air.0].airs[ctx.air.1];
-    let const_path = ctx.file("const");
-    // A run that cannot produce `.const` drops an earlier run's, or the verkey comes from stale columns.
-    let drop_stale_const = |why: &str| -> Result<()> {
-        let mut dropped = false;
-        for stale in [const_path.clone(), ctx.file("verkey.json"), ctx.file("verkey.bin")] {
-            if stale.exists() {
-                fs::remove_file(&stale).with_context(|| format!("removing stale {} ({why})", stale.display()))?;
-                dropped = true;
-            }
-        }
-        if dropped {
-            tracing::warn!("Air '{}': dropped stale .const/.verkey in {} — {why}", ctx.name, ctx.files_dir.display());
-        }
-        Ok(())
-    };
-    if let Some(src) = fixed_file.as_ref().filter(|src| src.exists()) {
-        fs::copy(src, &const_path)?;
-    } else if air.fixed_cols.is_empty() {
-        tracing::debug!("Air '{}': no fixed columns — skipping .const generation", ctx.name);
-        drop_stale_const("the air has no fixed columns")?;
-    } else if air.fixed_cols.iter().all(|fc| !fc.values.is_empty()) {
-        fixed_cols::write_const_file(path_str(&const_path)?, air, &[])?;
-        tracing::info!(
-            "Generated .const from pilout inline fixed_cols for air '{}' ({} columns, {} rows)",
-            ctx.name,
-            air.fixed_cols.len(),
-            air.num_rows.unwrap_or(0)
-        );
-    } else {
-        drop_stale_const("its fixed columns have no source")?;
-        match fixed_file {
-            Some(src) => bail!(
-                "Air '{}': fixed file not found: {} (its fixed columns are not inline in the pilout)",
-                ctx.name,
-                src.display()
-            ),
-            None => bail!(
-                "Air '{}': some fixed columns have no inline values in the pilout; \
-                 provide --fixed-dir (-u) with its .fixed file",
-                ctx.name
-            ),
-        }
-    }
-    Ok(())
-}
-
-fn write_bin(ctx: &PipelineCtx, si: &StarkInfo, ei: &ExpressionsInfo) -> Result<()> {
-    crate::io::bin_file::write_expressions_bin_file(path_str(&ctx.file("bin"))?, si, ei)
-}
-
-fn stark_tail(ctx: &mut PipelineCtx, reuse: bool, starkinfo_only: bool) -> Result<()> {
-    fs::create_dir_all(&ctx.files_dir)?;
-    let pilout = ctx.pilout()?;
-    let (ag, ai) = ctx.air;
-    let air = &pilout.air_groups[ag].airs[ai];
-    let starkinfo_path = ctx.file("starkinfo.json");
-
-    let constraints = constraint_digest(air);
-    if reuse {
-        let r = ctx.reuse.clone().context("StarkTail { reuse } without a setup to reuse")?;
-        // The reused starkinfo encodes another air's constraints: they must be this one's.
-        if r.constraints != constraints {
-            bail!("{}: its constraints differ from those of the setup it reuses", ctx.label);
-        }
-        let (si, vi, ei) = r.pil_info;
-        let si_loaded = StarkInfo::from_json(&si)?;
-        tracing::info!("{} low-degree test (reused): {}", ctx.label, si_loaded.stark_struct.low_degree_test.describe());
-        let plonk_n_bits = ctx.plonk()?.n_bits;
-        if si_loaded.stark_struct.n_bits != plonk_n_bits {
-            bail!(
-                "{} has 2^{} rows but the reused setup expects 2^{} — the recursive circuits are not \
-                 uniform (query-count equalization failed?)",
-                ctx.label,
-                plonk_n_bits,
-                si_loaded.stark_struct.n_bits,
-            );
-        }
-        fs::write(&starkinfo_path, to_json_string(&si)?)?;
-        if !starkinfo_only {
-            fs::write(ctx.file("verifierinfo.json"), to_json_string(&vi)?)?;
-            fs::write(ctx.file("expressionsinfo.json"), to_json_string(&ei)?)?;
-            write_bin(ctx, &si_loaded, &ExpressionsInfo::from_json(&ei)?)?;
-        }
-        ctx.pil_info = Some((si, vi, ei));
-    } else {
-        let stark_struct = match ctx.stark_struct.clone() {
-            Some(s) => s,
-            None => {
-                let rows = u64::from(air.num_rows.unwrap_or(0));
-                let n_bits = if rows > 0 {
-                    exact_log2(rows).with_context(|| format!("{} row count", ctx.circuit))?
-                } else {
-                    ctx.plonk()?.n_bits
-                };
-                crate::types::stark_struct::generate_stark_struct(&ctx.settings, n_bits, ctx.family)
-            }
-        };
-        let r = crate::pil::stark_setup::stark_setup(&pilout, ag, ai, &stark_struct, &ctx.prepare, &ctx.key)?;
-        tracing::info!("{} low-degree test: {}", ctx.label, r.starkinfo.stark_struct.low_degree_test.describe());
-        let si_json = to_json_string(&r.starkinfo)?;
-        fs::write(&starkinfo_path, &si_json)?;
-        let si: Value = serde_json::from_str(&si_json)?;
-        let (vi_code, ei_code) = (&r.pil_code.verifier_info, &r.pil_code.expressions_info);
-        if !starkinfo_only {
-            fs::write(ctx.file("verifierinfo.json"), to_json_string(vi_code)?)?;
-            fs::write(ctx.file("expressionsinfo.json"), to_json_string(ei_code)?)?;
-            write_bin(ctx, &StarkInfo::from_json(&si)?, &ExpressionsInfo::try_from(ei_code)?)?;
-        }
-        ctx.pil_info = Some((si, serde_json::to_value(vi_code)?, serde_json::to_value(ei_code)?));
-        ctx.stats = Some((r.summary, r.im_pols_info));
-    }
-
-    ctx.constraints = Some(constraints);
-    ctx.temp_starkinfo = starkinfo_only;
-
-    // pil_info fixes nConstants, which may exceed plonk2pil's columns: the pilout fills the rest.
-    if let Some(p) = &ctx.plonk {
-        let values = fixed_cols::reorder_plonk_pols_for_pilout(&p.fixed_pols, &pilout.symbols, 0, 0);
-        fixed_cols::write_const_file(path_str(&ctx.file("const"))?, air, &values)?;
-        tracing::info!(
-            "Wrote {} const file: {} cols ({} from plonk + {} from pilout), {} rows",
-            ctx.name,
-            air.fixed_cols.len(),
-            p.fixed_pols.len(),
-            air.fixed_cols.len().saturating_sub(p.fixed_pols.len()),
-            1usize << p.n_bits
-        );
-    }
-    Ok(())
-}
-
-fn const_tree(ctx: &mut PipelineCtx, required: bool) -> Result<()> {
-    let const_path = ctx.file("const");
-    if !const_path.exists() && !required {
-        return Ok(());
-    }
-    require_const_file(&ctx.name, &const_path)?;
-    tracing::info!("Computing constant tree for {}...", ctx.name);
-    let root = bctree::compute_const_tree(
-        path_str(&const_path)?,
-        path_str(&ctx.file("starkinfo.json"))?,
-        path_str(&ctx.file("verkey.json"))?,
-    )?;
-    write_exec(&ctx.file("verkey.bin"), &root)?;
-    if ctx.temp_starkinfo {
-        // recursive1 keeps its starkinfo only for the const tree (it reuses the first air's).
-        fs::remove_file(ctx.file("starkinfo.json"))?;
-    }
-    ctx.const_root = Some(root);
-    Ok(())
-}
-
 /// `words` little-endian, as the exec and verkey.bin files hold them.
 pub(crate) fn write_exec(path: &Path, words: &[u64]) -> Result<()> {
     let bytes: Vec<u8> = words.iter().flat_map(|v| v.to_le_bytes()).collect();
     fs::write(path, bytes).with_context(|| format!("writing {}", path.display()))
-}
-
-/// A digest of the air's constraint system: what a reused starkinfo encodes (fixed values excluded).
-fn constraint_digest(air: &pil2_pilout::pilout::Air) -> u64 {
-    use prost::Message;
-    use std::hash::{Hash, Hasher};
-    let shape = pil2_pilout::pilout::Air {
-        num_rows: air.num_rows,
-        stage_widths: air.stage_widths.clone(),
-        expressions: air.expressions.clone(),
-        constraints: air.constraints.iter().map(without_debug_line).collect(),
-        air_values: air.air_values.clone(),
-        custom_commits: air.custom_commits.clone(),
-        ..Default::default()
-    };
-    let mut h = std::collections::hash_map::DefaultHasher::new();
-    (air.fixed_cols.len(), shape.encode_to_vec()).hash(&mut h);
-    h.finish()
-}
-
-// debug_line names the source air, so equal constraint systems would otherwise hash apart
-fn without_debug_line(c: &pil2_pilout::pilout::Constraint) -> pil2_pilout::pilout::Constraint {
-    use pil2_pilout::pilout::constraint::Constraint as C;
-    let mut c = c.clone();
-    match c.constraint.as_mut() {
-        Some(C::EveryRow(x)) => x.debug_line = None,
-        Some(C::FirstRow(x)) => x.debug_line = None,
-        Some(C::LastRow(x)) => x.debug_line = None,
-        Some(C::EveryFrame(x)) => x.debug_line = None,
-        None => {}
-    }
-    c
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn constraint_digest_ignores_debug_lines_but_not_constraints() {
-        use pil2_pilout::pilout::{constraint, Air, Constraint};
-        let row = |idx: u32, line: &str| Constraint {
-            constraint: Some(constraint::Constraint::EveryRow(constraint::EveryRow {
-                expression_idx: Some(pil2_pilout::pilout::operand::Expression { idx }),
-                debug_line: Some(line.to_string()),
-            })),
-        };
-        let a = Air { constraints: vec![row(0, "a.pil:1")], ..Default::default() };
-        let b = Air { constraints: vec![row(0, "b.pil:9")], ..Default::default() };
-        let c = Air { constraints: vec![row(1, "a.pil:1")], ..Default::default() };
-        assert_eq!(constraint_digest(&a), constraint_digest(&b));
-        assert_ne!(constraint_digest(&a), constraint_digest(&c));
-    }
-
-    #[test]
-    fn circom_args_carry_the_level_the_field_and_the_libs() {
-        let libs = vec!["/l1".to_string(), "/l2".to_string()];
-        let a = circom_args(CircomOpt::O1, Prime::Goldilocks, &libs, Path::new("c.circom"), Path::new("/o"));
-        let b = circom_args(CircomOpt::O2, Prime::Goldilocks, &libs, Path::new("c.circom"), Path::new("/o"));
-        assert!(a.contains(&"--O1".to_string()) && !a.contains(&"--O2".to_string()), "{a:?}");
-        assert!(b.contains(&"--O2".to_string()) && !b.contains(&"--O1".to_string()), "{b:?}");
-        for f in ["--r1cs", "--c", "--prime", "goldilocks", "-l", "/l1", "/l2", "c.circom", "-o", "/o"] {
-            assert!(a.contains(&f.to_string()), "missing {f}: {a:?}");
-        }
-        let f = circom_args(CircomOpt::O1, Prime::Bn128, &libs, Path::new("c.circom"), Path::new("/o"));
-        for x in ["bn128", "--inspect", "--wasm"] {
-            assert!(f.contains(&x.to_string()), "missing {x}: {f:?}");
-        }
-    }
 }
