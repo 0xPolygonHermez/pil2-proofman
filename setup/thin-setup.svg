@@ -166,12 +166,12 @@
       <rect x="24" y="564" width="214" height="26" rx="6" class="p-box"/>
       <text x="131" y="581" text-anchor="middle" class="sub">circom templates from the DAG</text>
       <path d="M238 577 H262" class="edge p" marker-end="url(#ap)"/>
-      <rect x="264" y="564" width="300" height="26" rx="6" class="t-box"/>
-      <text x="414" y="581" text-anchor="middle" class="sub">template check: same values as the DAG, random points</text>
-      <path d="M564 577 H588" class="edge t" marker-end="url(#at)"/>
-      <rect x="590" y="564" width="120" height="26" rx="6" class="d-box"/>
-      <text x="650" y="581" text-anchor="middle" class="sub">circom verifier</text>
-      <text x="724" y="581" class="sub">static library · Rust emits data</text>
+      <rect x="264" y="564" width="370" height="26" rx="6" class="t-box"/>
+      <text x="449" y="581" text-anchor="middle" class="sub">template check: computes exactly the DAG (random inputs)</text>
+      <path d="M634 577 H658" class="edge t" marker-end="url(#at)"/>
+      <rect x="660" y="564" width="120" height="26" rx="6" class="d-box"/>
+      <text x="720" y="581" text-anchor="middle" class="sub">circom verifier</text>
+      <text x="792" y="581" class="sub">static library</text>
           <rect x="24" y="606" width="22" height="12" rx="3" class="k-frame"/>
       <text x="54" y="616" class="note">Trusted: specification, checks</text>
       <rect x="260" y="606" width="22" height="12" rx="3" class="p-box"/>
