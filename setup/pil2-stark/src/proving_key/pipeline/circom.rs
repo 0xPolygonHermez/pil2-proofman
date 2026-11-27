@@ -6,17 +6,18 @@ use std::path::Path;
 use anyhow::{bail, Context, Result};
 use pil2_stark_recurser::stark2circom::{gen_circom_circuit, CircuitTemplate, GenCircomCircuitInput};
 
-use super::steps::{path_str, CircomOpt, Prime, VerifierGen};
+use super::steps::{path_str, Prime, VerifierGen};
 use super::PipelineCtx;
 
-/// The argument list of the `circom` invocation (no process spawned).
-pub fn circom_args(opt: CircomOpt, prime: Prime, libs: &[String], circom_file: &Path, out_dir: &Path) -> Vec<String> {
+/// The argument list of the `circom` invocation (no process spawned). Always `--O1`: `--O2` gives a
+/// different r1cs from one run to the next for the same source, so the keys would not be reproducible.
+pub fn circom_args(prime: Prime, libs: &[String], circom_file: &Path, out_dir: &Path) -> Vec<String> {
     let field = match prime {
         Prime::Goldilocks => &["--prime", "goldilocks"][..],
         Prime::Bn128 => &["--prime", "bn128", "--inspect", "--wasm"][..],
     };
     let mut a: Vec<String> =
-        [opt.flag(), "--r1cs"].iter().chain(field).chain(&["--c", "--verbose"]).map(|s| s.to_string()).collect();
+        ["--O1", "--r1cs"].iter().chain(field).chain(&["--c", "--verbose"]).map(|s| s.to_string()).collect();
     for l in libs {
         a.extend(["-l".to_string(), l.clone()]);
     }
@@ -28,7 +29,6 @@ pub(super) fn circom_prologue(
     ctx: &mut PipelineCtx,
     verifier: Option<&VerifierGen>,
     template: Option<CircuitTemplate>,
-    opt: CircomOpt,
     prime: Prime,
 ) -> Result<()> {
     let circom_dir = ctx.build_dir.join("circom");
@@ -78,7 +78,7 @@ pub(super) fn circom_prologue(
 
     tracing::info!("Compiling {stem}...");
     let out = std::process::Command::new(&ctx.tools.circom_exec)
-        .args(circom_args(opt, prime, &ctx.tools.libs, &circom_file, &build))
+        .args(circom_args(prime, &ctx.tools.libs, &circom_file, &build))
         .output()
         .with_context(|| format!("Failed to execute circom for {stem}"))?;
     if !out.status.success() {
@@ -110,16 +110,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn circom_args_carry_the_level_the_field_and_the_libs() {
+    fn circom_args_carry_o1_the_field_and_the_libs() {
         let libs = vec!["/l1".to_string(), "/l2".to_string()];
-        let a = circom_args(CircomOpt::O1, Prime::Goldilocks, &libs, Path::new("c.circom"), Path::new("/o"));
-        let b = circom_args(CircomOpt::O2, Prime::Goldilocks, &libs, Path::new("c.circom"), Path::new("/o"));
+        let a = circom_args(Prime::Goldilocks, &libs, Path::new("c.circom"), Path::new("/o"));
         assert!(a.contains(&"--O1".to_string()) && !a.contains(&"--O2".to_string()), "{a:?}");
-        assert!(b.contains(&"--O2".to_string()) && !b.contains(&"--O1".to_string()), "{b:?}");
         for f in ["--r1cs", "--c", "--prime", "goldilocks", "-l", "/l1", "/l2", "c.circom", "-o", "/o"] {
             assert!(a.contains(&f.to_string()), "missing {f}: {a:?}");
         }
-        let f = circom_args(CircomOpt::O1, Prime::Bn128, &libs, Path::new("c.circom"), Path::new("/o"));
+        let f = circom_args(Prime::Bn128, &libs, Path::new("c.circom"), Path::new("/o"));
         for x in ["bn128", "--inspect", "--wasm"] {
             assert!(f.contains(&x.to_string()), "missing {x}: {f:?}");
         }

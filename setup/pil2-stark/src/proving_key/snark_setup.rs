@@ -22,7 +22,7 @@ use proofman_common::hash_family::HashFamily;
 use proofman_fields::Bn128;
 use proofman_pilfflonk::{CalldataLayout, FrBytes, JsonFile, PilfflonkGlobalInfo, Vkey};
 use crate::commands::common::parse_root_strings;
-use crate::proving_key::pipeline::steps::{check_plonk_result, compile_plonk_pil, CircomOpt, Prime, Step, VerifierGen};
+use crate::proving_key::pipeline::steps::{check_plonk_result, compile_plonk_pil, Prime, Step, VerifierGen};
 use crate::proving_key::pipeline::{self, kinds, kinds::RecursivefCfg, CircuitInput, PipelineCtx, Tools, VerifierInput};
 use crate::types::stark_struct::StarkSettings;
 
@@ -289,7 +289,6 @@ fn gen_final_snark(
     let prologue = Step::CircomPrologue {
         verifier: Some(verifier),
         circom_template: Some(CircuitTemplate::Final),
-        opt: CircomOpt::O1,
         prime: Prime::Bn128,
     };
     pipeline::run(&[prologue], &mut ctx).context("the final circuit")?;

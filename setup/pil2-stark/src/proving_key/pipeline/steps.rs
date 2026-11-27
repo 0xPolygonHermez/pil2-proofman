@@ -16,22 +16,6 @@ use super::{circom, plonk, stark};
 
 pub(crate) use plonk::{check_plonk_result, compile_plonk_pil};
 
-/// circom optimisation level, a per-kind builder parameter.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CircomOpt {
-    O1,
-    O2,
-}
-
-impl CircomOpt {
-    pub(super) fn flag(self) -> &'static str {
-        match self {
-            CircomOpt::O1 => "--O1",
-            CircomOpt::O2 => "--O2",
-        }
-    }
-}
-
 /// Which verifier circom generator feeds the prologue.
 #[derive(Debug, Clone)]
 pub enum VerifierGen {
@@ -102,42 +86,24 @@ pub enum Prime {
 /// - `WitnessWait`: waits for the background witness library builds.
 /// - `Custom`: a kind's own step.
 pub enum Step {
-    CircomPrologue {
-        verifier: Option<VerifierGen>,
-        circom_template: Option<CircuitTemplate>,
-        opt: CircomOpt,
-        prime: Prime,
-    },
+    CircomPrologue { verifier: Option<VerifierGen>, circom_template: Option<CircuitTemplate>, prime: Prime },
     WitnessLib,
-    Plonk2Pil {
-        kind: SetupKind,
-        opts: PlonkOptions,
-    },
-    WriteFixed {
-        source: ConstSource,
-    },
+    Plonk2Pil { kind: SetupKind, opts: PlonkOptions },
+    WriteFixed { source: ConstSource },
     CompilePil,
     CheckPlonk,
-    StarkTail {
-        reuse: bool,
-        starkinfo_only: bool,
-    },
-    ConstTree {
-        required: bool,
-    },
+    StarkTail { reuse: bool, starkinfo_only: bool },
+    ConstTree { required: bool },
     WriteVerifierRs,
     WitnessWait,
-    Custom {
-        name: &'static str,
-        run: CustomFn,
-    },
+    Custom { name: &'static str, run: CustomFn },
 }
 
 impl Step {
     pub fn run(&self, ctx: &mut PipelineCtx) -> Result<()> {
         match self {
-            Step::CircomPrologue { verifier, circom_template, opt, prime } => {
-                circom::circom_prologue(ctx, verifier.as_ref(), *circom_template, *opt, *prime)
+            Step::CircomPrologue { verifier, circom_template, prime } => {
+                circom::circom_prologue(ctx, verifier.as_ref(), *circom_template, *prime)
             }
             Step::WitnessLib => circom::witness_lib(ctx),
             Step::Plonk2Pil { kind, opts } => plonk::plonk2pil_step(ctx, *kind, opts),
