@@ -151,13 +151,14 @@ fn search_output_is_checked() {
     assert!(checked > 500);
 }
 
-/// Only this seed's im root (not a constraint root) sets q_deg, which a roots-only derivation misses.
+/// Only this seed's im root (not a constraint root) sets q_deg, which a roots-only derivation misses; under the
+/// search policies (the STARK's, which cost Q's extension columns, choose a lower q_deg).
 const HAZARD_SEED: u64 = 2781;
 
 #[test]
 fn memo_hazard_regression() {
     let (_, cs) = random_pilout(HAZARD_SEED);
-    for policy in policies() {
+    for policy in policies().into_iter().filter(|p| !stark_floor(p)) {
         let set = search_im(&cs, &policy, quotient_dim(&cs, &choice(&[])).unwrap() as usize).expect("feasible");
         let im = im_order(&cs, &set).unwrap();
         let got = check_im(&cs, &im, policy.max_constraint_degree() as u32, stark_floor(&policy))

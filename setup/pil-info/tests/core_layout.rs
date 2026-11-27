@@ -376,3 +376,15 @@ fn boundaries_are_every_row_only_for_deep() {
         [Boundary::EveryRow, Boundary::LastRow, Boundary::FirstRow, Boundary::EveryFrame { min: 0, max: 1 }]
     );
 }
+
+/// A lone base-field root still gives an extension Q (the provers write Q as one): its pieces and its arena entry.
+#[test]
+fn a_lone_base_field_root_gives_an_extension_quotient() {
+    let cs = system(vec![mul(witness(0, 0), witness(1, 0))], &[0]);
+    let im = ImChoice { exprs: vec![] };
+    let chk = check_im(&cs, &im, 3, true).unwrap();
+    let lay = layout(&cs, &im, &lp(chk.q_deg)).unwrap();
+    assert!(lay.cm_pols_map.iter().filter(|p| p.name.starts_with('Q')).all(|p| p.dim == 3));
+    let exprs = pil_info::emit::prover::to_arena(&cs, &im, &lay).unwrap();
+    assert_eq!(exprs.arena[exprs.roles.c_exp].dim, 3);
+}

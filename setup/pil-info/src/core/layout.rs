@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 
 use crate::core::im::ImChoice;
-use crate::core::ir::{dim, dim_table, stage_table, Column, ConstraintSystem, Expr, Lengths, NamedValue, Unresolved};
+use crate::core::ir::{dim_table, stage_table, Column, ConstraintSystem, Lengths, NamedValue, Unresolved};
 
 /// One committed, fixed or custom column.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -218,14 +218,10 @@ fn number_stages(m: &mut [PolMap]) {
     }
 }
 
-/// Dimension of today's cExp: a fold of two or more roots carries `std_vc`, a lone root its own.
+/// Dimension of the Q pieces: the extension's, which the provers write Q in (a lone base-field root is lifted).
 pub fn quotient_dim(cs: &ConstraintSystem, im: &ImChoice) -> Result<u32, LayoutError> {
-    let roots = cs.constraints.iter().map(|c| &c.e);
-    let ims: Vec<Expr> = im.exprs.iter().map(|&e| Expr::Ref(e)).collect();
-    let all: Vec<&Expr> = roots.chain(&ims).collect();
-    Ok(match all.as_slice() {
-        [] => return Err(LayoutError::Inconsistent { what: "an air with no constraint".into() }),
-        [e] => dim(cs, e)?,
-        _ => cs.field.ext_dim() as u32,
-    })
+    if cs.constraints.is_empty() && im.exprs.is_empty() {
+        return Err(LayoutError::Inconsistent { what: "an air with no constraint".into() });
+    }
+    Ok(cs.field.ext_dim() as u32)
 }

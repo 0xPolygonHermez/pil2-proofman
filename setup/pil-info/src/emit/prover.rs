@@ -158,6 +158,30 @@ fn fold_quotient(
         ..Default::default()
     };
     add_info_expression_inline(&mut st.arena, &mut q, field)?;
+    if q.dim < field.ext_dim() {
+        // a lone base-field root: the provers write Q as an extension element, so lift it by `std_vc * 0`
+        let vc = Expression {
+            op: "challenge".into(),
+            stage: st.q_stage,
+            dim: field.ext_dim(),
+            stage_id: Some(0),
+            id: Some(st.vc_id),
+            value: Some("std_vc".into()),
+            ..Default::default()
+        };
+        let zero = Expression { op: "number".into(), value: Some("0".into()), ..Default::default() };
+        let lift = Expression {
+            op: "mul".into(),
+            values: vec![ExprChild::Inline(Box::new(vc)), ExprChild::Inline(Box::new(zero))],
+            ..Default::default()
+        };
+        q = Expression {
+            op: "add".into(),
+            values: vec![ExprChild::Inline(Box::new(lift)), ExprChild::Inline(Box::new(q))],
+            ..Default::default()
+        };
+        add_info_expression_inline(&mut st.arena, &mut q, field)?;
+    }
     let c_exp = st.push(q);
     st.arena[c_exp].dim = get_exp_dim(&st.arena, c_exp, field)?;
 
