@@ -16,6 +16,7 @@ path = "lib.rs"
 proofman-fields = { workspace = true }
 proofman-common = { workspace = true }
 pil-info = { workspace = true }
+constraint-dag = { workspace = true }
 pil2-pilout = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true, features = ["preserve_order"] }

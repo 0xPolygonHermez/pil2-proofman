@@ -1099,6 +1099,7 @@ name = "pil2-stark-recurser"
 version = "1.5.0-alpha"
 dependencies = [
  "anyhow",
+ "constraint-dag",
  "num-bigint",
  "pil-info",
  "pil2-pilout",

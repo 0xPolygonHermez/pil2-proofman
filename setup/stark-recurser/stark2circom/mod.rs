@@ -10,6 +10,9 @@ mod blake3_equiv_tests;
 /// Circuit-level generators.
 pub mod circuit_templates;
 
+/// The trusted checker of the generated circom.
+pub mod check;
+
 /// Per-air stark verifier generators.
 pub(crate) mod circom_verifier;
 
