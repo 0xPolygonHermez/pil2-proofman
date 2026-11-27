@@ -6,7 +6,7 @@ This directory contains the Rust-based proving-key generation pipeline for Proof
 
 ![Thin setup: heuristics propose, a trusted kernel checks, and every verifier reads the same constraint DAG](thin-setup.svg)
 
-Code that may be wrong only proposes (im columns, FRI/STIR parameters, prover codegen, the plonk2pil generator); a small trusted kernel in `pil-info/src/core` and the plonk2pil checker decide soundness. Verifiers read the constraints as data (`verifierinfo.json`'s `constraintDag`).
+Code that may be wrong only proposes (im columns, FRI/STIR parameters, prover codegen, the circom templates rendered from the DAG, the plonk2pil generator); a small trusted kernel in `pil-info/src/core`, the template checker (`stark-recurser/stark2circom/check`) and the plonk2pil checker decide soundness. Verifiers read the constraints as data: `verifierinfo.json`'s `constraintDag` and `globalInfo`'s `globalConstraintDag`, through one Rust crate, `constraint-dag`.
 
 ## Layout
 

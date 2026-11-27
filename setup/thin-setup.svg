@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 660" width="1000" height="660" role="img" aria-label="Diagram: heuristics propose, the trusted kernel checks and produces the starkinfo, the air constraint DAG and the global constraint DAG, which every verifier reads through one Rust crate; in recursion, plonk2pil generates the artefacts and a trusted checker verifies they implement exactly the r1cs.">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 660" width="1000" height="660" role="img" aria-label="Diagram: heuristics propose, the trusted kernel checks and produces the starkinfo, the air constraint DAG and the global constraint DAG, which every verifier reads through one Rust crate; the circom templates rendered from the DAG are checked against it at setup; in recursion, plonk2pil generates the artefacts and a trusted checker verifies they imply every r1cs constraint.">
       <style>
   .bg { fill: #ffffff; }
   .fg { fill: #1b2321; }
@@ -123,7 +123,7 @@
       <text x="928" y="256" text-anchor="middle" class="sub">air</text>
       <rect x="872" y="270" width="112" height="40" rx="6" class="d-box"/>
       <text x="928" y="287" text-anchor="middle" class="lbl">circom</text>
-      <text x="928" y="302" text-anchor="middle" class="sub">air · global</text>
+      <text x="928" y="302" text-anchor="middle" class="sub">air · global · checked</text>
       <text x="928" y="334" text-anchor="middle" class="elbl">one Rust source: constraint-dag</text>
 
       <!-- ===== recursion band ===== -->
@@ -162,7 +162,16 @@
       <path d="M521 410 V312" class="edge" marker-end="url(#a)"/>
       <text x="528" y="340" class="elbl">same kernel</text>
 
-      <text x="24" y="586" class="sub">circom and Solidity: static libraries · Rust emits only data and, for circom, the DAG as templates</text>
+      <!-- circom gets the DAG as generated templates: they only propose, the template check decides -->
+      <rect x="24" y="564" width="214" height="26" rx="6" class="p-box"/>
+      <text x="131" y="581" text-anchor="middle" class="sub">circom templates from the DAG</text>
+      <path d="M238 577 H262" class="edge p" marker-end="url(#ap)"/>
+      <rect x="264" y="564" width="300" height="26" rx="6" class="t-box"/>
+      <text x="414" y="581" text-anchor="middle" class="sub">template check: same values as the DAG, random points</text>
+      <path d="M564 577 H588" class="edge t" marker-end="url(#at)"/>
+      <rect x="590" y="564" width="120" height="26" rx="6" class="d-box"/>
+      <text x="650" y="581" text-anchor="middle" class="sub">circom verifier</text>
+      <text x="724" y="581" class="sub">static library · Rust emits data</text>
           <rect x="24" y="606" width="22" height="12" rx="3" class="k-frame"/>
       <text x="54" y="616" class="note">Trusted: specification, checks</text>
       <rect x="260" y="606" width="22" height="12" rx="3" class="p-box"/>

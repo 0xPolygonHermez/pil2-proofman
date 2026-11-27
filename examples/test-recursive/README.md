@@ -20,18 +20,21 @@ single `libtest_recursive` works for every family.
 input vector, so a `test.circom` from a different circuit -- or a different recursion level -- is not
 a weaker fixture, it is a broken one: witness generation dies on an assert and every constraint that
 reads the witness then reports as failing, which points at the AIR rather than at the pairing. The
-cheap check is to count them, since the two numbers have to be equal:
+cheap check is to count them, since the two numbers have to be equal. The main's template lives in the
+library's `mains/`, so the count comes from the compiled r1cs, after `setup-recursive-test -b <build>`:
 
 ```bash
 python3 - <<'EOF'
-import re, os
-fam = "blake3"
-src = open(f"examples/test-recursive/{fam}/test.circom").read()
-main = re.search(r'component main.*?= *(\w+)\(', src).group(1)
-body = src[src.index(f"template {main}()"):]
-n = sum(eval("*".join(re.findall(r'\[(\d+)\]', m.group(2)) + ["1"]))
-        for m in re.finditer(r'signal input (\w+)((?:\[\d+\])*);', body))
-print("circom wants", n, "| bin has",
+import os, struct
+fam, build = "poseidon2", "examples/test-recursive/build"
+f = open(f"{build}/build/test.r1cs", "rb"); f.read(12)
+while True:  # the header section
+    kind, size = struct.unpack("<IQ", f.read(12))
+    if kind == 1: break
+    f.seek(size, 1)
+n8 = struct.unpack("<I", f.read(4))[0]; f.read(n8)
+_, _, pub_in, prv_in = struct.unpack("<IIII", f.read(16))
+print("circom wants", pub_in + prv_in, "| bin has",
       os.path.getsize(f"examples/test-recursive/{fam}/ag0_air0_tCompressor.bin") // 8)
 EOF
 ```
