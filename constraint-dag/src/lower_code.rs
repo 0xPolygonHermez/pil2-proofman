@@ -427,8 +427,26 @@ impl LowerCtx {
 
 impl<L> ResolvedDag<L> {
     /// `fold_roots` of the roots' values with `std_vc`, `value` reading each leaf; `None` when a leaf has none.
-    /// The DAG was validated (children precede their parents, roots in range), so indexing cannot fail.
     pub fn eval<T>(&self, mut value: impl FnMut(&L) -> Option<T>) -> Option<T>
+    where
+        T: Copy + Add<Output = T> + Sub<Output = T> + Mul<Output = T> + Neg<Output = T>,
+    {
+        let v = self.node_values(&mut value)?;
+        let vc = value(&self.vc)?;
+        fold_roots(self.roots.iter().map(|&r| v[r as usize]), |acc| vc * acc, |acc, c| acc + c)
+    }
+
+    /// Each root's value, in root order, unfolded; `None` when a leaf has none.
+    pub fn eval_roots<T>(&self, mut value: impl FnMut(&L) -> Option<T>) -> Option<Vec<T>>
+    where
+        T: Copy + Add<Output = T> + Sub<Output = T> + Mul<Output = T> + Neg<Output = T>,
+    {
+        let v = self.node_values(&mut value)?;
+        Some(self.roots.iter().map(|&r| v[r as usize]).collect())
+    }
+
+    /// The DAG was validated (children precede their parents, roots in range), so indexing cannot fail.
+    fn node_values<T>(&self, value: &mut impl FnMut(&L) -> Option<T>) -> Option<Vec<T>>
     where
         T: Copy + Add<Output = T> + Sub<Output = T> + Mul<Output = T> + Neg<Output = T>,
     {
@@ -443,7 +461,39 @@ impl<L> ResolvedDag<L> {
             };
             v.push(x);
         }
-        let vc = value(&self.vc)?;
-        fold_roots(self.roots.iter().map(|&r| v[r as usize]), |acc| vc * acc, |acc, c| acc + c)
+        Some(v)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Two roots over a public and std_vc: each root's value, and the fold is Horner over them.
+    #[test]
+    fn eval_roots_are_what_eval_folds() {
+        let t = LowerTables { challenges: vec![(3, 0)], vc: 0, n_publics: 1, ext_dim: 3, ..Default::default() };
+        let root = |node| crate::format::DagRoot { node, boundary: DagBoundary::EveryRow, label: String::new() };
+        let dag = ConstraintDag {
+            version: ConstraintDag::VERSION,
+            field: "gl".into(),
+            ext_dim: 3,
+            nodes: vec![
+                DagNode::Public { id: 0 },
+                DagNode::Const { value: "5".into() },
+                DagNode::Mul { a: 0, b: 1 },
+                DagNode::Neg { a: 0 },
+            ],
+            roots: vec![root(2), root(3)],
+        };
+        let r = LowerCtx::new(t).unwrap().resolve_dag(&dag, |_, op| Ok(op)).unwrap();
+        let value = |op: &Operand| match op {
+            Operand::Public(0) => Some(7i64),
+            Operand::Number(v) => v.parse().ok(),
+            Operand::Challenge { .. } => Some(10),
+            _ => None,
+        };
+        assert_eq!(r.eval_roots(value), Some(vec![35, -7]));
+        assert_eq!(r.eval(value), Some(10 * 35 - 7));
     }
 }
