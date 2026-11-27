@@ -222,7 +222,7 @@ mod tests {
                 _ => match rng.below(3) {
                     0 => DagNode::ProofValue { id: rng.below(2) as u32 },
                     1 => DagNode::AirValue { id: rng.below(2) as u32 },
-                    _ => DagNode::AirgroupValue { id: 0 },
+                    _ => DagNode::AirgroupValue { airgroup_id: None, id: 0 },
                 },
             };
             push(leaf, &mut nodes);

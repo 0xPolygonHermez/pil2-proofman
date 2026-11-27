@@ -344,15 +344,15 @@ fn col_resolves_to_ev_index() {
 fn leaf_references_use_the_old_vocabulary() {
     let d = dag(
         vec![
-            DagNode::Const { value: "12345".into() },     // 0
-            DagNode::Challenge { stage: 2, stage_id: 1 }, // 1
-            DagNode::Public { id: 4 },                    // 2
-            DagNode::ProofValue { id: 1 },                // 3
-            DagNode::AirValue { id: 0 },                  // 4
-            DagNode::AirgroupValue { id: 0 },             // 5
-            DagNode::Add { a: 0, b: 1 },                  // 6
-            DagNode::Add { a: 2, b: 3 },                  // 7
-            DagNode::Add { a: 4, b: 5 },                  // 8
+            DagNode::Const { value: "12345".into() },            // 0
+            DagNode::Challenge { stage: 2, stage_id: 1 },        // 1
+            DagNode::Public { id: 4 },                           // 2
+            DagNode::ProofValue { id: 1 },                       // 3
+            DagNode::AirValue { id: 0 },                         // 4
+            DagNode::AirgroupValue { airgroup_id: None, id: 0 }, // 5
+            DagNode::Add { a: 0, b: 1 },                         // 6
+            DagNode::Add { a: 2, b: 3 },                         // 7
+            DagNode::Add { a: 4, b: 5 },                         // 8
         ],
         &[6, 7, 8],
     );
@@ -380,7 +380,7 @@ fn unresolved_col_is_error() {
     );
     assert_eq!(unresolved(dag(vec![DagNode::AirValue { id: 5 }], &[0])), 0, "a value past its map");
     assert_eq!(unresolved(dag(vec![DagNode::ProofValue { id: 2 }], &[0])), 0);
-    assert_eq!(unresolved(dag(vec![DagNode::AirgroupValue { id: 1 }], &[0])), 0);
+    assert_eq!(unresolved(dag(vec![DagNode::AirgroupValue { airgroup_id: None, id: 1 }], &[0])), 0);
     assert_eq!(unresolved(dag(vec![DagNode::Public { id: 5 }], &[0])), 0, "a public past nPublics");
 }
 
@@ -423,7 +423,7 @@ fn dims_follow_the_rule() {
         DagNode::ProofValue { id: 1 }, // stage 2
         DagNode::AirValue { id: 0 },
         DagNode::AirValue { id: 1 },
-        DagNode::AirgroupValue { id: 0 }, // stage 2
+        DagNode::AirgroupValue { airgroup_id: None, id: 0 }, // stage 2
     ]
     .iter()
     .map(|n| c.dim(0, n).unwrap())

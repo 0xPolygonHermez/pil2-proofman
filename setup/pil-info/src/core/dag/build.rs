@@ -145,7 +145,7 @@ impl<'a> Builder<'a> {
             Expr::Public(id) => DagNode::Public { id: *id },
             Expr::ProofValue(id) => DagNode::ProofValue { id: *id },
             Expr::AirValue(id) => DagNode::AirValue { id: *id },
-            Expr::AirgroupValue { airgroup: None, id } => DagNode::AirgroupValue { id: *id },
+            Expr::AirgroupValue { airgroup: None, id } => DagNode::AirgroupValue { airgroup_id: None, id: *id },
             Expr::AirgroupValue { airgroup: Some(g), id } => {
                 return Err(unbuildable(format!("airgroup value {id} of airgroup {g} in an air")))
             }

@@ -13,17 +13,48 @@ pub use crate::core::ir::ColType;
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum DagNode {
-    Add { a: u32, b: u32 },
-    Sub { a: u32, b: u32 },
-    Mul { a: u32, b: u32 },
-    Neg { a: u32 },
-    Const { value: String },
-    Col { col: ColType, commit_id: Option<u32>, id: u32, offset: i64 },
-    Challenge { stage: u32, stage_id: u32 },
-    Public { id: u32 },
-    ProofValue { id: u32 },
-    AirValue { id: u32 },
-    AirgroupValue { id: u32 },
+    Add {
+        a: u32,
+        b: u32,
+    },
+    Sub {
+        a: u32,
+        b: u32,
+    },
+    Mul {
+        a: u32,
+        b: u32,
+    },
+    Neg {
+        a: u32,
+    },
+    Const {
+        value: String,
+    },
+    Col {
+        col: ColType,
+        commit_id: Option<u32>,
+        id: u32,
+        offset: i64,
+    },
+    Challenge {
+        stage: u32,
+        stage_id: u32,
+    },
+    Public {
+        id: u32,
+    },
+    ProofValue {
+        id: u32,
+    },
+    AirValue {
+        id: u32,
+    },
+    /// `airgroup_id` is `Some` exactly in a global DAG (an air reads its own airgroup's values).
+    AirgroupValue {
+        airgroup_id: Option<u32>,
+        id: u32,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -31,7 +62,12 @@ pub enum DagBoundary {
     EveryRow,
     FirstRow,
     LastRow,
-    EveryFrame { min: i64, max: i64 },
+    EveryFrame {
+        min: i64,
+        max: i64,
+    },
+    /// A global constraint: one value over the proof's publics, proof values, challenges and airgroup values.
+    Global,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -84,6 +120,10 @@ impl ConstraintDag {
         if self.field != field_name(f)? || self.ext_dim as usize != f.ext_dim() {
             return Err(DagError::NonCanonical { node: 0, why: "field or extDim is not the setup's" });
         }
+        let global = self.roots[0].boundary == DagBoundary::Global;
+        if self.roots.iter().any(|r| (r.boundary == DagBoundary::Global) != global) {
+            return Err(DagError::NonCanonical { node: 0, why: "global and air roots in one DAG" });
+        }
         if u32::try_from(self.nodes.len()).is_err() {
             return Err(DagError::NonCanonical { node: u32::MAX, why: "more than 2^32 nodes" });
         }
@@ -93,7 +133,7 @@ impl ConstraintDag {
             if n.children().iter().any(|&c| c >= i) {
                 return Err(DagError::ForwardRef { node: i });
             }
-            check_node(i, n, f)?;
+            check_node(i, n, f, global)?;
             if let Some(&of) = seen.get(n) {
                 return Err(DagError::Duplicate { node: i, of });
             }
@@ -124,7 +164,15 @@ impl ConstraintDag {
             .ok_or(DagError::Decode { what: "no constraintDag: regenerate the setup".into() })?;
         let dag = Self::deserialize(j).map_err(|e| DagError::Decode { what: format!("constraintDag: {e}") })?;
         dag.validate(f)?;
+        if dag.is_global() {
+            return Err(DagError::NonCanonical { node: 0, why: "a global DAG in an air's verifierinfo" });
+        }
         Ok(dag)
+    }
+
+    /// Whether this is a global DAG (its roots are `Global`; `validate` makes them all agree).
+    pub fn is_global(&self) -> bool {
+        self.roots.first().is_some_and(|r| r.boundary == DagBoundary::Global)
     }
 
     /// Number of operation nodes (add, sub, mul, neg).
@@ -155,7 +203,9 @@ pub fn field_name(f: &FieldCfg) -> Result<&'static str, DagError> {
     }
 }
 
-fn check_node(i: u32, n: &DagNode, f: &FieldCfg) -> Result<(), DagError> {
+/// `global`: the node is in a global DAG, which reads no column or air value and names each airgroup value's
+/// airgroup; an air's DAG names none.
+fn check_node(i: u32, n: &DagNode, f: &FieldCfg, global: bool) -> Result<(), DagError> {
     let bad = |why| Err(DagError::NonCanonical { node: i, why });
     match n {
         DagNode::Add { a, b } | DagNode::Mul { a, b } if a > b => bad("commutative children are not sorted"),
@@ -168,6 +218,10 @@ fn check_node(i: u32, n: &DagNode, f: &FieldCfg) -> Result<(), DagError> {
                 Some(v) if v < *f.modulus() => Ok(()),
                 _ => Err(DagError::ConstOutOfRange { node: i }),
             }
+        }
+        DagNode::Col { .. } | DagNode::AirValue { .. } if global => bad("a column or air value in a global DAG"),
+        DagNode::AirgroupValue { airgroup_id, .. } if airgroup_id.is_some() != global => {
+            bad("an airgroup value names its airgroup exactly in a global DAG")
         }
         DagNode::Col { col: ColType::Custom, commit_id: None, .. } => bad("custom column without commitId"),
         DagNode::Col { col: ColType::Witness | ColType::Fixed, commit_id: Some(_), .. } => {
@@ -190,6 +244,9 @@ const OP_PUBLIC: u32 = 7;
 const OP_PROOFVALUE: u32 = 8;
 const OP_AIRVALUE: u32 = 9;
 const OP_AIRGROUPVALUE: u32 = 10;
+
+const BOUNDARY_EVERY_ROW: u32 = 0;
+const BOUNDARY_GLOBAL: u32 = 1;
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -249,18 +306,21 @@ impl Serialize for NodeOut<'_> {
                 q.serialize_element(stage)?;
                 q.serialize_element(stage_id)?;
             }
-            DagNode::Public { id }
-            | DagNode::ProofValue { id }
-            | DagNode::AirValue { id }
-            | DagNode::AirgroupValue { id } => {
+            DagNode::Public { id } | DagNode::ProofValue { id } | DagNode::AirValue { id } => {
                 let op = match self.0 {
                     DagNode::Public { .. } => OP_PUBLIC,
                     DagNode::ProofValue { .. } => OP_PROOFVALUE,
-                    DagNode::AirValue { .. } => OP_AIRVALUE,
-                    _ => OP_AIRGROUPVALUE,
+                    _ => OP_AIRVALUE,
                 };
                 q.serialize_element(&op)?;
                 q.serialize_element(id)?;
+            }
+            DagNode::AirgroupValue { airgroup_id, id } => {
+                q.serialize_element(&OP_AIRGROUPVALUE)?;
+                q.serialize_element(id)?;
+                if let Some(g) = airgroup_id {
+                    q.serialize_element(g)?;
+                }
             }
         }
         q.end()
@@ -269,10 +329,12 @@ impl Serialize for NodeOut<'_> {
 
 impl Serialize for RootOut<'_> {
     fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
-        if self.0.boundary != DagBoundary::EveryRow {
-            return Err(S::Error::custom("only everyRow roots are serialisable"));
-        }
-        (self.0.node, 0u32, &self.0.label).serialize(s)
+        let boundary = match self.0.boundary {
+            DagBoundary::EveryRow => BOUNDARY_EVERY_ROW,
+            DagBoundary::Global => BOUNDARY_GLOBAL,
+            _ => return Err(S::Error::custom("only everyRow and global roots are serialisable")),
+        };
+        (self.0.node, boundary, &self.0.label).serialize(s)
     }
 }
 
@@ -342,7 +404,8 @@ impl<'de> Visitor<'de> for NodeVisitor {
             OP_PUBLIC => DagNode::Public { id: next(&mut q, "id")? },
             OP_PROOFVALUE => DagNode::ProofValue { id: next(&mut q, "id")? },
             OP_AIRVALUE => DagNode::AirValue { id: next(&mut q, "id")? },
-            OP_AIRGROUPVALUE => DagNode::AirgroupValue { id: next(&mut q, "id")? },
+            // the airgroup is the optional third field: present in a global DAG only
+            OP_AIRGROUPVALUE => DagNode::AirgroupValue { id: next(&mut q, "id")?, airgroup_id: q.next_element()? },
             _ => return Err(A::Error::custom(format!("unknown opcode {op}"))),
         };
         if q.next_element::<IgnoredAny>()?.is_some() {
@@ -359,8 +422,9 @@ impl<'de> Deserialize<'de> for ConstraintDag {
             .roots
             .into_iter()
             .map(|(node, boundary, label)| match boundary {
-                0 => Ok(DagRoot { node, boundary: DagBoundary::EveryRow, label }),
-                b => Err(D::Error::custom(format!("unknown root boundary {b} (only 0 = everyRow)"))),
+                BOUNDARY_EVERY_ROW => Ok(DagRoot { node, boundary: DagBoundary::EveryRow, label }),
+                BOUNDARY_GLOBAL => Ok(DagRoot { node, boundary: DagBoundary::Global, label }),
+                b => Err(D::Error::custom(format!("unknown root boundary {b} (0 = everyRow, 1 = global)"))),
             })
             .collect::<Result<_, _>>()?;
         Ok(ConstraintDag {
@@ -430,7 +494,7 @@ mod tests {
                 DagNode::Public { id: 5 },                                                   // 5
                 DagNode::ProofValue { id: 6 },                                               // 6
                 DagNode::AirValue { id: 7 },                                                 // 7
-                DagNode::AirgroupValue { id: 8 },                                            // 8
+                DagNode::AirgroupValue { airgroup_id: None, id: 8 },                         // 8
                 DagNode::Add { a: 0, b: 1 },                                                 // 9
                 DagNode::Sub { a: 2, b: 3 },                                                 // 10
                 DagNode::Mul { a: 4, b: 5 },                                                 // 11
@@ -564,6 +628,77 @@ mod tests {
         assert!(with("[[5,3,0,0]]").is_err(), "unknown column type");
         assert!(with("[[4,7]]").is_err(), "a constant is a decimal string");
         assert!(with("[[6,1]]").is_err(), "challenge needs two fields");
+    }
+
+    fn global_root(node: u32) -> DagRoot {
+        DagRoot { node, boundary: DagBoundary::Global, label: format!("g{node}") }
+    }
+
+    /// publics[0] * airgroup 1's value 2 - proof value 0, as one global root.
+    fn global() -> ConstraintDag {
+        dag(
+            vec![
+                DagNode::Public { id: 0 },
+                DagNode::AirgroupValue { airgroup_id: Some(1), id: 2 },
+                DagNode::Mul { a: 0, b: 1 },
+                DagNode::ProofValue { id: 0 },
+                DagNode::Sub { a: 2, b: 3 },
+            ],
+            vec![global_root(4)],
+        )
+    }
+
+    #[test]
+    fn global_json_round_trip() {
+        let g = global();
+        g.validate(&gl()).unwrap();
+        assert!(g.is_global() && !product().is_global());
+        let v = serde_json::to_value(&g).unwrap();
+        assert_eq!(v["nodes"][1], serde_json::json!([10, 2, 1]));
+        assert_eq!(v["roots"], serde_json::json!([[4, 1, "g4"]]));
+        let back: ConstraintDag = serde_json::from_value(v).unwrap();
+        assert_eq!(back, g);
+        // an air's airgroup value keeps its two-field form
+        let air = dag(vec![DagNode::AirgroupValue { airgroup_id: None, id: 3 }], vec![root(0)]);
+        assert_eq!(serde_json::to_value(&air).unwrap()["nodes"], serde_json::json!([[10, 3]]));
+    }
+
+    #[test]
+    fn rejects_global_mixed_with_air() {
+        let non_canonical = |d: ConstraintDag| matches!(d.validate(&gl()), Err(DagError::NonCanonical { .. }));
+        // an airgroup value naming its airgroup in an air
+        let mut d = global();
+        d.roots[0].boundary = DagBoundary::EveryRow;
+        assert!(non_canonical(d));
+        // a global airgroup value without its airgroup
+        let mut d = global();
+        d.nodes[1] = DagNode::AirgroupValue { airgroup_id: None, id: 2 };
+        assert!(non_canonical(d));
+        // a column or an air value in a global DAG
+        for leaf in [col(0, 0), DagNode::AirValue { id: 0 }] {
+            let mut d = global();
+            d.nodes[3] = leaf;
+            assert!(non_canonical(d));
+        }
+        // global and everyRow roots together
+        let mut d = global();
+        d.roots.push(root(2));
+        assert!(non_canonical(d));
+        // the airgroup value's extra field is refused on any other opcode, and a fourth on it
+        let with = |nodes: &str| {
+            let j = format!(r#"{{"version":1,"field":"gl","extDim":3,"nodes":{nodes},"roots":[[0,1,"r"]]}}"#);
+            serde_json::from_str::<ConstraintDag>(&j)
+        };
+        // an air's verifierinfo does not take a global DAG
+        let vi = serde_json::json!({ "constraintDag": global() });
+        assert!(matches!(ConstraintDag::from_verifierinfo(&vi, &gl()), Err(DagError::NonCanonical { .. })));
+        with("[[10,0,1]]").unwrap();
+        assert!(with("[[10,0,1,2]]").is_err());
+        assert!(with("[[7,0,1]]").is_err());
+        assert!(serde_json::from_str::<ConstraintDag>(
+            r#"{"version":1,"field":"gl","extDim":3,"nodes":[[7,0]],"roots":[[0,2,"r"]]}"#
+        )
+        .is_err());
     }
 
     #[test]

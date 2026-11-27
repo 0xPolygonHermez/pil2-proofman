@@ -202,7 +202,12 @@ impl LowerCtx {
             DagNode::Const { .. } | DagNode::Public { .. } => Ok(1),
             DagNode::ProofValue { id } => by_stage(&t.proof_values_stage, id, "proof value"),
             DagNode::AirValue { id } => by_stage(&t.air_values_stage, id, "air value"),
-            DagNode::AirgroupValue { id } => by_stage(&t.airgroup_values_stage, id, "airgroup value"),
+            DagNode::AirgroupValue { airgroup_id: None, id } => {
+                by_stage(&t.airgroup_values_stage, id, "airgroup value")
+            }
+            DagNode::AirgroupValue { airgroup_id: Some(g), id } => {
+                Err(DagError::Unresolved { node: i, what: format!("airgroup value {id} of airgroup {g} in an air") })
+            }
             _ => Ok(t.ext_dim),
         }
     }
@@ -230,8 +235,11 @@ impl LowerCtx {
                 Operand::ProofValue { id, stage: stage(&t.proof_values_stage, id, "proof value")? }
             }
             DagNode::AirValue { id } => Operand::AirValue { id, stage: stage(&t.air_values_stage, id, "air value")? },
-            DagNode::AirgroupValue { id } => {
+            DagNode::AirgroupValue { airgroup_id: None, id } => {
                 Operand::AirgroupValue { id, stage: stage(&t.airgroup_values_stage, id, "airgroup value")? }
+            }
+            DagNode::AirgroupValue { airgroup_id: Some(g), id } => {
+                return Err(miss(format!("airgroup value {id} of airgroup {g} in an air")))
             }
         };
         Ok(Some(op))
