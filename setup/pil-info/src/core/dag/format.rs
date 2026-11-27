@@ -170,6 +170,18 @@ impl ConstraintDag {
         Ok(dag)
     }
 
+    /// The `globalConstraintDag` of a globalInfo JSON, validated for `f`; `None` when the setup has no global
+    /// constraint (the key is absent).
+    pub fn from_global_info(gi: &serde_json::Value, f: &FieldCfg) -> Result<Option<Self>, DagError> {
+        let Some(j) = gi.get("globalConstraintDag") else { return Ok(None) };
+        let dag = Self::deserialize(j).map_err(|e| DagError::Decode { what: format!("globalConstraintDag: {e}") })?;
+        dag.validate(f)?;
+        if !dag.is_global() {
+            return Err(DagError::NonCanonical { node: 0, why: "globalConstraintDag has air roots" });
+        }
+        Ok(Some(dag))
+    }
+
     /// Whether this is a global DAG (its roots are `Global`; `validate` makes them all agree).
     pub fn is_global(&self) -> bool {
         self.roots.first().is_some_and(|r| r.boundary == DagBoundary::Global)

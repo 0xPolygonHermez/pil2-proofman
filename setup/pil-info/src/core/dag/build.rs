@@ -3,13 +3,15 @@
 use std::collections::BTreeMap;
 
 use crate::core::dag::format::{field_name, ColType, ConstraintDag, DagBoundary, DagError, DagNode, DagRoot};
+use crate::core::global::GlobalSystem;
 use crate::core::im::{im_column_id, ImChoice};
 use crate::core::ir::{Boundary, ConstraintSystem, Expr, ExprId};
+use crate::cfg::FieldCfg;
 
 /// Walks the substituted roots with a memo per `ExprId` (never inlines a `Ref`); validates before returning.
 pub fn build_dag(cs: &ConstraintSystem, im: &ImChoice) -> Result<ConstraintDag, DagError> {
     let promoted = im.exprs.iter().enumerate().map(|(k, &id)| (id, im_column_id(cs, k))).collect();
-    let mut b = Builder { cs, promoted, nodes: Vec::new(), index: BTreeMap::new(), memo: BTreeMap::new() };
+    let mut b = Builder::new(&cs.exprs, promoted, false);
     let mut roots = Vec::with_capacity(cs.constraints.len() + im.exprs.len());
     for c in &cs.constraints {
         let node = b.expr(&c.e)?;
@@ -23,14 +25,35 @@ pub fn build_dag(cs: &ConstraintSystem, im: &ImChoice) -> Result<ConstraintDag, 
         let node = b.node(DagNode::Sub { a: col, b: e });
         roots.push(DagRoot { node, boundary: DagBoundary::EveryRow, label: format!("im.{k} expression {id}") });
     }
+    finish(b.nodes, roots, &cs.field)
+}
+
+/// The global constraints of `gs`, one `Global` root each (labelled with its pilout line), with the air builder's
+/// memo, hash-consing and node order; `None` when there are none.
+pub fn build_global_dag(gs: &GlobalSystem) -> Result<Option<ConstraintDag>, DagError> {
+    if gs.constraints.is_empty() {
+        return Ok(None);
+    }
+    let mut b = Builder::new(&gs.exprs, BTreeMap::new(), true);
+    let mut roots = Vec::with_capacity(gs.constraints.len());
+    for c in &gs.constraints {
+        // the body, so that the root is the constraint's own expression and not a `Ref` to it
+        let body = b.target(c.expr)?;
+        let node = b.expr(body)?;
+        roots.push(DagRoot { node, boundary: DagBoundary::Global, label: c.label.clone() });
+    }
+    finish(b.nodes, roots, &gs.field).map(Some)
+}
+
+fn finish(nodes: Vec<DagNode>, roots: Vec<DagRoot>, field: &FieldCfg) -> Result<ConstraintDag, DagError> {
     let dag = ConstraintDag {
         version: ConstraintDag::VERSION,
-        field: field_name(&cs.field)?.to_string(),
-        ext_dim: cs.field.ext_dim() as u32,
-        nodes: b.nodes,
+        field: field_name(field)?.to_string(),
+        ext_dim: field.ext_dim() as u32,
+        nodes,
         roots,
     };
-    dag.validate(&cs.field)?;
+    dag.validate(field)?;
     Ok(dag)
 }
 
@@ -44,9 +67,11 @@ pub fn dag_boundary(b: &Boundary) -> DagBoundary {
 }
 
 struct Builder<'a> {
-    cs: &'a ConstraintSystem,
+    exprs: &'a [Expr],
     /// Promoted expression -> its im column id.
     promoted: BTreeMap<ExprId, u32>,
+    /// Building the global DAG: airgroup values name their airgroup, columns and air values are refused.
+    global: bool,
     nodes: Vec<DagNode>,
     index: BTreeMap<DagNode, u32>,
     /// `None` while the expression is being walked (a cycle).
@@ -54,6 +79,10 @@ struct Builder<'a> {
 }
 
 impl<'a> Builder<'a> {
+    fn new(exprs: &'a [Expr], promoted: BTreeMap<ExprId, u32>, global: bool) -> Self {
+        Builder { exprs, promoted, global, nodes: Vec::new(), index: BTreeMap::new(), memo: BTreeMap::new() }
+    }
+
     /// THE node constructor: sorts commutative children, then returns the existing equal node or appends.
     fn node(&mut self, n: DagNode) -> u32 {
         let n = match n {
@@ -71,8 +100,8 @@ impl<'a> Builder<'a> {
     }
 
     fn target(&self, id: ExprId) -> Result<&'a Expr, DagError> {
-        let cs = self.cs;
-        cs.exprs.get(id as usize).ok_or_else(|| unbuildable(format!("expression {id} out of range")))
+        let exprs = self.exprs;
+        exprs.get(id as usize).ok_or_else(|| unbuildable(format!("expression {id} out of range")))
     }
 
     /// Post-order over `e` with an explicit stack (the recursion's node order; depth is not bounded by the stack).
@@ -136,6 +165,9 @@ impl<'a> Builder<'a> {
     }
 
     fn leaf(&self, e: &Expr) -> Result<DagNode, DagError> {
+        if self.global && matches!(e, Expr::Col { .. } | Expr::AirValue(_)) {
+            return Err(unbuildable(format!("{e:?} in a global constraint")));
+        }
         Ok(match e {
             Expr::Const(c) => DagNode::Const { value: c.to_string() },
             Expr::Col { col, commit_id, id, offset } => {
@@ -145,9 +177,14 @@ impl<'a> Builder<'a> {
             Expr::Public(id) => DagNode::Public { id: *id },
             Expr::ProofValue(id) => DagNode::ProofValue { id: *id },
             Expr::AirValue(id) => DagNode::AirValue { id: *id },
-            Expr::AirgroupValue { airgroup: None, id } => DagNode::AirgroupValue { airgroup_id: None, id: *id },
+            Expr::AirgroupValue { airgroup, id } if airgroup.is_some() == self.global => {
+                DagNode::AirgroupValue { airgroup_id: *airgroup, id: *id }
+            }
             Expr::AirgroupValue { airgroup: Some(g), id } => {
                 return Err(unbuildable(format!("airgroup value {id} of airgroup {g} in an air")))
+            }
+            Expr::AirgroupValue { airgroup: None, id } => {
+                return Err(unbuildable(format!("airgroup value {id} without its airgroup in a global constraint")))
             }
             _ => return Err(unbuildable("an operation where a leaf was expected".into())),
         })

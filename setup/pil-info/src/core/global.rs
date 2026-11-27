@@ -25,6 +25,7 @@ pub struct GlobalSystem {
     /// The global hints (no airgroup, no air); an airgroup value without airgroup is a hint's.
     pub hints: Vec<Hint>,
     pub num_challenges: Vec<u32>,
+    pub num_publics: u32,
     /// Each airgroup's values.
     pub airgroup_values: Vec<Vec<AirGroupValue>>,
     /// Stage of each proof value, by id.
@@ -149,6 +150,7 @@ pub fn global_from_core(core: &PiloutCore, field: &FieldCfg) -> Result<GlobalSys
         constraints,
         hints,
         num_challenges: core.num_challenges.clone(),
+        num_publics: core.num_public_values,
         airgroup_values: core.air_groups.iter().map(|g| g.air_group_values.clone()).collect(),
         proof_value_stages,
     })

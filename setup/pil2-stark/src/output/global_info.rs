@@ -11,6 +11,7 @@ use std::path::Path;
 
 use anyhow::Result;
 use pil2_pilout::pilout as pb;
+use pil_info::core::dag::build::build_global_dag;
 use pil_info::core::global::global_from_core;
 use pil_info::core::pilout_core::PiloutCore;
 use pil_info::output::global_constraints::global_constraints_json;
@@ -77,6 +78,11 @@ pub(crate) fn global_info_json(
         "publicsMap": publics_map,
         "hash": hash,
     });
+    // The global constraints, for every verifier of them (vadcop_final, verifyGlobalConstraints); absent if none.
+    let gs = global_from_core(core, &pil_info::FieldCfg::goldilocks())?;
+    if let Some(dag) = build_global_dag(&gs).map_err(|e| anyhow::anyhow!("global constraints: {e:?}"))? {
+        global_info["globalConstraintDag"] = serde_json::to_value(&dag)?;
+    }
     // Consumer-assigned label (e.g. ZisK's); proofman only records it, the consumer checks it.
     if let Some(v) = setup_version {
         global_info["setupVersion"] = json!(v);
