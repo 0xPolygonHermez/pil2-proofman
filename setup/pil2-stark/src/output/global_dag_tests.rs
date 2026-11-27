@@ -233,6 +233,25 @@ fn fibonacci_square_matches_the_former_code() {
     assert_same_values(&gs, 0..8);
 }
 
+/// Any pilout with global constraints, e.g. ZisK's: `PIL2_GLOBAL_PILOUT=<path> cargo test ... any_pilout`.
+#[test]
+fn any_pilout_matches_the_former_code() {
+    let Ok(path) = std::env::var("PIL2_GLOBAL_PILOUT") else {
+        eprintln!("skipped: PIL2_GLOBAL_PILOUT not set");
+        return;
+    };
+    let proxy = pil2_pilout::pilout_proxy::PilOutProxy::new(&path).unwrap();
+    let gs = global_from_pilout(&proxy.pilout, &FieldCfg::goldilocks()).unwrap();
+    let dag = build_global_dag(&gs).unwrap().expect("global constraints");
+    eprintln!(
+        "{path}: {} global constraints, {} DAG roots, {} DAG ops",
+        gs.constraints.len(),
+        dag.roots.len(),
+        dag.op_count()
+    );
+    assert_same_values(&gs, 0..8);
+}
+
 #[test]
 fn no_constraints_no_dag() {
     let mut gs = random_system(1);
