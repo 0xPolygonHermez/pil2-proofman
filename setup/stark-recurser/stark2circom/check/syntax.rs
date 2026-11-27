@@ -3,7 +3,7 @@
 
 use std::collections::BTreeMap;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{bail, ensure, Context, Result};
 
 /// A `template` block: its name and its text, from the `template` line to the first line that is `}`.
 pub struct Block<'a> {
@@ -119,10 +119,21 @@ fn without_tag(stmt: &str) -> String {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Val {
     Int(i128),
+    /// A non-negative integer past i128, as canonical decimal digits: a BN128 key's root.
+    Big(String),
     List(Vec<Val>),
 }
 
 impl Val {
+    /// A decimal literal: `Int` when it fits, else `Big`.
+    pub fn decimal(s: &str) -> Result<Val> {
+        if let Ok(n) = s.parse::<i128>() {
+            return Ok(Val::Int(n));
+        }
+        ensure!(!s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()), "not an integer: `{s}`");
+        Ok(Val::Big(s.trim_start_matches('0').to_string()))
+    }
+
     pub fn ints(v: &[i128]) -> Val {
         if v.is_empty() {
             // circom has no empty arrays
@@ -149,8 +160,7 @@ impl Val {
             }
         }
         let end = s.find(|c: char| !(c.is_ascii_digit() || c == '-')).unwrap_or(s.len());
-        let n = s[..end].parse().with_context(|| format!("not an integer: `{}`", &s[..end.max(1).min(s.len())]))?;
-        Ok((Val::Int(n), &s[end..]))
+        Ok((Val::decimal(&s[..end])?, &s[end..]))
     }
 }
 
@@ -284,5 +294,14 @@ mod tests {
         assert_eq!(f["nBits"].value(1), &Val::Int(5));
         let l = Val::List(vec![Val::Int(1), Val::Int(-2), Val::List(vec![Val::Int(3)])]);
         assert_eq!(f["L"].value(7), &l);
+    }
+
+    #[test]
+    fn a_bn128_root_is_a_big_value() {
+        let r = "20608390218202144980062952588509845451522457362545788034308647633103217152625";
+        assert_eq!(Val::decimal(r).unwrap(), Val::Big(r.to_string()));
+        assert_eq!(Val::decimal(&format!("00{r}")).unwrap(), Val::Big(r.to_string()));
+        assert_eq!(Val::decimal("7").unwrap(), Val::Int(7));
+        assert!(Val::decimal("1x").is_err() && Val::decimal("").is_err());
     }
 }

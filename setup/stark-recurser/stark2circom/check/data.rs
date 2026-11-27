@@ -82,9 +82,10 @@ pub fn expected_key_data(si: &StarkInfo, u: &KeyUse) -> Result<Vec<(&'static str
     for w in &widths {
         tree_start.push(tree_start.last().unwrap() + w);
     }
+    // a BN128 key's root is one field element of ~254 bits
     let root_c = match u.const_root {
-        Some(r) => r.iter().map(|x| x.parse::<i128>().context("rootC")).collect::<Result<Vec<_>>>()?,
-        None => vec![0; 4],
+        Some(r) => Val::List(r.iter().map(|x| Val::decimal(x).context("rootC")).collect::<Result<Vec<_>>>()?),
+        None => Val::ints(&[0; 4]),
     };
     let (steps, n_queries, pow_bits) = match &ss.low_degree_test {
         LowDegreeTest::Fri(f) => (f.log_domain_sizes.clone(), f.num_queries, f.grinding_bits_queries),
@@ -126,7 +127,7 @@ pub fn expected_key_data(si: &StarkInfo, u: &KeyUse) -> Result<Vec<(&'static str
         ("AIR_VALUE_STAGE", ints(&stages(&si.airvalues_map))),
         ("AIRGROUP_VALUE_STAGE", ints(&stages(&si.airgroupvalues_map))),
         ("L0_TREE_START", ints(&tree_start)),
-        ("ROOT_C", ints(&root_c)),
+        ("ROOT_C", root_c),
         ("nSteps", int(steps.len())),
         ("STEPS", ints(&steps)),
         ("stir", int(u64::from(stir.is_some()))),
