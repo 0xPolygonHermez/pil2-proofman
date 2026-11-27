@@ -80,7 +80,8 @@ pub enum Prime {
 /// - `Plonk2Pil`: the r1cs as plonk rows, fixed columns and PIL (the generator; untrusted).
 /// - `WriteFixed`: writes those fixed columns, PIL and exec.
 /// - `CompilePil`: pil2com, PIL to pilout.
-/// - `CheckPlonk`: the trusted checker, r1cs ⇔ plonk ⇔ fixed ⇔ PIL; a mismatch fails the setup.
+/// - `CheckPlonk`: the trusted checker, AIR ⇒ r1cs: every r1cs constraint is implied by what the plonk
+///   rows, fixed columns and PIL enforce; a mismatch fails the setup.
 /// - `StarkTail`: pil_info (or `ctx.reuse`'s), starkinfo/verifierinfo/expressionsinfo, `.bin`, the
 ///   plonk `.const`. `starkinfo_only` (recursive1): just the starkinfo the const tree reads and removes.
 /// - `ConstTree`: `.const` → const tree → verkey; a missing `.const` fails when `required`.
