@@ -488,6 +488,20 @@ impl<F> Drop for ScratchGuard<'_, F> {
     }
 }
 
+/// Runs one step of an instance's witness computation, with a panic turned into the error its
+/// thread already handles.
+///
+/// A witness thread that unwinds skips everything after the step: its instance is left running,
+/// nothing cancels the proof, and whoever waits on that instance waits for good. That is the
+/// dispatcher, which no longer leaves its loop, and with it whoever joins the dispatcher.
+///
+/// The panic hook has already reported the panic itself: the error only says whose it was.
+fn catch_witness_panic(instance_id: usize, step: impl FnOnce() -> ProofmanResult<()>) -> ProofmanResult<()> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(step)).unwrap_or_else(|_| {
+        Err(ProofmanError::ProofmanError(format!("the witness of instance {instance_id} panicked")))
+    })
+}
+
 struct WitnessGuard {
     witness_tx: Sender<usize>,
     handler: Arc<Mutex<Option<std::thread::JoinHandle<()>>>>,
@@ -5922,12 +5936,9 @@ where
                     if stage_first {
                         pctx_clone.dispatch_deferred[instance_id].store(true, Ordering::SeqCst);
                     }
-                    let computed = match wcm.calculate_witness(
-                        1,
-                        &[instance_id],
-                        n_threads_witness,
-                        memory_handler_clone.as_ref(),
-                    ) {
+                    let computed = match catch_witness_panic(instance_id, || {
+                        wcm.calculate_witness(1, &[instance_id], n_threads_witness, memory_handler_clone.as_ref())
+                    }) {
                         Ok(()) => true,
                         Err(e) => {
                             cancellation_info_clone.write_recover().cancel(Some(e));
@@ -6086,12 +6097,14 @@ where
                     let _slot = slot; // back when this witness is done, whichever way it ends
                     timer_start_debug!(GENERATING_WC, "GENERATING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
                     timer_start_debug!(PREPARING_WC, "PREPARING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
-                    if let Err(e) = wcm_clone.pre_calculate_witness(
-                        1,
-                        &[instance_id],
-                        threads_to_use_collect,
-                        memory_handler_clone.as_ref(),
-                    ) {
+                    if let Err(e) = catch_witness_panic(instance_id, || {
+                        wcm_clone.pre_calculate_witness(
+                            1,
+                            &[instance_id],
+                            threads_to_use_collect,
+                            memory_handler_clone.as_ref(),
+                        )
+                    }) {
                         cancellation_info_clone.write_recover().cancel(Some(e));
                         return;
                     }
@@ -6111,12 +6124,14 @@ where
                     tokens.release(if release_tokens_after_collect { usize::MAX } else { threads_to_return });
 
                     timer_start_debug!(COMPUTING_WC, "COMPUTING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
-                    if let Err(e) = wcm_clone.calculate_witness(
-                        1,
-                        &[instance_id],
-                        threads_to_use_witness,
-                        memory_handler_clone.as_ref(),
-                    ) {
+                    if let Err(e) = catch_witness_panic(instance_id, || {
+                        wcm_clone.calculate_witness(
+                            1,
+                            &[instance_id],
+                            threads_to_use_witness,
+                            memory_handler_clone.as_ref(),
+                        )
+                    }) {
                         cancellation_info_clone.write_recover().cancel(Some(e));
                         return;
                     }
@@ -7053,6 +7068,23 @@ fn agree_on_reset(local: ProofmanResult<()>, all_ok: bool) -> ProofmanResult<()>
         Err(e) => Err(e),
         Ok(()) if all_ok => Ok(()),
         Ok(()) => Err(ProofmanError::MpiCancellation("a peer rank failed to reset before the job".into())),
+    }
+}
+
+#[cfg(test)]
+mod witness_panic_tests {
+    use super::*;
+
+    #[test]
+    fn a_step_that_panics_becomes_an_error_naming_the_instance() {
+        assert!(catch_witness_panic(7, || Ok(())).is_ok());
+        let failed = catch_witness_panic(7, || Err(ProofmanError::InvalidProof("bad".into())));
+        assert!(matches!(failed, Err(ProofmanError::InvalidProof(message)) if message == "bad"));
+        let panicked = catch_witness_panic(7, || panic!("out of rows"));
+        assert!(matches!(
+            panicked,
+            Err(ProofmanError::ProofmanError(message)) if message == "the witness of instance 7 panicked"
+        ));
     }
 }
 
