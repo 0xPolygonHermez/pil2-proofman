@@ -1,7 +1,9 @@
 #ifndef CONSTRAINT_DAG_HPP
 #define CONSTRAINT_DAG_HPP
 
-// The constraint DAG of verifierinfo.json (key constraintDag) and its evaluation at xi.
+// The constraint DAG of verifierinfo.json (key constraintDag) and its evaluation at xi; the global DAG of
+// globalInfo.json (key globalConstraintDag) and its roots' values.
+#include <algorithm>
 #include <cstdint>
 #include <map>
 #include <string>
@@ -22,6 +24,8 @@ struct DagNode
     uint64_t a, b, commitId, id;
     int64_t offset;
     Goldilocks::Element value;
+    bool hasAirgroup; // an airgroup value naming its airgroup (airgroupId): only in a global DAG
+    uint64_t airgroupId;
 };
 
 // Where a leaf's value lives in DagInputs: element offset and dimension.
@@ -167,7 +171,9 @@ struct Resolver
             return true;
         case DagKind::ProofValue: return value(proofValues, n.id, Src::ProofValue, out, "proof value", err);
         case DagKind::AirValue: return value(airValues, n.id, Src::AirValue, out, "air value", err);
-        case DagKind::AirgroupValue: return value(airgroupValues, n.id, Src::AirgroupValue, out, "airgroup value", err);
+        case DagKind::AirgroupValue:
+            if (n.hasAirgroup) return fail(err, "an airgroup value naming its airgroup in an air");
+            return value(airgroupValues, n.id, Src::AirgroupValue, out, "airgroup value", err);
         default: return fail(err, "not a leaf");
         }
     }
@@ -204,6 +210,7 @@ inline bool readConstraintDag(const json &j, ConstraintDag &out, std::string &er
         n.kind = DagKind(op);
         size_t want = arity[op];
         if (n.kind == DagKind::Col && a.size() >= 2 && a[1] == uint64_t(EvMap::custom)) want = 5;
+        if (n.kind == DagKind::AirgroupValue && a.size() == 3) want = 3; // [10, id, airgroupId] in a global DAG
         if (a.size() != want) return fail(err, at + "wrong number of fields for opcode " + std::to_string(op));
         bool ok = true;
         switch (n.kind)
@@ -226,6 +233,10 @@ inline bool readConstraintDag(const json &j, ConstraintDag &out, std::string &er
             break;
         }
         case DagKind::Challenge: ok = readU64(a[1], n.a) && readU64(a[2], n.b); break;
+        case DagKind::AirgroupValue:
+            ok = readU64(a[1], n.id) && (want == 2 || readU64(a[2], n.airgroupId));
+            n.hasAirgroup = want == 3;
+            break;
         default: ok = readU64(a[1], n.id); break;
         }
         if (!ok) return fail(err, at + "malformed field");
@@ -300,10 +311,11 @@ struct DagInputs
     Goldilocks::Element zi[3];
 };
 
-// out = Horner(roots, vc) * zi; the DAG must have passed checkConstraintDag (its resolved leaves).
-inline void evalConstraintDag(const ConstraintDag &dag, const DagInputs &in, Goldilocks::Element out[3])
+namespace constraint_dag_detail
 {
-    using namespace constraint_dag_detail;
+// Every node's value, 3 elements each; the DAG's leaves must be resolved (checkConstraintDag or checkGlobalConstraintDag).
+inline std::vector<Goldilocks::Element> evalNodes(const ConstraintDag &dag, const DagInputs &in)
+{
     using E3 = Goldilocks3::Element;
     zkassertpermanent(dag.leaves.size() == dag.nodes.size());
     std::vector<Goldilocks::Element> v(dag.nodes.size() * FIELD_EXTENSION, Goldilocks::zero());
@@ -330,6 +342,16 @@ inline void evalConstraintDag(const ConstraintDag &dag, const DagInputs &in, Gol
         const Goldilocks::Element *p = srcs[uint8_t(leaf.src)] + leaf.pos;
         for (uint64_t k = 0; k < leaf.dim; k++) d[k] = p[k]; // a base value embeds with zero high limbs
     }
+    return v;
+}
+} // namespace constraint_dag_detail
+
+// out = Horner(roots, vc) * zi; the DAG must have passed checkConstraintDag (its resolved leaves).
+inline void evalConstraintDag(const ConstraintDag &dag, const DagInputs &in, Goldilocks::Element out[3])
+{
+    using E3 = Goldilocks3::Element;
+    std::vector<Goldilocks::Element> v = constraint_dag_detail::evalNodes(dag, in);
+    auto at = [&](uint64_t k) -> E3 & { return *(E3 *)&v[k * FIELD_EXTENSION]; };
 
     // The protocol fold: acc = c_0, acc = vc*acc + c_i, then times zi.
     const E3 &vc = *(const E3 *)&in.challenges[dag.vc * FIELD_EXTENSION];
@@ -345,6 +367,105 @@ inline void evalConstraintDag(const ConstraintDag &dag, const DagInputs &in, Gol
         Goldilocks3::add(acc, acc, at(dag.rootNode[r]));
     }
     Goldilocks3::mul(*(E3 *)out, acc, *(const E3 *)in.zi);
+}
+
+// A global DAG's leaves (mirrors Rust GlobalTables): publics; challenges numbered across stages (numChallenges);
+// proof values packed by stage (1 element at stage 1, else 3); airgroup values, the airgroups one after the other,
+// 3 elements each (a stage-1 one reads its first). Every root global (boundary 1); no column or air value.
+inline bool checkGlobalConstraintDag(ConstraintDag &dag, const json &globalInfo, std::string &err)
+{
+    using namespace constraint_dag_detail;
+    dag.leaves.clear();
+    auto stageDim = [](const json &v) { return v.contains("stage") && v["stage"] == 1 ? uint64_t(1) : uint64_t(FIELD_EXTENSION); };
+    const uint64_t nPublics = globalInfo.value("nPublics", uint64_t(0));
+    std::vector<uint64_t> challengeStart, challengeCount; // per stage, stage 1 first
+    uint64_t nChallenges = 0;
+    for (const json &n : globalInfo.value("numChallenges", json::array()))
+    {
+        challengeStart.push_back(nChallenges);
+        challengeCount.push_back(n.get<uint64_t>());
+        nChallenges += n.get<uint64_t>();
+    }
+    std::vector<Resolver::Value> proofValues;
+    uint64_t pos = 0;
+    for (const json &v : globalInfo.value("proofValuesMap", json::array()))
+    {
+        proofValues.push_back({pos, stageDim(v)});
+        pos += stageDim(v);
+    }
+    std::vector<std::vector<Resolver::Value>> airgroupValues;
+    pos = 0;
+    for (const json &g : globalInfo.value("aggTypes", json::array()))
+    {
+        airgroupValues.emplace_back();
+        for (const json &v : g)
+        {
+            airgroupValues.back().push_back({pos, stageDim(v)});
+            pos += FIELD_EXTENSION;
+        }
+    }
+
+    std::vector<Leaf> leaves(dag.nodes.size(), Leaf{Src::Number, 0, 0});
+    for (uint64_t i = 0; i < dag.nodes.size(); i++)
+    {
+        const DagNode &n = dag.nodes[i];
+        const std::string at = "node " + std::to_string(i) + ": ";
+        switch (n.kind)
+        {
+        case DagKind::Add:
+        case DagKind::Sub:
+        case DagKind::Mul:
+        case DagKind::Neg: continue;
+        case DagKind::Const: leaves[i] = {Src::Number, 0, 1}; continue;
+        case DagKind::Public:
+            if (n.id >= nPublics) return fail(err, at + "public " + std::to_string(n.id) + " out of range");
+            leaves[i] = {Src::Public, n.id, 1};
+            continue;
+        case DagKind::Challenge:
+            if (n.a < 1 || n.a > challengeCount.size() || n.b >= challengeCount[n.a - 1])
+                return fail(err, at + "unknown challenge " + std::to_string(n.a) + "." + std::to_string(n.b));
+            leaves[i] = {Src::Challenge, (challengeStart[n.a - 1] + n.b) * FIELD_EXTENSION, FIELD_EXTENSION};
+            continue;
+        case DagKind::ProofValue:
+            if (n.id >= proofValues.size()) return fail(err, at + "unknown proof value " + std::to_string(n.id));
+            leaves[i] = {Src::ProofValue, proofValues[n.id].pos, proofValues[n.id].dim};
+            continue;
+        case DagKind::AirgroupValue:
+            if (!n.hasAirgroup) return fail(err, at + "a global airgroup value names its airgroup");
+            if (n.airgroupId >= airgroupValues.size() || n.id >= airgroupValues[n.airgroupId].size())
+                return fail(err, at + "unknown airgroup value " + std::to_string(n.id) + " of airgroup " + std::to_string(n.airgroupId));
+            leaves[i] = {Src::AirgroupValue, airgroupValues[n.airgroupId][n.id].pos, airgroupValues[n.airgroupId][n.id].dim};
+            continue;
+        default: return fail(err, at + "a column or air value in a global DAG");
+        }
+    }
+    for (uint64_t r = 0; r < dag.rootNode.size(); r++)
+        if (dag.rootBoundary[r] != 1) return fail(err, "root " + std::to_string(r) + " is not global");
+    dag.leaves = std::move(leaves);
+    return true;
+}
+
+// Each root's value (3 elements) and dimension (1 if every leaf under it is), for a DAG that passed
+// checkGlobalConstraintDag; in.airgroupValues is the airgroups' values one after the other, 3 elements each.
+inline void evalGlobalConstraintDag(const ConstraintDag &dag, const DagInputs &in, std::vector<Goldilocks::Element> &values,
+                                    std::vector<uint64_t> &dims)
+{
+    std::vector<Goldilocks::Element> v = constraint_dag_detail::evalNodes(dag, in);
+    std::vector<uint64_t> nodeDim(dag.nodes.size());
+    for (uint64_t i = 0; i < dag.nodes.size(); i++)
+    {
+        const DagNode &n = dag.nodes[i];
+        if (!constraint_dag_detail::isOp(n.kind)) nodeDim[i] = dag.leaves[i].dim;
+        else if (n.kind == DagKind::Neg) nodeDim[i] = nodeDim[n.a];
+        else nodeDim[i] = std::max(nodeDim[n.a], nodeDim[n.b]);
+    }
+    values.assign(dag.rootNode.size() * FIELD_EXTENSION, Goldilocks::zero());
+    dims.resize(dag.rootNode.size());
+    for (uint64_t r = 0; r < dag.rootNode.size(); r++)
+    {
+        for (uint64_t k = 0; k < FIELD_EXTENSION; k++) values[r * FIELD_EXTENSION + k] = v[dag.rootNode[r] * FIELD_EXTENSION + k];
+        dims[r] = nodeDim[dag.rootNode[r]];
+    }
 }
 
 #endif

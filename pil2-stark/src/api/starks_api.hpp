@@ -150,10 +150,7 @@ extern "C" {
 
     // Global constraints
     // =================================================================================
-    uint64_t get_n_global_constraints(void *p_globalinfo_bin);
-    void get_global_constraints_lines_sizes(void *p_globalinfo_bin, uint64_t *constraintsLinesSizes);
-    void get_global_constraints_lines(void *p_globalinfo_bin, uint8_t **constraintsLines);
-    void verify_global_constraints(char *globalInfoFile, void *globalBin, void *publics, void *challenges, void *proofValues, void **airgroupValues, void *globalConstraintsInfo);
+    void verify_global_constraints(char *globalInfoFile, uint64_t nGlobalConstraints, void *publics, void *challenges, void *proofValues, void **airgroupValues, void *globalConstraintsInfo);
     uint64_t get_hint_field_global_constraints_values(void *p_globalinfo_bin, uint64_t hintId, char *hintFieldName);
     void get_hint_field_global_constraints_sizes(char *globalInfoFile, void *p_globalinfo_bin, void *hintFieldValues, uint64_t hintId, char *hintFieldName, bool print_expression);
     void get_hint_field_global_constraints(char *globalInfoFile, void *p_globalinfo_bin, void *hintFieldValues, void *publics, void *challenges, void *proofValues, void **airgroupValues, uint64_t hintId, char *hintFieldName, bool print_expression);

@@ -351,18 +351,9 @@ extern "C" {
 
     // Global Constraints
     // ========================================================================================
-    pub fn get_n_global_constraints(p_globalinfo_bin: *mut ::std::os::raw::c_void) -> u64;
-    
-    pub fn get_global_constraints_lines_sizes(
-        p_globalinfo_bin: *mut ::std::os::raw::c_void,
-        constraintsLinesSizes: *mut u64,
-    );
-    
-    pub fn get_global_constraints_lines(p_globalinfo_bin: *mut ::std::os::raw::c_void, constraintsLines: *mut *mut u8);
-    
     pub fn verify_global_constraints(
         globalInfoFile: *mut ::std::os::raw::c_char,
-        globalBin: *mut ::std::os::raw::c_void,
+        nGlobalConstraints: u64,
         publics: *mut ::std::os::raw::c_void,
         challenges: *mut ::std::os::raw::c_void,
         proofValues: *mut ::std::os::raw::c_void,

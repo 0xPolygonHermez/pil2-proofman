@@ -103,6 +103,11 @@ pub struct GlobalInfo {
     /// Proofman never checks it -- the consumer compares it against the version it expects.
     #[serde(rename = "setupVersion", default)]
     pub setup_version: Option<String>,
+
+    /// The global constraints as a DAG, one root each (the setup's kernel builds it; the C++ verifier and
+    /// vadcop_final read it). Absent without global constraints. Here only its root labels are read.
+    #[serde(rename = "globalConstraintDag", default)]
+    pub global_constraint_dag: Option<Value>,
 }
 
 fn default_has_compressed_final() -> bool {
@@ -142,6 +147,13 @@ pub struct GlobalInfoStepsFRI {
 }
 
 impl GlobalInfo {
+    /// The label (pilout line) of each global constraint, in root order.
+    pub fn global_constraint_labels(&self) -> Vec<String> {
+        let roots = self.global_constraint_dag.as_ref().and_then(|d| d["roots"].as_array());
+        // a root is [node, boundary, label]
+        roots.into_iter().flatten().map(|r| r[2].as_str().unwrap_or_default().to_string()).collect()
+    }
+
     pub fn new(proving_key_path: &Path) -> ProofmanResult<Self> {
         tracing::debug!("··· Loading GlobalInfo JSON {}", proving_key_path.display());
 
@@ -404,5 +416,20 @@ mod aggregation_arity_tests {
         json["setupVersion"] = serde_json::json!("1.4.0");
         let gi: GlobalInfo = serde_json::from_value(json).unwrap();
         assert_eq!(gi.setup_version.as_deref(), Some("1.4.0"));
+    }
+
+    #[test]
+    fn global_constraint_labels_are_the_dag_roots() {
+        let mut json = serde_json::json!({
+            "folder_path": "", "name": "t", "airs": [[]], "air_groups": [], "curve": "None",
+            "aggTypes": [], "nPublics": 1, "numChallenges": [0],
+            "transcriptArity": 16, "aggregationArity": 2
+        });
+        let gi: GlobalInfo = serde_json::from_value(json.clone()).unwrap();
+        assert!(gi.global_constraint_labels().is_empty());
+        json["globalConstraintDag"] = serde_json::json!({"version": 1, "field": "gl", "extDim": 3,
+            "nodes": [[7, 0], [3, 0]], "roots": [[0, 1, "a.pil:3"], [1, 1, "a.pil:4"]]});
+        let gi: GlobalInfo = serde_json::from_value(json).unwrap();
+        assert_eq!(gi.global_constraint_labels(), ["a.pil:3", "a.pil:4"]);
     }
 }

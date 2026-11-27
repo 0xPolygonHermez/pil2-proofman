@@ -225,3 +225,52 @@ INSTANTIATE_TEST_SUITE_P(ConstraintDag, ConstraintDagRejects, testing::ValuesIn(
                          [](const testing::TestParamInfo<RejectCase> &i) { return std::string(i.param.name); });
 
 } // namespace
+
+// A global DAG: c0 = g(1,0) * ch(2,1) + g(0,0) (a stage-1 value, its first element), c1 = p1 - pv0 (stage 1).
+// numChallenges [1, 2]: challenge 2.1 is the third; airgroup 0 holds two values, so airgroup 1's starts at 6.
+TEST(ConstraintDag, GlobalRootsMatchDirectFormula)
+{
+    const json gi = json::parse(R"({"nPublics": 2, "numChallenges": [1, 2],
+        "proofValuesMap": [{"stage": 1}, {"stage": 2}],
+        "aggTypes": [[{"aggType": 0, "stage": 1}, {"aggType": 0, "stage": 2}], [{"aggType": 1, "stage": 2}]]})");
+    const std::string nodes = "[[10,0,0],[10,0,1],[6,2,1],[2,1,2],[0,0,3],[7,1],[8,0],[1,5,6]]";
+    ConstraintDag dag;
+    std::string err;
+    ASSERT_TRUE(readConstraintDag(makeJson(nodes, "[[4,1,\"c0\"],[7,1,\"c1\"]]"), dag, err)) << err;
+    ASSERT_TRUE(checkGlobalConstraintDag(dag, gi, err)) << err;
+
+    std::mt19937_64 rng(11);
+    auto fill = [&](std::vector<GE> &v, size_t n) {
+        v.resize(n);
+        for (auto &e : v) e = Goldilocks::fromU64(rng() % GOLDILOCKS_PRIME);
+    };
+    std::vector<GE> publics, challenges, proofValues, airgroupValues;
+    fill(publics, 2);
+    fill(challenges, 3 * 3);
+    fill(proofValues, 1 + 3);
+    fill(airgroupValues, 3 * 3);
+    DagInputs in{nullptr, challenges.data(), publics.data(), proofValues.data(), nullptr, airgroupValues.data(), {}};
+    std::vector<GE> values;
+    std::vector<uint64_t> dims;
+    evalGlobalConstraintDag(dag, in, values, dims);
+
+    V3 c0 = add(mul(e3(&airgroupValues[6]), e3(&challenges[6])), base(airgroupValues[0]));
+    V3 c1 = sub(base(publics[1]), base(proofValues[0]));
+    EXPECT_TRUE(same(e3(&values[0]), c0));
+    EXPECT_TRUE(same(e3(&values[3]), c1));
+    EXPECT_EQ(dims, (std::vector<uint64_t>{3, 1}));
+
+    // the air checker refuses it, and the global checker refuses what it cannot place
+    StarkInfo si = makeInfo();
+    ConstraintDag air;
+    EXPECT_FALSE(readConstraintDag(makeJson(nodes, "[[4,1,\"c0\"],[7,1,\"c1\"]]"), air, err) && checkConstraintDag(air, si, err));
+    for (const char *bad : {"[[6,1,1]]", "[[6,3,0]]", "[[10,1,1]]", "[[10,2,0]]", "[[10,0]]", "[[7,2]]", "[[5,0,0,0]]", "[[9,0]]"})
+    {
+        ConstraintDag d;
+        ASSERT_TRUE(readConstraintDag(makeJson(bad, "[[0,1,\"r\"]]"), d, err)) << bad << ": " << err;
+        EXPECT_FALSE(checkGlobalConstraintDag(d, gi, err)) << bad;
+    }
+    ConstraintDag everyRow;
+    ASSERT_TRUE(readConstraintDag(makeJson("[[7,0]]", "[[0,0,\"r\"]]"), everyRow, err));
+    EXPECT_FALSE(checkGlobalConstraintDag(everyRow, gi, err));
+}

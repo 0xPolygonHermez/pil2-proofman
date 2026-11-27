@@ -791,26 +791,11 @@ void verify_constraints_cpu(void *pSetupCtx, uint64_t airgroupId, uint64_t airId
 
 // Global Constraints
 // =================================================================================
-uint64_t get_n_global_constraints(void* p_globalinfo_bin)
-{
-    return getNumberGlobalConstraints(*(ExpressionsBin*)p_globalinfo_bin);
-}
-
-void get_global_constraints_lines_sizes(void* p_globalinfo_bin, uint64_t *constraintsLinesSizes)
-{
-    return getGlobalConstraintsLinesSizes(*(ExpressionsBin*)p_globalinfo_bin, constraintsLinesSizes);
-}
-
-void get_global_constraints_lines(void* p_globalinfo_bin, uint8_t **constraintsLines)
-{
-    return getGlobalConstraintsLines(*(ExpressionsBin*)p_globalinfo_bin, constraintsLines);
-}
-
-void verify_global_constraints(char* globalInfoFile, void* p_globalinfo_bin, void *publics, void *challenges, void *proofValues, void **airgroupValues, void *globalConstraintsInfo) {
+void verify_global_constraints(char* globalInfoFile, uint64_t nGlobalConstraints, void *publics, void *challenges, void *proofValues, void **airgroupValues, void *globalConstraintsInfo) {
     json globalInfo;
     file2json(globalInfoFile, globalInfo);
 
-    verifyGlobalConstraints(globalInfo, *(ExpressionsBin*)p_globalinfo_bin, (Goldilocks::Element *)publics, (Goldilocks::Element *)challenges, (Goldilocks::Element *)proofValues, (Goldilocks::Element **)airgroupValues, (GlobalConstraintInfo *)globalConstraintsInfo);
+    verifyGlobalConstraints(globalInfo, nGlobalConstraints, (Goldilocks::Element *)publics, (Goldilocks::Element *)challenges, (Goldilocks::Element *)proofValues, (Goldilocks::Element **)airgroupValues, (GlobalConstraintInfo *)globalConstraintsInfo);
 }
  
 uint64_t get_hint_field_global_constraints_values(void* p_globalinfo_bin, uint64_t hintId, char* hintFieldName) {

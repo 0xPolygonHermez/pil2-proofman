@@ -1,11 +1,9 @@
 use proofman_fields::PrimeField64;
-use proofman_starks_lib_c::{
-    get_n_constraints_c, get_n_global_constraints_c, verify_global_constraints_c, verify_constraints_c,
-};
+use proofman_starks_lib_c::{get_n_constraints_c, verify_global_constraints_c, verify_constraints_c};
 use std::cmp;
 use proofman_common::{
-    get_constraints_lines_str, get_global_constraints_lines_str, skip_prover_instance, ConstraintInfo, ConstraintInfoC,
-    DebugInfo, GlobalConstraintInfo, ProofCtx, ProofmanError, ProofmanResult, SetupCtx,
+    get_constraints_lines_str, skip_prover_instance, ConstraintInfo, ConstraintInfoC, DebugInfo, GlobalConstraintInfo,
+    ProofCtx, ProofmanError, ProofmanResult, SetupCtx,
 };
 
 use std::os::raw::c_void;
@@ -95,8 +93,8 @@ pub fn verify_global_constraints_proof<F: PrimeField64>(
         .map(|inner_vec| inner_vec.as_ptr() as *mut F) // Get a raw pointer to each inner Vec
         .collect();
 
-    let n_global_constraints = get_n_global_constraints_c(sctx.get_global_bin());
-    let mut global_constraints = vec![GlobalConstraintInfo::default(); n_global_constraints as usize];
+    let global_constraints_lines = pctx.global_info.global_constraint_labels();
+    let mut global_constraints = vec![GlobalConstraintInfo::default(); global_constraints_lines.len()];
 
     if !debug_info.debug_global_instances.is_empty() {
         global_constraints.iter_mut().for_each(|constraint| constraint.skip = true);
@@ -107,7 +105,7 @@ pub fn verify_global_constraints_proof<F: PrimeField64>(
 
     verify_global_constraints_c(
         sctx.get_global_info_file().as_str(),
-        sctx.get_global_bin(),
+        global_constraints.len() as u64,
         pctx.get_publics_ptr(),
         pctx.get_challenges_ptr(),
         pctx.get_proof_values_ptr(),
@@ -116,8 +114,6 @@ pub fn verify_global_constraints_proof<F: PrimeField64>(
     );
 
     let mut valid_global_constraints = true;
-
-    let global_constraints_lines = get_global_constraints_lines_str(sctx);
 
     for idx in 0..global_constraints.len() {
         let constraint = global_constraints[idx];

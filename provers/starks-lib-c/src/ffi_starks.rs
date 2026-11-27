@@ -800,25 +800,9 @@ pub fn verify_constraints_c(
     }
 }
 
-pub fn get_n_global_constraints_c(p_global_constraints_bin: *mut c_void) -> u64 {
-    unsafe { get_n_global_constraints(p_global_constraints_bin) }
-}
-
-pub fn get_global_constraints_lines_sizes_c(p_global_constraints_bin: *mut c_void, global_constraints_sizes: *mut u64) {
-    unsafe {
-        get_global_constraints_lines_sizes(p_global_constraints_bin, global_constraints_sizes);
-    }
-}
-
-pub fn get_global_constraints_lines_c(p_global_constraints_bin: *mut c_void, global_constraints_lines: *mut *mut u8) {
-    unsafe {
-        get_global_constraints_lines(p_global_constraints_bin, global_constraints_lines);
-    }
-}
-
 pub fn verify_global_constraints_c(
     global_info_file: &str,
-    p_global_constraints_bin: *mut c_void,
+    n_global_constraints: u64,
     publics: *mut u8,
     challenges: *mut u8,
     proof_values: *mut u8,
@@ -831,7 +815,7 @@ pub fn verify_global_constraints_c(
     unsafe {
         verify_global_constraints(
             global_info_file_ptr,
-            p_global_constraints_bin,
+            n_global_constraints,
             publics as *mut std::os::raw::c_void,
             challenges as *mut std::os::raw::c_void,
             proof_values as *mut std::os::raw::c_void,

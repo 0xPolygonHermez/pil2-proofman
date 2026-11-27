@@ -2,6 +2,7 @@
 #define GLOBAL_CONSTRAINTS_HPP
 #include "goldilocks_base_field.hpp"
 #include <nlohmann/json.hpp>
+#include "constraint_dag.hpp"
 
 using json = nlohmann::json;
 
@@ -78,57 +79,52 @@ void calculateGlobalExpression(json& globalInfo, Goldilocks::Element* dest, Gold
 }
 
 
-void verifyGlobalConstraint(json& globalInfo, uint64_t constraintId, Goldilocks::Element* publics, Goldilocks::Element* challenges, Goldilocks::Element* proofValues, Goldilocks::Element** airgroupValues, ParserArgs &parserArgs, ParserParams &parserParams, GlobalConstraintInfo& globalConstraintInfo) {
-
-    globalConstraintInfo.id = constraintId;
-    globalConstraintInfo.valid = true;
-
-    Goldilocks::Element dest[parserParams.destDim];
-
-    calculateGlobalExpression(globalInfo, dest, publics, challenges, proofValues, airgroupValues, parserArgs, parserParams);
-
-    if(parserParams.destDim == 1) {
-        globalConstraintInfo.dim = parserParams.destDim;
-        globalConstraintInfo.value[0] = Goldilocks::toU64(dest[0]);
-        globalConstraintInfo.value[1] = 0;
-        globalConstraintInfo.value[2] = 0;
-        if(globalConstraintInfo.value[0] != 0) globalConstraintInfo.valid = false;
-    } else {
-        globalConstraintInfo.dim = parserParams.destDim;
-        globalConstraintInfo.value[0] = Goldilocks::toU64(dest[0]);
-        globalConstraintInfo.value[1] = Goldilocks::toU64(dest[1]);
-        globalConstraintInfo.value[2] = Goldilocks::toU64(dest[2]);
-        if(globalConstraintInfo.value[0] != 0 || globalConstraintInfo.value[1] != 0 || globalConstraintInfo.value[2] != 0) globalConstraintInfo.valid = false;
-    }
-}
-
-uint64_t getNumberGlobalConstraints(ExpressionsBin &globalConstraintsBin) {
-    std::vector<ParserParams> globalConstraints = globalConstraintsBin.constraintsInfoDebug;
-    return globalConstraints.size();
-}
-
-void getGlobalConstraintsLinesSizes(ExpressionsBin &globalConstraintsBin, uint64_t* constraintsLinesSizes) {
-    std::vector<ParserParams> globalConstraints = globalConstraintsBin.constraintsInfoDebug;
-    for(uint64_t i = 0; i <globalConstraints.size(); ++i) {
-        constraintsLinesSizes[i] = globalConstraintsBin.constraintsInfoDebug[i].line.size();
-    }
-}
-
-void getGlobalConstraintsLines(ExpressionsBin &globalConstraintsBin, uint8_t** constraintsLines) {
-    std::vector<ParserParams> globalConstraints = globalConstraintsBin.constraintsInfoDebug;
-     for(uint64_t i = 0; i < globalConstraintsBin.constraintsInfoDebug.size(); ++i) {
-        std::memcpy(constraintsLines[i], globalConstraints[i].line.data(), globalConstraints[i].line.size());
-    }
-}
-   
-
-void verifyGlobalConstraints(json& globalInfo, ExpressionsBin &globalConstraintsBin, Goldilocks::Element* publicInputs, Goldilocks::Element* challenges, Goldilocks::Element* proofValues, Goldilocks::Element** airgroupValues, GlobalConstraintInfo *globalConstraintsInfo)
+// The global constraints of globalInfo's globalConstraintDag (none without it), each root checked to be zero.
+// globalConstraintsInfo has nConstraints entries, one per root; airgroupValues[g] holds airgroup g's values, 3
+// elements each.
+void verifyGlobalConstraints(json& globalInfo, uint64_t nConstraints, Goldilocks::Element* publicInputs, Goldilocks::Element* challenges, Goldilocks::Element* proofValues, Goldilocks::Element** airgroupValues, GlobalConstraintInfo *globalConstraintsInfo)
 {
-    std::vector<ParserParams> globalConstraints = globalConstraintsBin.constraintsInfoDebug;
+    if (!globalInfo.contains("globalConstraintDag")) {
+        if (nConstraints != 0) {
+            zklog.error("globalInfo has no globalConstraintDag but " + std::to_string(nConstraints) + " global constraints were expected");
+            exitProcess();
+        }
+        return;
+    }
+    ConstraintDag dag;
+    std::string err;
+    if (!readConstraintDag(globalInfo["globalConstraintDag"], dag, err) || !checkGlobalConstraintDag(dag, globalInfo, err)) {
+        zklog.error("globalConstraintDag: " + err);
+        exitProcess();
+    }
+    if (dag.rootNode.size() != nConstraints) {
+        zklog.error("globalConstraintDag has " + std::to_string(dag.rootNode.size()) + " roots, " + std::to_string(nConstraints) + " expected");
+        exitProcess();
+    }
 
-    for(uint64_t i = 0; i < globalConstraints.size(); ++i) {
-        if(!globalConstraintsInfo[i].skip) {
-            verifyGlobalConstraint(globalInfo, i, publicInputs, challenges, proofValues, airgroupValues, globalConstraintsBin.expressionsBinArgsConstraints, globalConstraints[i], globalConstraintsInfo[i]);
+    std::vector<Goldilocks::Element> airgroupvalues;
+    for(uint64_t i = 0; i < globalInfo["aggTypes"].size(); ++i) {
+        uint64_t n = globalInfo["aggTypes"][i].size() * FIELD_EXTENSION;
+        airgroupvalues.insert(airgroupvalues.end(), airgroupValues[i], airgroupValues[i] + n);
+    }
+    DagInputs in{};
+    in.challenges = challenges;
+    in.publics = publicInputs;
+    in.proofValues = proofValues;
+    in.airgroupValues = airgroupvalues.data();
+
+    std::vector<Goldilocks::Element> values;
+    std::vector<uint64_t> dims;
+    evalGlobalConstraintDag(dag, in, values, dims);
+    for(uint64_t i = 0; i < nConstraints; ++i) {
+        GlobalConstraintInfo &info = globalConstraintsInfo[i];
+        if(info.skip) continue;
+        info.id = i;
+        info.dim = dims[i];
+        info.valid = true;
+        for(uint64_t k = 0; k < FIELD_EXTENSION; ++k) {
+            info.value[k] = Goldilocks::toU64(values[i * FIELD_EXTENSION + k]);
+            if(info.value[k] != 0) info.valid = false;
         }
     }
 }

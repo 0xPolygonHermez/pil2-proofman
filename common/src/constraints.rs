@@ -1,8 +1,5 @@
 use proofman_fields::PrimeField64;
-use proofman_starks_lib_c::{
-    get_n_constraints_c, get_constraints_lines_sizes_c, get_constraints_lines_c, get_n_global_constraints_c,
-    get_global_constraints_lines_sizes_c, get_global_constraints_lines_c,
-};
+use proofman_starks_lib_c::{get_n_constraints_c, get_constraints_lines_sizes_c, get_constraints_lines_c};
 
 use crate::{ProofmanResult, SetupCtx};
 
@@ -88,29 +85,4 @@ pub fn get_constraints_lines_str<F: PrimeField64>(
     }
 
     Ok(constraints_lines_str)
-}
-
-pub fn get_global_constraints_lines_str<F: PrimeField64>(sctx: &SetupCtx<F>) -> Vec<String> {
-    let n_global_constraints = get_n_global_constraints_c(sctx.get_global_bin());
-
-    let mut global_constraints_sizes = vec![0u64; n_global_constraints as usize];
-
-    get_global_constraints_lines_sizes_c(sctx.get_global_bin(), global_constraints_sizes.as_mut_ptr());
-
-    let mut global_constraints_lines = vec![Vec::new(); n_global_constraints as usize];
-    for i in 0..n_global_constraints as usize {
-        global_constraints_lines[i] = vec![0u8; global_constraints_sizes[i] as usize];
-    }
-
-    get_global_constraints_lines_c(
-        sctx.get_global_bin(),
-        global_constraints_lines.iter_mut().map(|v| v.as_mut_ptr()).collect::<Vec<_>>().as_mut_ptr(),
-    );
-
-    let mut global_constraints_lines_str = Vec::new();
-    for global_constraint_line in global_constraints_lines {
-        global_constraints_lines_str.push(std::str::from_utf8(&global_constraint_line).unwrap().to_string());
-    }
-
-    global_constraints_lines_str
 }
