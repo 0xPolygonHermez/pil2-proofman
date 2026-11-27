@@ -336,7 +336,7 @@ impl Bn128Code {
     }
 
     /// `x + 0`, `0 + x` or `x - 0` at x's own dimension: the op's operand that is x itself.
-    fn identity_operand<'a>(i: &'a Instr) -> Result<Option<&'a Src>> {
+    fn identity_operand(i: &Instr) -> Result<Option<&Src>> {
         let [a, b] = &i.src[..] else { return Ok(None) };
         let candidates: &[(&Src, &Src)] = match i.op {
             CodeOp::Add => &[(a, b), (b, a)],
