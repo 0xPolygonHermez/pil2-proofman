@@ -68,6 +68,17 @@ impl FieldCfg {
     }
 }
 
+impl From<&FieldCfg> for constraint_dag::DagField {
+    /// `goldilocks` and `bn128` are the only field configurations.
+    fn from(f: &FieldCfg) -> Self {
+        if f.ext_dim == 1 {
+            constraint_dag::DagField::Bn128
+        } else {
+            constraint_dag::DagField::Goldilocks
+        }
+    }
+}
+
 /// How the degree search that picks the intermediate polynomials is bounded and scored.
 ///
 /// Both policies run the same search: for every maximum degree `d` from 2 up to the bound, find the

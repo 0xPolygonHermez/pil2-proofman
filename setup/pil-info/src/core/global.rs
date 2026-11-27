@@ -32,6 +32,19 @@ pub struct GlobalSystem {
     pub proof_value_stages: Vec<u32>,
 }
 
+/// What the global DAG's leaves resolve against.
+impl From<&GlobalSystem> for constraint_dag::GlobalTables {
+    fn from(gs: &GlobalSystem) -> Self {
+        constraint_dag::GlobalTables {
+            n_publics: gs.num_publics,
+            num_challenges: gs.num_challenges.clone(),
+            proof_values_stage: gs.proof_value_stages.clone(),
+            airgroup_values_stage: gs.airgroup_values.iter().map(|g| g.iter().map(|v| v.stage).collect()).collect(),
+            ext_dim: gs.field.ext_dim(),
+        }
+    }
+}
+
 /// What the global operands are checked against.
 struct Tables<'a> {
     core: &'a PiloutCore,

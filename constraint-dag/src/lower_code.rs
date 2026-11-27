@@ -1,12 +1,14 @@
 //! DAG -> straight-line verifier code; `LowerCtx` is the only column/challenge/value resolver.
 
-use std::cell::RefCell;
-use std::collections::BTreeMap;
+use alloc::collections::BTreeMap;
+use alloc::format;
+use alloc::string::String;
+use alloc::vec;
+use alloc::vec::Vec;
+use core::cell::RefCell;
 
-use crate::core::dag::format::{ConstraintDag, DagBoundary, DagError, DagNode};
-use crate::core::fold::fold_roots;
-use crate::cfg::FieldCfg;
-use crate::core::ir::{value_dim, ColRef, ColType};
+use crate::format::{ColRef, ColType, ConstraintDag, DagBoundary, DagError, DagField, DagNode};
+use crate::{fold_roots, value_dim};
 
 /// What a DAG's references resolve against; `ev_map[k]` is evaluation `k`, `challenges[k]` is `(stage, stage_id)`.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -108,7 +110,7 @@ impl LowerTables {
         challenges: &[(u32, u32, &str)],
         n_publics: u32,
         [air_values_stage, proof_values_stage, airgroup_values_stage]: ValueStages,
-        field: &FieldCfg,
+        field: impl Into<DagField>,
     ) -> Result<Self, DagError> {
         Ok(LowerTables {
             vc: std_vc_index(challenges.iter().map(|c| c.2))?,
@@ -118,7 +120,7 @@ impl LowerTables {
             air_values_stage,
             proof_values_stage,
             airgroup_values_stage,
-            ext_dim: field.ext_dim(),
+            ext_dim: field.into().ext_dim(),
         })
     }
 }
@@ -165,7 +167,7 @@ impl VerifierCode {
 impl LowerCtx {
     /// Rejects a repeated evMap entry or challenge.
     pub fn new(t: LowerTables) -> Result<Self, DagError> {
-        fn index<K: Ord + Copy + std::fmt::Debug>(keys: &[K], what: &str) -> Result<BTreeMap<K, usize>, DagError> {
+        fn index<K: Ord + Copy + core::fmt::Debug>(keys: &[K], what: &str) -> Result<BTreeMap<K, usize>, DagError> {
             let mut m = BTreeMap::new();
             for (i, k) in keys.iter().enumerate() {
                 if m.insert(*k, i).is_some() {

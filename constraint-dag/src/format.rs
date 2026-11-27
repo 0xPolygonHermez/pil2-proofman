@@ -1,15 +1,71 @@
 //! Constraint DAG types, validation and JSON codec.
 
-use std::collections::BTreeMap;
-use std::fmt;
+use alloc::collections::BTreeMap;
+use alloc::format;
+use alloc::string::String;
+use alloc::vec;
+use alloc::vec::Vec;
+use core::fmt;
 
-use num_bigint::BigUint;
 use serde::de::{Error as _, IgnoredAny, SeqAccess, Visitor};
 use serde::ser::{Error as _, SerializeSeq};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-use crate::cfg::FieldCfg;
-pub use crate::core::ir::ColType;
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum ColType {
+    Witness,
+    Fixed,
+    Custom,
+}
+
+/// One column read: the key of the evMap, the DAG leaves and `Env`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ColRef {
+    pub col: ColType,
+    pub commit_id: Option<u32>,
+    pub id: u32,
+    pub offset: i64,
+}
+
+/// The fields the DAG format names (its `field` key).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DagField {
+    /// Goldilocks with its cubic extension.
+    Goldilocks,
+    /// The BN128 scalar field, with no extension.
+    Bn128,
+}
+
+impl DagField {
+    /// The DAG's `field` key.
+    pub fn name(self) -> &'static str {
+        match self {
+            DagField::Goldilocks => "gl",
+            DagField::Bn128 => "bn128",
+        }
+    }
+
+    pub fn ext_dim(self) -> usize {
+        match self {
+            DagField::Goldilocks => 3,
+            DagField::Bn128 => 1,
+        }
+    }
+
+    /// The modulus in decimal.
+    pub fn modulus(self) -> &'static str {
+        match self {
+            DagField::Goldilocks => "18446744069414584321",
+            DagField::Bn128 => "21888242871839275222246405745257275088548364400416034343698204186575808495617",
+        }
+    }
+
+    /// Whether a canonical decimal (digits, no leading zero) is below the modulus.
+    fn below_modulus(self, canonical: &str) -> bool {
+        let p = self.modulus();
+        canonical.len() < p.len() || (canonical.len() == p.len() && canonical < p)
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum DagNode {
@@ -110,14 +166,15 @@ impl ConstraintDag {
     pub const VERSION: u32 = 1;
 
     /// Every canonical-form rule except the node order.
-    pub fn validate(&self, f: &FieldCfg) -> Result<(), DagError> {
+    pub fn validate(&self, f: impl Into<DagField>) -> Result<(), DagError> {
+        let f = f.into();
         if self.version != Self::VERSION {
             return Err(DagError::Version { found: self.version });
         }
         if self.nodes.is_empty() || self.roots.is_empty() {
             return Err(DagError::Empty);
         }
-        if self.field != field_name(f)? || self.ext_dim as usize != f.ext_dim() {
+        if self.field != f.name() || self.ext_dim as usize != f.ext_dim() {
             return Err(DagError::NonCanonical { node: 0, why: "field or extDim is not the setup's" });
         }
         let global = self.roots[0].boundary == DagBoundary::Global;
@@ -158,21 +215,32 @@ impl ConstraintDag {
     }
 
     /// The `constraintDag` of a verifierinfo JSON, validated for `f`: every consumer's one loader.
-    pub fn from_verifierinfo(vi: &serde_json::Value, f: &FieldCfg) -> Result<Self, DagError> {
+    pub fn from_verifierinfo(vi: &serde_json::Value, f: impl Into<DagField>) -> Result<Self, DagError> {
         let j = vi
             .get("constraintDag")
             .ok_or(DagError::Decode { what: "no constraintDag: regenerate the setup".into() })?;
         let dag = Self::deserialize(j).map_err(|e| DagError::Decode { what: format!("constraintDag: {e}") })?;
-        dag.validate(f)?;
-        if dag.is_global() {
+        dag.checked_air(f)
+    }
+
+    /// An air's DAG (verifierinfo's `constraintDag`) from its JSON text, validated for `f`.
+    pub fn from_air_json(json: &str, f: impl Into<DagField>) -> Result<Self, DagError> {
+        let dag: Self =
+            serde_json::from_str(json).map_err(|e| DagError::Decode { what: format!("constraintDag: {e}") })?;
+        dag.checked_air(f)
+    }
+
+    fn checked_air(self, f: impl Into<DagField>) -> Result<Self, DagError> {
+        self.validate(f)?;
+        if self.is_global() {
             return Err(DagError::NonCanonical { node: 0, why: "a global DAG in an air's verifierinfo" });
         }
-        Ok(dag)
+        Ok(self)
     }
 
     /// The `globalConstraintDag` of a globalInfo JSON, validated for `f`; `None` when the setup has no global
     /// constraint (the key is absent).
-    pub fn from_global_info(gi: &serde_json::Value, f: &FieldCfg) -> Result<Option<Self>, DagError> {
+    pub fn from_global_info(gi: &serde_json::Value, f: impl Into<DagField>) -> Result<Option<Self>, DagError> {
         let Some(j) = gi.get("globalConstraintDag") else { return Ok(None) };
         let dag = Self::deserialize(j).map_err(|e| DagError::Decode { what: format!("globalConstraintDag: {e}") })?;
         dag.validate(f)?;
@@ -204,20 +272,9 @@ impl DagNode {
     }
 }
 
-/// The DAG's `field` key for a field configuration; a field the format does not name is an error.
-pub fn field_name(f: &FieldCfg) -> Result<&'static str, DagError> {
-    if *f == FieldCfg::goldilocks() {
-        Ok("gl")
-    } else if *f == FieldCfg::bn128() {
-        Ok("bn128")
-    } else {
-        Err(DagError::NonCanonical { node: 0, why: "a field the DAG format does not name" })
-    }
-}
-
 /// `global`: the node is in a global DAG, which reads no column or air value and names each airgroup value's
 /// airgroup; an air's DAG names none.
-fn check_node(i: u32, n: &DagNode, f: &FieldCfg, global: bool) -> Result<(), DagError> {
+fn check_node(i: u32, n: &DagNode, f: DagField, global: bool) -> Result<(), DagError> {
     let bad = |why| Err(DagError::NonCanonical { node: i, why });
     match n {
         DagNode::Add { a, b } | DagNode::Mul { a, b } if a > b => bad("commutative children are not sorted"),
@@ -226,9 +283,10 @@ fn check_node(i: u32, n: &DagNode, f: &FieldCfg, global: bool) -> Result<(), Dag
             if !digits || (value.len() > 1 && value.starts_with('0')) {
                 return bad("constant is not a canonical decimal");
             }
-            match BigUint::parse_bytes(value.as_bytes(), 10) {
-                Some(v) if v < *f.modulus() => Ok(()),
-                _ => Err(DagError::ConstOutOfRange { node: i }),
+            if f.below_modulus(value) {
+                Ok(())
+            } else {
+                Err(DagError::ConstOutOfRange { node: i })
             }
         }
         DagNode::Col { .. } | DagNode::AirValue { .. } if global => bad("a column or air value in a global DAG"),
@@ -386,7 +444,7 @@ struct NodeVisitor;
 impl<'de> Visitor<'de> for NodeVisitor {
     type Value = NodeIn;
 
-    fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("a constraint DAG node [opcode, ...fields]")
     }
 
@@ -452,11 +510,13 @@ impl<'de> Deserialize<'de> for ConstraintDag {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::string::ToString;
 
-    fn gl() -> FieldCfg {
-        FieldCfg::goldilocks()
+    fn gl() -> DagField {
+        DagField::Goldilocks
     }
     const GL_P: &str = "18446744069414584321";
+    const BN_R_MINUS_ONE: &str = "21888242871839275222246405745257275088548364400416034343698204186575808495616";
 
     fn col(id: u32, offset: i64) -> DagNode {
         DagNode::Col { col: ColType::Witness, commit_id: None, id, offset }
@@ -493,7 +553,7 @@ mod tests {
         let labels: Vec<(u32, &str)> = d.roots.iter().map(|r| (r.node, r.label.as_str())).collect();
         assert_eq!(labels, vec![(2, "c0 line 12"), (4, "im.0 ImPol")]);
         assert!(d.roots.iter().all(|r| r.boundary == DagBoundary::EveryRow));
-        d.validate(&gl()).unwrap();
+        d.validate(gl()).unwrap();
 
         // every node kind, with its normative array shape
         let all = dag(
@@ -529,36 +589,36 @@ mod tests {
 
     #[test]
     fn rejects_empty() {
-        assert_eq!(dag(vec![], vec![]).validate(&gl()), Err(DagError::Empty));
-        assert_eq!(dag(vec![col(0, 0)], vec![]).validate(&gl()), Err(DagError::Empty));
-        product().validate(&gl()).unwrap();
+        assert_eq!(dag(vec![], vec![]).validate(gl()), Err(DagError::Empty));
+        assert_eq!(dag(vec![col(0, 0)], vec![]).validate(gl()), Err(DagError::Empty));
+        product().validate(gl()).unwrap();
     }
 
     #[test]
     fn rejects_wrong_version() {
         let mut d = product();
         d.version = 2;
-        assert_eq!(d.validate(&gl()), Err(DagError::Version { found: 2 }));
+        assert_eq!(d.validate(gl()), Err(DagError::Version { found: 2 }));
         d.version = 0;
-        assert_eq!(d.validate(&gl()), Err(DagError::Version { found: 0 }));
+        assert_eq!(d.validate(gl()), Err(DagError::Version { found: 0 }));
     }
 
     #[test]
     fn rejects_forward_reference() {
         // node 0 reads node 1; and a node reading itself
         let d = dag(vec![DagNode::Add { a: 0, b: 1 }, col(0, 0)], vec![root(0)]);
-        assert_eq!(d.validate(&gl()), Err(DagError::ForwardRef { node: 0 }));
+        assert_eq!(d.validate(gl()), Err(DagError::ForwardRef { node: 0 }));
         let d = dag(vec![col(0, 0), DagNode::Neg { a: 1 }], vec![root(1)]);
-        assert_eq!(d.validate(&gl()), Err(DagError::ForwardRef { node: 1 }));
+        assert_eq!(d.validate(gl()), Err(DagError::ForwardRef { node: 1 }));
         // a root past the end is not a valid index either
         let d = dag(vec![col(0, 0)], vec![root(5)]);
-        assert!(d.validate(&gl()).is_err());
+        assert!(d.validate(gl()).is_err());
     }
 
     #[test]
     fn rejects_duplicate() {
         let d = dag(vec![col(0, 0), col(0, 0), DagNode::Add { a: 0, b: 1 }], vec![root(2)]);
-        assert_eq!(d.validate(&gl()), Err(DagError::Duplicate { node: 1, of: 0 }));
+        assert_eq!(d.validate(gl()), Err(DagError::Duplicate { node: 1, of: 0 }));
     }
 
     #[test]
@@ -568,57 +628,64 @@ mod tests {
             (DagNode::Mul { a: 1, b: 0 }, DagNode::Mul { a: 0, b: 1 }),
         ] {
             let d = dag(vec![col(0, 0), col(1, 0), bad], vec![root(2)]);
-            assert!(matches!(d.validate(&gl()), Err(DagError::NonCanonical { node: 2, .. })), "{d:?}");
-            dag(vec![col(0, 0), col(1, 0), ok], vec![root(2)]).validate(&gl()).unwrap();
+            assert!(matches!(d.validate(gl()), Err(DagError::NonCanonical { node: 2, .. })), "{d:?}");
+            dag(vec![col(0, 0), col(1, 0), ok], vec![root(2)]).validate(gl()).unwrap();
         }
     }
 
     #[test]
     fn accepts_sub_with_swapped_operands() {
         let d = dag(vec![col(0, 0), col(1, 0), DagNode::Sub { a: 1, b: 0 }], vec![root(2)]);
-        d.validate(&gl()).unwrap();
+        d.validate(gl()).unwrap();
     }
 
     #[test]
     fn rejects_unreachable() {
         let d = dag(vec![col(0, 0), col(1, 0)], vec![root(0)]);
-        assert_eq!(d.validate(&gl()), Err(DagError::Unreachable { node: 1 }));
+        assert_eq!(d.validate(gl()), Err(DagError::Unreachable { node: 1 }));
         // reachable only through an unreachable parent is still unreachable
         let d = dag(vec![col(0, 0), col(1, 0), DagNode::Neg { a: 1 }, col(2, 0)], vec![root(0), root(3)]);
-        assert!(matches!(d.validate(&gl()), Err(DagError::Unreachable { .. })));
+        assert!(matches!(d.validate(gl()), Err(DagError::Unreachable { .. })));
     }
 
     #[test]
     fn rejects_noncanonical_const() {
         let one = |v: &str| dag(vec![DagNode::Const { value: v.into() }], vec![root(0)]);
-        one("0").validate(&gl()).unwrap();
-        one("7").validate(&gl()).unwrap();
-        assert!(matches!(one("07").validate(&gl()), Err(DagError::NonCanonical { node: 0, .. })));
-        assert!(matches!(one("00").validate(&gl()), Err(DagError::NonCanonical { node: 0, .. })));
-        assert!(matches!(one("").validate(&gl()), Err(DagError::NonCanonical { node: 0, .. })));
-        assert!(matches!(one("0x7").validate(&gl()), Err(DagError::NonCanonical { node: 0, .. })));
-        assert!(matches!(one("-1").validate(&gl()), Err(DagError::NonCanonical { node: 0, .. })));
+        one("0").validate(gl()).unwrap();
+        one("7").validate(gl()).unwrap();
+        assert!(matches!(one("07").validate(gl()), Err(DagError::NonCanonical { node: 0, .. })));
+        assert!(matches!(one("00").validate(gl()), Err(DagError::NonCanonical { node: 0, .. })));
+        assert!(matches!(one("").validate(gl()), Err(DagError::NonCanonical { node: 0, .. })));
+        assert!(matches!(one("0x7").validate(gl()), Err(DagError::NonCanonical { node: 0, .. })));
+        assert!(matches!(one("-1").validate(gl()), Err(DagError::NonCanonical { node: 0, .. })));
         // p itself and above is out of range over Goldilocks, p - 1 is the largest element
-        assert_eq!(one(GL_P).validate(&gl()), Err(DagError::ConstOutOfRange { node: 0 }));
-        one("18446744069414584320").validate(&gl()).unwrap();
+        assert_eq!(one(GL_P).validate(gl()), Err(DagError::ConstOutOfRange { node: 0 }));
+        one("18446744069414584320").validate(gl()).unwrap();
         // the same value is an element of BN128
         let mut bn = one(GL_P);
         bn.field = "bn128".into();
         bn.ext_dim = 1;
-        bn.validate(&FieldCfg::bn128()).unwrap();
+        bn.validate(DagField::Bn128).unwrap();
+        // BN128's r is out of range, r - 1 and a shorter value in range
+        for (v, ok) in
+            [(DagField::Bn128.modulus(), false), (&BN_R_MINUS_ONE[..], true), ("9".repeat(76).as_str(), true)]
+        {
+            bn.nodes[0] = DagNode::Const { value: v.to_string() };
+            assert_eq!(bn.validate(DagField::Bn128).is_ok(), ok, "{v}");
+        }
     }
 
     #[test]
     fn rejects_commit_id_on_cm() {
         for t in [ColType::Witness, ColType::Fixed] {
             let d = dag(vec![DagNode::Col { col: t, commit_id: Some(0), id: 0, offset: 0 }], vec![root(0)]);
-            assert!(matches!(d.validate(&gl()), Err(DagError::NonCanonical { node: 0, .. })), "{t:?}");
+            assert!(matches!(d.validate(gl()), Err(DagError::NonCanonical { node: 0, .. })), "{t:?}");
         }
         // a custom column needs its commit
         let d = dag(vec![DagNode::Col { col: ColType::Custom, commit_id: None, id: 0, offset: 0 }], vec![root(0)]);
-        assert!(matches!(d.validate(&gl()), Err(DagError::NonCanonical { node: 0, .. })));
+        assert!(matches!(d.validate(gl()), Err(DagError::NonCanonical { node: 0, .. })));
         let d = dag(vec![DagNode::Col { col: ColType::Custom, commit_id: Some(1), id: 0, offset: 0 }], vec![root(0)]);
-        d.validate(&gl()).unwrap();
+        d.validate(gl()).unwrap();
     }
 
     #[test]
@@ -663,7 +730,7 @@ mod tests {
     #[test]
     fn global_json_round_trip() {
         let g = global();
-        g.validate(&gl()).unwrap();
+        g.validate(gl()).unwrap();
         assert!(g.is_global() && !product().is_global());
         let v = serde_json::to_value(&g).unwrap();
         assert_eq!(v["nodes"][1], serde_json::json!([10, 2, 1]));
@@ -677,7 +744,7 @@ mod tests {
 
     #[test]
     fn rejects_global_mixed_with_air() {
-        let non_canonical = |d: ConstraintDag| matches!(d.validate(&gl()), Err(DagError::NonCanonical { .. }));
+        let non_canonical = |d: ConstraintDag| matches!(d.validate(gl()), Err(DagError::NonCanonical { .. }));
         // an airgroup value naming its airgroup in an air
         let mut d = global();
         d.roots[0].boundary = DagBoundary::EveryRow;
@@ -703,7 +770,7 @@ mod tests {
         };
         // an air's verifierinfo does not take a global DAG
         let vi = serde_json::json!({ "constraintDag": global() });
-        assert!(matches!(ConstraintDag::from_verifierinfo(&vi, &gl()), Err(DagError::NonCanonical { .. })));
+        assert!(matches!(ConstraintDag::from_verifierinfo(&vi, gl()), Err(DagError::NonCanonical { .. })));
         with("[[10,0,1]]").unwrap();
         assert!(with("[[10,0,1,2]]").is_err());
         assert!(with("[[7,0,1]]").is_err());

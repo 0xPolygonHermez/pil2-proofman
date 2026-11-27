@@ -13,21 +13,7 @@ pub type ExprId = u32;
 /// A field element, reduced mod the field's modulus.
 pub type Fe = BigUint;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum ColType {
-    Witness,
-    Fixed,
-    Custom,
-}
-
-/// One column read: the key of the evMap, the DAG leaves and `Env`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct ColRef {
-    pub col: ColType,
-    pub commit_id: Option<u32>,
-    pub id: u32,
-    pub offset: i64,
-}
+pub use constraint_dag::{value_dim, ColRef, ColType};
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Expr {
@@ -195,15 +181,6 @@ impl ConstraintSystem {
 /// Dimension of a column of `stage`: base field in stages 0 and 1, else the extension.
 pub fn col_dim(stage: u32, ext: usize) -> usize {
     if stage <= 1 {
-        1
-    } else {
-        ext
-    }
-}
-
-/// Dimension of an air, airgroup or proof value of `stage`: base field in stage 1 only.
-pub fn value_dim(stage: u32, ext: usize) -> usize {
-    if stage == 1 {
         1
     } else {
         ext

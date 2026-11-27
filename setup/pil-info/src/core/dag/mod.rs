@@ -1,6 +1,4 @@
-//! Constraint DAG: format, builder and code lowering.
+//! Constraint DAG: the `constraint-dag` crate (format, validation, resolution, lowering) and the kernel's builder.
 
 pub mod build;
-pub mod format;
-pub mod global;
-pub mod lower_code;
+pub use constraint_dag::{format, global, lower_code};

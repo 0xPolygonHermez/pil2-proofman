@@ -159,7 +159,7 @@ fn assert_same_values(gs: &GlobalSystem, seeds: std::ops::Range<u64>) {
         assert_eq!(r.label, c.label);
     }
     let old = former_code(gs);
-    let t = GlobalTables::of(gs);
+    let t = GlobalTables::from(gs);
     for seed in seeds {
         let inp = inputs(&t, seed);
         let new = eval_dag(&dag, &t, &inp).unwrap();

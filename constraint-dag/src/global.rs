@@ -5,9 +5,12 @@
 //! others read as zero), as in an air. Challenges are numbered across stages: `(stage, stage_id)` is
 //! `sum(num_challenges[..stage - 1]) + stage_id`.
 
-use crate::core::dag::format::{ConstraintDag, DagError, DagNode};
-use crate::core::global::GlobalSystem;
-use crate::core::ir::value_dim;
+use alloc::format;
+use alloc::string::String;
+use alloc::vec::Vec;
+
+use crate::format::{ConstraintDag, DagError, DagNode};
+use crate::value_dim;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct GlobalTables {
@@ -40,16 +43,6 @@ pub enum GlobalLeaf {
 }
 
 impl GlobalTables {
-    pub fn of(gs: &GlobalSystem) -> Self {
-        GlobalTables {
-            n_publics: gs.num_publics,
-            num_challenges: gs.num_challenges.clone(),
-            proof_values_stage: gs.proof_value_stages.clone(),
-            airgroup_values_stage: gs.airgroup_values.iter().map(|g| g.iter().map(|v| v.stage).collect()).collect(),
-            ext_dim: gs.field.ext_dim(),
-        }
-    }
-
     /// Leaf `n` (at index `i`) with its references checked; `None` for an operation node.
     pub fn resolve(&self, i: u32, n: &DagNode) -> Result<Option<GlobalLeaf>, DagError> {
         let miss = |what: String| DagError::Unresolved { node: i, what };

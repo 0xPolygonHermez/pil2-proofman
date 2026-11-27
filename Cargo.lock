@@ -347,6 +347,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3d52eff69cd5e647efe296129160853a42795992097e8af39800e1060caeea9b"
 
 [[package]]
+name = "constraint-dag"
+version = "1.5.0-alpha"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "conv"
 version = "0.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1066,6 +1074,7 @@ dependencies = [
 name = "pil-info"
 version = "1.5.0-alpha"
 dependencies = [
+ "constraint-dag",
  "indexmap",
  "num-bigint",
  "pil2-pilout",

@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use crate::core::dag::format::{field_name, ColType, ConstraintDag, DagBoundary, DagError, DagNode, DagRoot};
+use crate::core::dag::format::{ColType, ConstraintDag, DagField, DagBoundary, DagError, DagNode, DagRoot};
 use crate::core::global::GlobalSystem;
 use crate::core::im::{im_column_id, ImChoice};
 use crate::core::ir::{Boundary, ConstraintSystem, Expr, ExprId};
@@ -48,7 +48,7 @@ pub fn build_global_dag(gs: &GlobalSystem) -> Result<Option<ConstraintDag>, DagE
 fn finish(nodes: Vec<DagNode>, roots: Vec<DagRoot>, field: &FieldCfg) -> Result<ConstraintDag, DagError> {
     let dag = ConstraintDag {
         version: ConstraintDag::VERSION,
-        field: field_name(field)?.to_string(),
+        field: DagField::from(field).name().to_string(),
         ext_dim: field.ext_dim() as u32,
         nodes,
         roots,
