@@ -266,6 +266,69 @@ mod tests {
         }
     }
 
+    /// The native verifier's tables of `t` (`std_vc` named at `t.vc`).
+    fn native_tables(t: &LowerTables) -> proofman_verifier::DagTables {
+        let col = |c: ColType| match c {
+            ColType::Witness => 0,
+            ColType::Fixed => 1,
+            ColType::Custom => 2,
+        };
+        proofman_verifier::DagTables {
+            ev_map: (t.ev_map.iter())
+                .map(|r| proofman_verifier::EvKey {
+                    col: col(r.col),
+                    id: r.id.into(),
+                    offset: r.offset,
+                    commit_id: r.commit_id.unwrap_or(0).into(),
+                })
+                .collect(),
+            challenges: (t.challenges.iter().enumerate())
+                .map(|(k, &(stage, stage_id))| proofman_verifier::ChallengeKey {
+                    stage: stage.into(),
+                    stage_id: stage_id.into(),
+                    name: if k == t.vc { "std_vc".into() } else { format!("c{k}") },
+                })
+                .collect(),
+            n_publics: t.n_publics.into(),
+        }
+    }
+
+    fn reads_a_value(dag: &ConstraintDag) -> bool {
+        dag.nodes
+            .iter()
+            .any(|n| matches!(n, DagNode::ProofValue { .. } | DagNode::AirValue { .. } | DagNode::AirgroupValue { .. }))
+    }
+
+    /// The native verifier (`proofman_verifier::ConstraintDag`, what replaced the generated q_verify) against the
+    /// lowered code the generated q_verify was rendered from, on random DAGs and on random keys.
+    #[test]
+    fn native_verifier_matches_the_lowered_code() {
+        let check = |dag: &ConstraintDag, t: &LowerTables, seed: u64| -> bool {
+            let json = serde_json::to_string(dag).unwrap();
+            let native = proofman_verifier::ConstraintDag::from_json(&json, &native_tables(t));
+            if reads_a_value(dag) {
+                assert!(native.is_err(), "seed {seed}: a value must be refused");
+                return false;
+            }
+            let native = native.unwrap();
+            let ctx = LowerCtx::new(t.clone()).unwrap();
+            let inp = random_inputs(t, seed);
+            let want = eval_code(&lower_to_code(dag, &ctx, Fold::Stark).unwrap(), &ctx, &inp).unwrap();
+            let got = native.eval(&inp.challenges, &inp.evals, &inp.publics, inp.zi).unwrap();
+            assert_eq!(got, want, "seed {seed}");
+            // an input shorter than a leaf reads is a refusal, not a panic
+            assert!(native.eval(&inp.challenges, &[], &inp.publics, inp.zi).is_none() || inp.evals.is_empty());
+            true
+        };
+        let t = tiny_ctx().tables().clone();
+        let compared = (0..60).filter(|&seed| check(&random_dag(seed), &t, seed)).count();
+        assert!(compared >= 20, "only {compared} random DAGs read no value");
+        let keys = full_random(6);
+        let compared =
+            keys.iter().enumerate().filter(|(k, f)| check(&f.vi.constraint_dag, &f.si.lower_tables, *k as u64));
+        assert!(compared.count() > 0, "no random key without values");
+    }
+
     fn fe(g: Goldilocks) -> BigUint {
         BigUint::from(g.as_canonical_u64())
     }

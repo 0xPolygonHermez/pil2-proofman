@@ -28,6 +28,7 @@ use proofman_fields::{
     TranscriptLike,
 };
 
+use crate::constraint_dag::ConstraintDag;
 use crate::layout::{merkle_proof_levels, sibling_words};
 use crate::multiproof::{expand_stir_checked, Proven};
 use crate::replay::{prefix_transcript, stir_transcript, StirTranscript};
@@ -788,13 +789,13 @@ where
 
 /// The STIR counterpart of `stark_verify`, for proofs of circuits whose low-degree test is STIR.
 /// Same contract: `proof` is [n_publics, publics…, flat proof], `vk` the 4-limb constant root,
-/// `q_verify` the generated quotient evaluator; f_0 is recomputed from `fri_ev_groups`.
+/// `constraints` the air's constraint DAG; f_0 is recomputed from `fri_ev_groups`.
 #[allow(clippy::type_complexity)]
 pub fn stark_verify_stir<LeafHash, CompressionHash, TranscriptT, GrindingHash>(
     proof: &[u64],
     vk: &[u64],
     verifier_info: &StirVerifierInfo,
-    q_verify: QVerify,
+    constraints: &ConstraintDag,
 ) -> bool
 where
     LeafHash: Hash<Goldilocks>,
@@ -806,7 +807,7 @@ where
         proof,
         vk,
         verifier_info,
-        q_verify,
+        constraints,
         None,
     )
 }
@@ -818,7 +819,7 @@ pub fn verify_multiproof_stir<LeafHash, CompressionHash, TranscriptT, GrindingHa
     wire: &[u64],
     vk: &[u64],
     verifier_info: &StirVerifierInfo,
-    q_verify: QVerify,
+    constraints: &ConstraintDag,
 ) -> bool
 where
     LeafHash: Hash<Goldilocks>,
@@ -835,17 +836,10 @@ where
         &flat,
         vk,
         verifier_info,
-        q_verify,
+        constraints,
         Some(&proven),
     )
 }
-
-type QVerify = fn(
-    &[CubicExtensionField<Goldilocks>],
-    &[CubicExtensionField<Goldilocks>],
-    &[Goldilocks],
-    &[CubicExtensionField<Goldilocks>],
-) -> CubicExtensionField<Goldilocks>;
 
 /// `proven`: what the multiproof check already did — each tree's leaves checked against its root,
 /// and the transcript replayed from the same words this parses.
@@ -853,7 +847,7 @@ fn stark_verify_stir_impl<LeafHash, CompressionHash, TranscriptT, GrindingHash>(
     proof: &[u64],
     vk: &[u64],
     verifier_info: &StirVerifierInfo,
-    q_verify: QVerify,
+    constraints: &ConstraintDag,
     proven: Option<&Proven>,
 ) -> bool
 where
@@ -1090,7 +1084,7 @@ where
     let z_n = x_n - Goldilocks::ONE;
     let z_n_inv = z_n.inverse();
     // the only STARK zerofier is everyRow
-    let zi = [z_n_inv];
+    let zi = z_n_inv;
 
     v_debug!("Verifying proof");
 
@@ -1202,7 +1196,10 @@ where
         x_acc *= x_n;
     }
 
-    let q_val = q_verify(&challenges, &evals, &publics, &zi);
+    let Some(q_val) = constraints.eval(&challenges, &evals, &publics, zi) else {
+        v_error!("the constraints read past the proof's evaluations, challenges or publics");
+        return false;
+    };
     if q_val != q {
         v_error!("Quotient polynomial verification failed");
         return false;

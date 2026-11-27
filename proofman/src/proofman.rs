@@ -4803,7 +4803,7 @@ where
 
                     // Verified from the proving key, not from a committed Rust
                     // verifier: the aggregator binds the application's publics
-                    // into q_verify, so a verifier generated for one application
+                    // into the constraints, so a verifier generated for one application
                     // rejects proofs another's correct prover produced.
                     let setup = match options.compressed {
                         true => self.setups.setup_vadcop_final_compressed.as_ref().unwrap(),

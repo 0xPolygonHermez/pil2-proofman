@@ -1124,6 +1124,7 @@ dependencies = [
  "proofman-pilfflonk",
  "proofman-starks-lib-c",
  "proofman-util",
+ "proofman-verifier",
  "prost",
  "rayon",
  "serde",
@@ -1497,6 +1498,7 @@ dependencies = [
  "num-traits",
  "proofman-fields",
  "serde",
+ "serde_json",
  "tracing",
 ]
 

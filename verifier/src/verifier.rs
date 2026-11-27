@@ -4,6 +4,7 @@ use alloc::vec::Vec;
 #[allow(unused)]
 use num_traits::Float;
 
+use crate::constraint_dag::ConstraintDag;
 use crate::layout::{merkle_proof_levels, sibling_words};
 use crate::replay::{fri_transcript, prefix_transcript};
 use proofman_fields::{
@@ -195,12 +196,7 @@ pub fn stark_verify<LeafHash, CompressionHash, TranscriptT, GrindingHash>(
     proof: &[u64],
     vk: &[u64],
     verifier_info: &VerifierInfo,
-    q_verify: fn(
-        &[CubicExtensionField<Goldilocks>],
-        &[CubicExtensionField<Goldilocks>],
-        &[Goldilocks],
-        &[CubicExtensionField<Goldilocks>],
-    ) -> CubicExtensionField<Goldilocks>,
+    constraints: &ConstraintDag,
 ) -> bool
 where
     LeafHash: Hash<Goldilocks>,
@@ -518,7 +514,7 @@ where
     let z_n = x_n - Goldilocks::ONE;
     let z_n_inv = z_n.inverse();
     // the only STARK zerofier is everyRow
-    let zi = [z_n_inv];
+    let zi = z_n_inv;
 
     let mut final_pol_vals: Vec<Goldilocks> = Vec::with_capacity(final_pol.len() * 3);
     for pol in &final_pol {
@@ -694,7 +690,10 @@ where
         x_acc *= x_n;
     }
 
-    let q_val = q_verify(&challenges, &evals, &publics, &zi);
+    let Some(q_val) = constraints.eval(&challenges, &evals, &publics, zi) else {
+        v_error!("the constraints read past the proof's evaluations, challenges or publics");
+        return false;
+    };
     if q_val != q {
         v_error!("Quotient polynomial verification failed");
         return false;

@@ -97,7 +97,8 @@ pub enum Prime {
 /// - `StarkTail`: pil_info (or `ctx.reuse`'s), starkinfo/verifierinfo/expressionsinfo, `.bin`, the
 ///   plonk `.const`. `starkinfo_only` (recursive1): just the starkinfo the const tree reads and removes.
 /// - `ConstTree`: `.const` → const tree → verkey; a missing `.const` fails when `required`.
-/// - `WriteVerifierRs`: the Rust verifier.
+/// - `WriteVerifierRs`: the native Rust verifier: the key's parameters and its constraint DAG, which the verifier
+///   crate checks and evaluates.
 /// - `WitnessWait`: waits for the background witness library builds.
 /// - `Custom`: a kind's own step.
 pub enum Step {

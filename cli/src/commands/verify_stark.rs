@@ -32,7 +32,7 @@ impl VerifyStark {
         let proof = VadcopFinalProof::load(&self.proof)?;
 
         // The verifier is read from the proving key rather than compiled in: the
-        // aggregator binds the application's publics into q_verify, so a verifier
+        // aggregator binds the application's publics into the constraints, so a verifier
         // generated for one application rejects proofs another's correct prover
         // produced. The setup artifacts sit next to the verkey, as
         // <base>.starkinfo.json / <base>.verifierinfo.json / <base>.verkey.json.
