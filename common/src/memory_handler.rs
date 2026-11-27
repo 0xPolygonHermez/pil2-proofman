@@ -611,6 +611,11 @@ impl<F: PrimeField64 + Send + Sync + 'static> MemoryHandler<F> {
         self.pool.release(buffer)
     }
 
+    /// How many basic-trace buffers the pool holds.
+    pub fn n_buffers(&self) -> usize {
+        self.pool.n_buffers
+    }
+
     /// Offer a trace for reclamation; only a pool-starved thread frees one, cheapest to recompute
     /// first. The free itself marks the instance `Evicted`; callers track nothing.
     pub fn to_be_released_buffer(&self, instance_id: usize) {

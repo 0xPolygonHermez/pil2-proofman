@@ -1569,6 +1569,7 @@ where
             witness_done.clone(),
             options.minimal_memory,
             true,
+            false,
         )?;
         timer_stop_and_log_info!(CALCULATING_WITNESS);
 
@@ -1906,6 +1907,7 @@ where
             self.memory_handler.clone(),
             witness_done.clone(),
             minimal_memory,
+            false,
             false,
         )?;
         timer_stop_and_log_debug!(CALCULATING_WITNESS);
@@ -3577,6 +3579,7 @@ where
                 witness_done.clone(),
                 options.minimal_memory,
                 false,
+                false,
             )?;
             timer_stop_and_log_debug!(CALCULATING_WITNESS);
 
@@ -4583,6 +4586,7 @@ where
             witness_done.clone(),
             true,
             false,
+            true,
         )?;
         timer_stop_and_log_debug!(CALCULATING_WITNESS);
         self.witness_tx.send(usize::MAX).ok();
@@ -6004,7 +6008,11 @@ where
         witness_done: Arc<Counter>,
         minimal_memory: bool,
         stats: bool,
+        release_tokens_after_collect: bool,
     ) -> ProofmanResult<()> {
+        // Once the tokens go back after the collect they no longer pace the spawning: one slot per
+        // trace buffer does, since a witness past its collect holds its inputs until it gets one.
+        let in_flight = release_tokens_after_collect.then(|| Arc::new(ThreadBudget::new(memory_handler.n_buffers())));
         let witness_minimal_memory_handles: Arc<Mutex<Vec<std::thread::JoinHandle<()>>>> =
             Arc::new(Mutex::new(Vec::new()));
         let _join_guard = JoinAllGuard::new(witness_minimal_memory_handles.clone());
@@ -6055,6 +6063,7 @@ where
                     false => self.max_num_threads,
                 };
 
+                let slot = in_flight.as_ref().map(|slots| slots.acquire(1, &self.cancellation_info));
                 let mut tokens = self.thread_budget.acquire(threads_to_use_collect, &self.cancellation_info);
 
                 if self.cancellation_info.read_recover().token.is_cancelled() {
@@ -6074,6 +6083,7 @@ where
                 let witness_done_clone = witness_done.clone();
                 let cancellation_info_clone = self.cancellation_info.clone();
                 let handle = std::thread::spawn(move || {
+                    let _slot = slot; // back when this witness is done, whichever way it ends
                     timer_start_debug!(GENERATING_WC, "GENERATING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
                     timer_start_debug!(PREPARING_WC, "PREPARING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
                     if let Err(e) = wcm_clone.pre_calculate_witness(
@@ -6096,7 +6106,9 @@ where
                         airgroup_id,
                         air_id
                     );
-                    tokens.release(threads_to_return);
+                    // A collect needs no trace buffer: the wait for one must not hold the threads
+                    // the collects behind it need.
+                    tokens.release(if release_tokens_after_collect { usize::MAX } else { threads_to_return });
 
                     timer_start_debug!(COMPUTING_WC, "COMPUTING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
                     if let Err(e) = wcm_clone.calculate_witness(
