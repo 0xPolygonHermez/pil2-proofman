@@ -50,7 +50,7 @@ fn prepare_expressions_bin(
         }
         let (first_row, last_row) = (0, n);
 
-        let mut info = get_parser_args(stark_info, &constraint_code.code, &mut numbers_constraints, false, None)?;
+        let mut info = get_parser_args(stark_info, &constraint_code.code, &mut numbers_constraints)?;
         info.stage = constraint_code.stage;
         info.first_row = first_row;
         info.last_row = last_row;
@@ -78,7 +78,7 @@ fn prepare_expressions_bin(
             }
         }
 
-        let mut info = get_parser_args(stark_info, &exp_code.code, &mut numbers_exps, false, None)?;
+        let mut info = get_parser_args(stark_info, &exp_code.code, &mut numbers_exps)?;
         info.exp_id = exp_code.exp_id;
         info.stage = exp_code.stage;
         info.line = exp_code.line.clone();

@@ -252,7 +252,7 @@ fn the_command_writes_the_files_of_the_proving_key() {
     assert_eq!(bytecode.expressions.len(), expressions_info["expressionsCode"].as_array().unwrap().len());
     let global_constraints: serde_json::Value =
         serde_json::from_slice(&fs::read(proving_key.join(GLOBAL_CONSTRAINTS_FILE)).unwrap()).unwrap();
-    assert_eq!(global_constraints, serde_json::json!({"constraints": [], "hints": []}));
+    assert_eq!(global_constraints, serde_json::json!({"hints": []}));
 
     // The vkey: the pilfflonkinfo's evMap, layout and degrees, the verkey's points, [τ]₂ of the
     // SRS, the qVerifier of the verifierinfo, and its digest.

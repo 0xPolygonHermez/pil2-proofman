@@ -124,7 +124,6 @@ pub(crate) fn write_global_info_json(
 /// Write `pilout.globalConstraints.json` and `pilout.globalConstraints.bin`
 /// into `<build_dir>/provingKey/`. Does not write `globalInfo.json`.
 pub(crate) fn write_global_constraints(core: &PiloutCore, build_dir: &str) -> Result<()> {
-    use crate::io::parser_args::{GlobalInfo as ParserGlobalInfo, ProofValueEntry};
     use crate::output::global_constraints::write_global_constraints_bin_file;
     use crate::types::stark_info::GlobalConstraintsInfo;
 
@@ -135,13 +134,9 @@ pub(crate) fn write_global_constraints(core: &PiloutCore, build_dir: &str) -> Re
     let gc_str = crate::output::json::to_json_string(&global_constraints)?;
     fs::write(proving_key_dir.join("pilout.globalConstraints.json"), &gc_str)?;
 
-    let gi = ParserGlobalInfo {
-        proof_values_map: gs.proof_value_stages.iter().map(|&s| ProofValueEntry { stage: u64::from(s) }).collect(),
-        agg_types: gs.airgroup_values.iter().map(|g| g.iter().map(|v| v.agg_type as u64).collect()).collect(),
-    };
     let gci = GlobalConstraintsInfo::from_json(&global_constraints)?;
     let bin_path = proving_key_dir.join("pilout.globalConstraints.bin");
-    write_global_constraints_bin_file(&gi, &gci, bin_path.to_str().unwrap_or(""))?;
+    write_global_constraints_bin_file(&gci, bin_path.to_str().unwrap_or(""))?;
     Ok(())
 }
 
@@ -354,13 +349,10 @@ mod tests {
         let gc_str =
             std::fs::read_to_string(format!("{}/provingKey/pilout.globalConstraints.json", build_dir)).unwrap();
         let gc: serde_json::Value = serde_json::from_str(&gc_str).unwrap();
-        let constraints = gc.get("constraints").unwrap().as_array().unwrap();
-        assert!(!constraints.is_empty());
-        let c0 = &constraints[0];
-        assert!(c0.get("tmpUsed").is_some());
-        assert!(c0.get("code").is_some());
-        assert_eq!(c0.get("boundary").unwrap().as_str().unwrap(), "finalProof");
+        assert!(gc.get("constraints").is_none());
         assert!(!gc.get("hints").unwrap().as_array().unwrap().is_empty());
+        let dag = pil_info::core::dag::format::ConstraintDag::from_global_info(&gi, &pil_info::FieldCfg::goldilocks());
+        assert!(!dag.unwrap().expect("a globalConstraintDag").roots.is_empty());
         assert!(std::path::Path::new(&format!("{}/provingKey/pilout.globalConstraints.bin", build_dir)).exists());
 
         let _ = std::fs::remove_dir_all(build_dir);

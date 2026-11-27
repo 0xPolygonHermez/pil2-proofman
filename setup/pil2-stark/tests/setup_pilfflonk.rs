@@ -204,10 +204,7 @@ fn check_proving_key(proving_key: &Path) -> (PilfflonkGlobalInfo, PilfflonkInfo,
         serde_json::from_slice::<serde_json::Value>(&text).unwrap();
     }
     let text = fs::read(proving_key.join(GLOBAL_CONSTRAINTS_FILE)).unwrap();
-    assert_eq!(
-        serde_json::from_slice::<serde_json::Value>(&text).unwrap(),
-        serde_json::json!({"constraints": [], "hints": []})
-    );
+    assert_eq!(serde_json::from_slice::<serde_json::Value>(&text).unwrap(), serde_json::json!({"hints": []}));
     ProofNames::new(&gi, &[&info]).unwrap();
     WitnessShape::from_proving_key(&gi, &[&info]).unwrap();
     (gi, info, vkey)

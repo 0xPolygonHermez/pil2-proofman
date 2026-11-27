@@ -131,7 +131,6 @@ pub struct VerifierInfo {
 /// Global constraints info loaded from JSON.
 #[derive(Debug, Clone)]
 pub struct GlobalConstraintsInfo {
-    pub constraints: Vec<ExpCode>,
     pub hints: Vec<Hint>,
 }
 
@@ -355,10 +354,7 @@ impl VerifierInfo {
 impl GlobalConstraintsInfo {
     /// Parse from global constraints JSON.
     pub fn from_json(j: &Value) -> Result<Self> {
-        let constraints = parse_array(j, "constraints", parse_exp_code)?;
-        let hints = parse_hints(j, "hints")?;
-
-        Ok(GlobalConstraintsInfo { constraints, hints })
+        Ok(GlobalConstraintsInfo { hints: parse_hints(j, "hints")? })
     }
 }
 
@@ -639,7 +635,7 @@ mod tests {
         let err = ExpressionsInfo::from_json(&json(R_MINUS_ONE)).unwrap_err();
         assert_eq!(err.to_string(), not_goldilocks(R_MINUS_ONE));
 
-        let hints = serde_json::json!({"constraints": [], "hints": [{
+        let hints = serde_json::json!({"hints": [{
             "name": "h", "fields": [{"name": "f", "values": [{"op": "number", "value": R_MINUS_ONE, "pos": []}]}],
         }]});
         let err = GlobalConstraintsInfo::from_json(&hints).unwrap_err();

@@ -20,9 +20,8 @@ const int CONSTRAINTS_SECTION = 2;
 const int HINTS_SECTION = 3;
 const int N_SECTIONS = 3;
 
-const int GLOBAL_CONSTRAINTS_SECTION = 1;
-const int GLOBAL_HINTS_SECTION = 2;
-const int N_GLOBAL_SECTIONS = 2;
+const int GLOBAL_HINTS_SECTION = 1;
+const int N_GLOBAL_SECTIONS = 1;
 
 
 struct HintFieldValue {

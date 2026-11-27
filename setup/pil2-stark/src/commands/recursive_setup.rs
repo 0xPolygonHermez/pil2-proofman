@@ -447,7 +447,7 @@ mod tests {
         std::fs::write(ginfo.join("pilout.globalInfo.json"),
             r#"{"name":"zisk","nPublics":68,"numProofValues":[8],"proofValuesMap":[],"publicsMap":[],"airGroupsInfo":[{"airGroupId":0,"nAirs":35}],"aggTypes":[[]],"hash":"Poseidon2"}"#
         ).unwrap();
-        std::fs::write(ginfo.join("pilout.globalConstraints.json"), r#"{"constraints":[],"hints":[]}"#).unwrap();
+        std::fs::write(ginfo.join("pilout.globalConstraints.json"), r#"{"hints":[]}"#).unwrap();
         std::fs::write(pk_dir.join("Dma.starkinfo.json"), r#"{"nStages":2}"#).unwrap();
         std::fs::write(pk_dir.join("Dma.verifierinfo.json"), r#"{}"#).unwrap();
 
@@ -478,7 +478,7 @@ mod tests {
         std::fs::create_dir_all(&pk_dir).unwrap();
         std::fs::write(pk_dir.join("pilout.globalInfo.json"), r#"{"name":"test","nPublics":0,"hash":"Poseidon2"}"#)
             .unwrap();
-        std::fs::write(pk_dir.join("pilout.globalConstraints.json"), r#"{"constraints":[],"hints":[]}"#).unwrap();
+        std::fs::write(pk_dir.join("pilout.globalConstraints.json"), r#"{"hints":[]}"#).unwrap();
 
         let pilout_path = tmp.join("test.pilout");
         let mut buf = Vec::new();

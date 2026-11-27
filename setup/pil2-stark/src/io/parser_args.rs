@@ -87,8 +87,6 @@ pub fn get_parser_args(
     stark_info: &StarkInfo,
     code_info_code: &[CodeOperation],
     numbers: &mut Vec<String>,
-    global: bool,
-    global_info: Option<&GlobalInfo>,
 ) -> Result<ExpsInfo> {
     let mut numbers_index: HashMap<String, u32> =
         numbers.iter().enumerate().map(|(i, s)| (s.clone(), i as u32)).collect();
@@ -96,7 +94,7 @@ pub fn get_parser_args(
     let mut ops: Vec<u64> = Vec::new();
     let mut args: Vec<u64> = Vec::new();
 
-    let custom_commits = if !global { &stark_info.custom_commits } else { &vec![] };
+    let custom_commits = &stark_info.custom_commits;
 
     let maxid = code_info_code
         .iter()
@@ -111,7 +109,7 @@ pub fn get_parser_args(
 
     for r in code_info_code {
         let (op, mut sorted_src, src0_dim, mut src1_dim) = get_operation(r);
-        // The C++ reads 8 args per op (6 global): a copy is `src + 0`.
+        // The C++ reads 8 args per op: a copy is `src + 0`.
         let pads_copy = r.op == "copy";
         if pads_copy {
             sorted_src.push(CodeType { op_type: OpType::Number, dim: 1, ..Default::default() });
@@ -130,8 +128,6 @@ pub fn get_parser_args(
             &id3d,
             numbers,
             &mut numbers_index,
-            global,
-            global_info,
         )?;
         for s in &sorted_src {
             push_args(
@@ -145,8 +141,6 @@ pub fn get_parser_args(
                 &id3d,
                 numbers,
                 &mut numbers_index,
-                global,
-                global_info,
             )?;
         }
 
@@ -177,19 +171,6 @@ fn value_offset(stages: impl ExactSizeIterator<Item = u64>, id: u64) -> Result<u
     Ok(stages.take(id as usize).map(|s| if s == 1 { 1 } else { FIELD_EXTENSION }).sum())
 }
 
-/// Information about global proof structure needed by pushArgs in global mode.
-#[derive(Debug, Clone, Default)]
-pub struct GlobalInfo {
-    pub proof_values_map: Vec<ProofValueEntry>,
-    pub agg_types: Vec<Vec<u64>>,
-}
-
-/// Entry in the proof values map or air values map.
-#[derive(Debug, Clone)]
-pub struct ProofValueEntry {
-    pub stage: u64,
-}
-
 /// Pushes arguments for a single operand reference into the args array.
 #[allow(clippy::too_many_arguments)]
 fn push_args(
@@ -203,8 +184,6 @@ fn push_args(
     id3d: &[i64],
     numbers: &mut Vec<String>,
     numbers_index: &mut HashMap<String, u32>,
-    global: bool,
-    global_info: Option<&GlobalInfo>,
 ) -> Result<()> {
     if dest && r.op_type != OpType::Tmp {
         bail!("Invalid reference type set: {:?}", r.op_type);
@@ -216,32 +195,21 @@ fn push_args(
         OpType::Tmp => {
             if r.dim == 1 {
                 if !dest {
-                    if !global {
-                        args.push(buffer_size);
-                    } else {
-                        args.push(0);
-                    }
+                    args.push(buffer_size);
                 }
                 args.push(id1d[r.id as usize] as u64);
             } else {
                 assert_eq!(r.dim, FIELD_EXTENSION);
                 if !dest {
-                    if !global {
-                        args.push(buffer_size + 1);
-                    } else {
-                        args.push(4);
-                    }
+                    args.push(buffer_size + 1);
                 }
                 args.push(FIELD_EXTENSION * id3d[r.id as usize] as u64);
             }
-            if !global && !dest {
+            if !dest {
                 args.push(0);
             }
         }
         OpType::Const => {
-            if global {
-                bail!("const pols should not appear in a global constraint");
-            }
             let prime_index = stark_info.opening_points.iter().position(|&p| p == r.prime).ok_or_else(|| {
                 anyhow::anyhow!(
                     "opening point {} not found for const id={}, opening_points={:?}",
@@ -255,9 +223,6 @@ fn push_args(
             args.push(prime_index as u64);
         }
         OpType::Custom => {
-            if global {
-                bail!("custom pols should not appear in a global constraint");
-            }
             let prime_index = stark_info
                 .opening_points
                 .iter()
@@ -268,9 +233,6 @@ fn push_args(
             args.push(prime_index as u64);
         }
         OpType::Cm => {
-            if global {
-                bail!("witness pols should not appear in a global constraint");
-            }
             let prime_index = stark_info
                 .opening_points
                 .iter()
@@ -294,90 +256,38 @@ fn push_args(
                     i
                 }
             };
-            if !global {
-                args.push(buffer_size + 3);
-            } else {
-                args.push(2);
-            }
+            args.push(buffer_size + 3);
             args.push(idx as u64);
-            if !global {
-                args.push(0);
-            }
+            args.push(0);
         }
         OpType::Public => {
-            if !global {
-                args.push(buffer_size + 2);
-            } else {
-                args.push(1);
-            }
+            args.push(buffer_size + 2);
             args.push(r.id);
-            if !global {
-                args.push(0);
-            }
+            args.push(0);
         }
         OpType::Eval => {
-            if global {
-                bail!("evals and airvalues should not appear in a global constraint");
-            }
             args.extend([buffer_size + 8, FIELD_EXTENSION * r.id, 0]);
         }
         OpType::Airvalue => {
-            if global {
-                bail!("evals and airvalues should not appear in a global constraint");
-            }
             let pos = value_offset(stark_info.air_values_map.iter().map(|v| v.stage), r.id)?;
             args.extend([buffer_size + 4, pos, 0]);
         }
         OpType::Proofvalue => {
-            if !global {
-                args.push(buffer_size + 5);
-            } else {
-                args.push(3);
-            }
-            let proof_value_pos = match (global, global_info) {
-                (false, _) => value_offset(stark_info.proof_values_map.iter().map(|v| v.stage), r.id)?,
-                (true, Some(gi)) => value_offset(gi.proof_values_map.iter().map(|v| v.stage), r.id)?,
-                (true, None) => 0,
-            };
-            args.push(proof_value_pos);
-            if !global {
-                args.push(0);
-            }
+            args.push(buffer_size + 5);
+            args.push(value_offset(stark_info.proof_values_map.iter().map(|v| v.stage), r.id)?);
+            args.push(0);
         }
         OpType::Challenge => {
-            if !global {
-                args.push(buffer_size + 7);
-            } else {
-                args.push(6);
-            }
+            args.push(buffer_size + 7);
             args.push(FIELD_EXTENSION * r.id);
-            if !global {
-                args.push(0);
-            }
+            args.push(0);
         }
         OpType::Airgroupvalue => {
-            if !global {
-                args.push(buffer_size + 6);
-            } else {
-                args.push(5);
-            }
-            if !global {
-                args.push(value_offset(stark_info.airgroup_values_map.iter().map(|v| v.stage), r.id)?);
-            } else if let Some(gi) = global_info {
-                let mut offset: u64 = 0;
-                for agg_types in &gi.agg_types[..r.airgroup_id as usize] {
-                    offset += FIELD_EXTENSION * agg_types.len() as u64;
-                }
-                args.push(offset + FIELD_EXTENSION * r.id);
-            }
-            if !global {
-                args.push(0);
-            }
+            args.push(buffer_size + 6);
+            args.push(value_offset(stark_info.airgroup_values_map.iter().map(|v| v.stage), r.id)?);
+            args.push(0);
         }
         OpType::Zi => {
-            if global {
-                bail!("Zerofier polynomial should not appear in a global constraint");
-            }
             args.push(stark_info.n_stages + 2);
             args.push(1 + r.boundary_id);
             args.push(0);
@@ -405,7 +315,7 @@ mod tests {
         CodeOperation { op: "copy".to_string(), dest, src: vec![src] }
     }
 
-    fn parse(code: &[CodeOperation], global: bool) -> (ExpsInfo, Vec<String>) {
+    fn parse(code: &[CodeOperation]) -> (ExpsInfo, Vec<String>) {
         let info = StarkInfo {
             n_stages: 2,
             opening_points: vec![0],
@@ -413,26 +323,21 @@ mod tests {
             ..Default::default()
         };
         let mut numbers = Vec::new();
-        (get_parser_args(&info, code, &mut numbers, global, None).unwrap(), numbers)
+        (get_parser_args(&info, code, &mut numbers).unwrap(), numbers)
     }
 
-    // A copy is `src + 0`: the C++ strides 8 args per op (6 global), so a 1-operand copy would desync it.
+    // A copy is `src + 0`: the C++ strides 8 args per op, so a 1-operand copy would desync it.
     #[test]
     fn copy_serializes_as_src_plus_zero() {
         let cm = CodeType { op_type: OpType::Cm, id: 0, dim: 1, ..Default::default() };
-        let (exps, numbers) = parse(&[copy_op(1, cm)], false);
+        let (exps, numbers) = parse(&[copy_op(1, cm)]);
         assert_eq!((exps.ops.as_slice(), exps.args.len()), (&[0][..], 8));
         assert_eq!(numbers[exps.args[6] as usize], "0");
 
         // dim3 source: the (dim3, dim3, dim1) op
         let cm3 = CodeType { op_type: OpType::Cm, id: 0, dim: 3, ..Default::default() };
-        let (exps, numbers) = parse(&[copy_op(3, cm3)], false);
+        let (exps, numbers) = parse(&[copy_op(3, cm3)]);
         assert_eq!((exps.ops.as_slice(), exps.args.len()), (&[1][..], 8));
         assert_eq!(numbers[exps.args[6] as usize], "0");
-
-        let five = CodeType { op_type: OpType::Number, dim: 1, value: 5, ..Default::default() };
-        let (exps, numbers) = parse(&[copy_op(1, five)], true);
-        assert_eq!((exps.ops.as_slice(), exps.args.len()), (&[0][..], 6));
-        assert_eq!((numbers[exps.args[3] as usize].as_str(), numbers[exps.args[5] as usize].as_str()), ("5", "0"));
     }
 }

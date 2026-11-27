@@ -176,55 +176,8 @@ void ExpressionsBin::loadExpressionsBin(BinFileUtils::BinFile *expressionsBin) {
     expressionsBin->endReadSection();
 }
 
+// The global constraints are globalInfo's globalConstraintDag; this file holds the global hints.
 void ExpressionsBin::loadGlobalBin(BinFileUtils::BinFile *globalBin) {
-    
-    globalBin->startReadSection(GLOBAL_CONSTRAINTS_SECTION);
-
-    uint32_t nOpsDebug = globalBin->readU32LE();
-    uint32_t nArgsDebug = globalBin->readU32LE();
-    uint32_t nNumbersDebug = globalBin->readU32LE();
-
-    expressionsBinArgsConstraints.ops = new uint8_t[nOpsDebug];
-    expressionsBinArgsConstraints.args = new uint16_t[nArgsDebug];
-    expressionsBinArgsConstraints.numbers = new Goldilocks::Element[nNumbersDebug];
-    expressionsBinArgsConstraints.nNumbers = nNumbersDebug;
-
-    uint32_t nGlobalConstraints = globalBin->readU32LE();
-
-    for(uint64_t i = 0; i < nGlobalConstraints; ++i) {
-        ParserParams parserParamsConstraint;
-
-        parserParamsConstraint.destDim = globalBin->readU32LE();
-        parserParamsConstraint.destId = globalBin->readU32LE();
-
-        parserParamsConstraint.nTemp1 = globalBin->readU32LE();
-        parserParamsConstraint.nTemp3 = globalBin->readU32LE();
-
-        parserParamsConstraint.nOps = globalBin->readU32LE();
-        parserParamsConstraint.opsOffset = globalBin->readU32LE();
-
-        parserParamsConstraint.nArgs = globalBin->readU32LE();
-        parserParamsConstraint.argsOffset = globalBin->readU32LE();
-
-
-        parserParamsConstraint.line = globalBin->readString();
-
-        constraintsInfoDebug.push_back(parserParamsConstraint);
-    }
-
-
-    for(uint64_t j = 0; j < nOpsDebug; ++j) {
-        expressionsBinArgsConstraints.ops[j] = globalBin->readU8LE();
-    }
-    for(uint64_t j = 0; j < nArgsDebug; ++j) {
-        expressionsBinArgsConstraints.args[j] = globalBin->readU16LE();
-    }
-    for(uint64_t j = 0; j < nNumbersDebug; ++j) {
-        expressionsBinArgsConstraints.numbers[j] = Goldilocks::fromU64(globalBin->readU64LE());
-    }
-
-    globalBin->endReadSection();
-
     globalBin->startReadSection(GLOBAL_HINTS_SECTION);
 
     uint32_t nHints = globalBin->readU32LE();

@@ -1,4 +1,5 @@
-//! The global constraint DAG against the former global code (`global_constraints_json`'s `code`), on seeded values.
+//! The global constraint DAG against the former global code (pil_code_gen over the global expressions, which
+//! globalConstraints.json carried until the DAG replaced it), on seeded values.
 
 use std::collections::HashMap;
 
@@ -13,7 +14,9 @@ use pil_info::core::dag::global::{GlobalLeaf, GlobalTables};
 use pil_info::core::global::{global_from_pilout, GlobalConstraint, GlobalSystem};
 use pil_info::core::ir::Expr;
 use pil_info::core::pilout_core::{AggType, AirGroupValue};
-use pil_info::output::global_constraints::global_constraints_json;
+use pil_info::emit::arena;
+use pil_info::expr::helpers::add_info_expressions;
+use pil_info::pil::codegen::{build_code, pil_code_gen, CodeGenCtx};
 use pil_info::FieldCfg;
 
 use crate::output::test_support::common::Rng;
@@ -88,6 +91,24 @@ fn eval_dag(dag: &ConstraintDag, t: &GlobalTables, inp: &Inputs) -> Result<Vec<E
     Ok(dag.roots.iter().map(|r| v[r.node as usize]).collect())
 }
 
+/// The former code of each global constraint, as globalConstraints.json had it.
+fn former_code(gs: &GlobalSystem) -> Vec<Value> {
+    let leaf = arena::global_leaf(gs);
+    let mut expressions = arena::from_ir(&gs.exprs, &leaf).unwrap();
+    for c in &gs.constraints {
+        add_info_expressions(&mut expressions, c.expr as usize, &gs.field).unwrap();
+    }
+    let mut ctx = CodeGenCtx::new(0, 0, gs.num_challenges.len().max(1), "n");
+    let mut out = Vec::new();
+    for c in &gs.constraints {
+        pil_code_gen(&mut ctx, &[], &expressions, c.expr as usize, 0).unwrap();
+        let block = build_code(&mut ctx).unwrap();
+        ctx.tmp_used = block.tmp_used;
+        out.push(serde_json::to_value(&block.code).unwrap());
+    }
+    out
+}
+
 /// One former global constraint's code: the value of its last instruction.
 fn eval_code(code: &[Value], inp: &Inputs) -> Result<E3> {
     let mut tmp: HashMap<u64, E3> = HashMap::new();
@@ -137,13 +158,13 @@ fn assert_same_values(gs: &GlobalSystem, seeds: std::ops::Range<u64>) {
     for (r, c) in dag.roots.iter().zip(&gs.constraints) {
         assert_eq!(r.label, c.label);
     }
-    let old = global_constraints_json(gs).unwrap();
+    let old = former_code(gs);
     let t = GlobalTables::of(gs);
     for seed in seeds {
         let inp = inputs(&t, seed);
         let new = eval_dag(&dag, &t, &inp).unwrap();
-        for (k, c) in old["constraints"].as_array().unwrap().iter().enumerate() {
-            let want = eval_code(c["code"].as_array().unwrap(), &inp).unwrap();
+        for (k, code) in old.iter().enumerate() {
+            let want = eval_code(code.as_array().unwrap(), &inp).unwrap();
             assert_eq!(new[k], want, "constraint {k}, seed {seed}");
         }
     }
