@@ -291,14 +291,15 @@ void extendAndMerkelize_inplace(uint64_t step, SetupCtx& setupCtx, MerkleTreeGL*
         const bool aliased = (src + offset_src) == (dst + offset_dst);
         ntt.LDE(dst, offset_dst, src, offset_src, setupCtx.starkInfo.starkStruct.nBits, setupCtx.starkInfo.starkStruct.nBitsExt, nCols, timer, stream, !aliased, (gl64_t*)pNodes, setupCtx.starkInfo.getNumNodesMTCommit(NExtended));
         PROOFMAN_SUMCHECK("proof_after_lde_cm%u", dst + offset_dst, (uint64_t)NExtended * nCols, stream, (unsigned)step);
-        if (!skipTree) {
-            TimerStartCategoryGPU(timer, MERKLE_TREE);
-            buildCommitTreeGPU(setupCtx.starkInfo.dropLeafLevel, setupCtx.starkInfo.starkStruct.merkleTreeArity, (uint64_t*)pNodes, (uint64_t*)(dst + offset_dst), nCols, NExtended, resolveLayout(setupCtx.starkInfo.starkStruct.nBits, nCols), stream);
-            TimerStopCategoryGPU(timer, MERKLE_TREE);
-        }
+    }
+    // a stage with no columns still commits, as the CPU does: the tree of empty leaves
+    if (!skipTree) {
+        TimerStartCategoryGPU(timer, MERKLE_TREE);
+        buildCommitTreeGPU(setupCtx.starkInfo.dropLeafLevel, setupCtx.starkInfo.starkStruct.merkleTreeArity, (uint64_t*)pNodes, (uint64_t*)(dst + offset_dst), nCols, NExtended, resolveLayout(setupCtx.starkInfo.starkStruct.nBits, nCols), stream);
+        TimerStopCategoryGPU(timer, MERKLE_TREE);
     }
 
-    if (nCols > 0 && !skipTree)
+    if (!skipTree)
     {
         uint64_t tree_size = setupCtx.starkInfo.getNumNodesMTCommit(NExtended);
         PROOFMAN_SUMCHECK("proof_root_cm%u", &pNodes[tree_size - HASH_SIZE], HASH_SIZE, stream, (unsigned)step);
@@ -1024,6 +1025,8 @@ void proveQueries_inplace(SetupCtx& setupCtx, gl64_t *d_queries_buff, uint64_t *
 
     for (uint k = 0; k < nTrees; k++)
     {
+        // a stage with no columns (its challenges are pilout-wide) opens none: a 0-block grid is a launch error
+        if (trees[k]->getMerkleTreeWidth() == 0) continue;
         dim3 nThreads(32, 32);
         dim3 nBlocks((trees[k]->getMerkleTreeWidth() + nThreads.x - 1) / nThreads.x, (nQueries + nThreads.y - 1) / nThreads.y);
         if (k < nStages + 1)
