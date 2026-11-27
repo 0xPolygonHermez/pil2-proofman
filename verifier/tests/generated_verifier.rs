@@ -27,9 +27,11 @@ fn real_tampered_and_changed_dag() {
         return;
     }
     assert!(gen::verify(&proof, &vk), "the real proof must verify");
+    let verifier = gen::Verifier::new().expect("the DAG checks against its tables");
+    assert!(verifier.verify(&proof, &vk), "the real proof must verify with a held verifier");
     // the first evals word follows the n_stages + 1 roots; the generator emits nStages = 2 only
     proof.proof[4 * 3] = proof.proof[4 * 3].wrapping_add(1);
-    assert!(!gen::verify(&proof, &vk), "a tampered evals word must be rejected");
+    assert!(!verifier.verify(&proof, &vk), "a tampered evals word must be rejected");
 }
 
 #[test]
@@ -40,5 +42,11 @@ fn time_verify_100() {
     for _ in 0..100 {
         assert!(gen::verify(&proof, &vk));
     }
-    println!("mean verify: {:?}", t.elapsed() / 100);
+    println!("mean verify, the DAG parsed per call: {:?}", t.elapsed() / 100);
+    let verifier = gen::Verifier::new().unwrap();
+    let t = std::time::Instant::now();
+    for _ in 0..100 {
+        assert!(verifier.verify(&proof, &vk));
+    }
+    println!("mean verify, the DAG parsed once: {:?}", t.elapsed() / 100);
 }

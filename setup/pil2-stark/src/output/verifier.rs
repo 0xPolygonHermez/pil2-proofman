@@ -89,9 +89,6 @@ fn prepare_verifier_rust(stark_info: &StarkInfo, verifier_info: &VerifierInfo, h
     lines.push(String::new());
     lines.extend(dag_tables_rust(&tables));
     lines.push(String::new());
-    lines.push("fn constraints() -> Option<AirConstraints> {".to_string());
-    lines.push("    AirConstraints::from_json(CONSTRAINT_DAG, &dag_tables()).ok()".to_string());
-    lines.push("}\n".to_string());
 
     // The shared STARK geometry, identical for both low-degree tests.
 
@@ -202,32 +199,49 @@ fn prepare_verifier_rust(stark_info: &StarkInfo, verifier_info: &VerifierInfo, h
         _ => anyhow::bail!("starkinfo and its proof layout disagree on the low-degree test"),
     }
 
-    // verify function. Generics: leaf, compression, transcript, grinding hashes.
+    // The verifier holds its constraints, parsed, checked and resolved once; `verify` builds one per call.
     let generics = format!("{merkle_hash_type}, {merkle_hash_type}, {transcript_type}, {grinding_type}");
     let verify_fn = if is_stir { "stark_verify_stir" } else { "stark_verify" };
+    let info_type = if is_stir { "StirVerifierInfo" } else { "VerifierInfo" };
+    lines.extend([
+        "/// The verifier with its constraint DAG parsed, checked and resolved once: build one, verify many proofs."
+            .into(),
+        "pub struct Verifier {".into(),
+        format!("    info: {info_type},"),
+        "    constraints: AirConstraints,".into(),
+        "}\n".into(),
+        "impl Verifier {".into(),
+        "    /// `None` when the constraint DAG does not check against its tables.".into(),
+        "    pub fn new() -> Option<Self> {".into(),
+        "        let constraints = AirConstraints::from_json(CONSTRAINT_DAG, &dag_tables()).ok()?;".into(),
+        "        Some(Verifier { info: verifier_info(), constraints })".into(),
+        "    }\n".into(),
+        "    pub fn verify(&self, proof: &VadcopFinalProof, vk: &[u64]) -> bool {".into(),
+        "        self.verify_u64(&proof.proof_with_publics(), vk)".into(),
+        "    }\n".into(),
+        "    pub fn verify_u64(&self, proof: &[u64], vk: &[u64]) -> bool {".into(),
+    ]);
     if stark_info.multiproof {
-        lines.push("pub fn verify(proof: &VadcopFinalProof, vk: &[u64]) -> bool {".to_string());
-        lines.push("    verify_u64(&proof.proof_with_publics(), vk)".to_string());
-        lines.push("}\n".to_string());
-        lines.push("pub fn verify_u64(proof: &[u64], vk: &[u64]) -> bool {".to_string());
-        lines.push("    let info = verifier_info();".to_string());
         lines.push(format!(
-            "    let Some(flat) = crate::expand_proof::<{merkle_hash_type}, {merkle_hash_type}, {transcript_type}>(proof, vk, &info.proof_layout()) else {{"
+            "        let Some(flat) = crate::expand_proof::<{merkle_hash_type}, {merkle_hash_type}, {transcript_type}>(proof, vk, &self.info.proof_layout()) else {{"
         ));
-        lines.push("        return false;".to_string());
-        lines.push("    };".to_string());
-        lines.push("    let Some(constraints) = constraints() else { return false };".to_string());
-        lines.push(format!("    {verify_fn}::<{generics}>(&flat, vk, &info, &constraints)"));
-        lines.push("}\n".to_string());
+        lines.push("            return false;".to_string());
+        lines.push("        };".to_string());
+        lines.push(format!("        {verify_fn}::<{generics}>(&flat, vk, &self.info, &self.constraints)"));
     } else {
-        lines.push("pub fn verify(proof: &VadcopFinalProof, vk: &[u64]) -> bool {".to_string());
-        lines.push("    verify_u64(&proof.proof_with_publics(), vk)".to_string());
-        lines.push("}\n".to_string());
-        lines.push("pub fn verify_u64(proof: &[u64], vk: &[u64]) -> bool {".to_string());
-        lines.push("    let Some(constraints) = constraints() else { return false };".to_string());
-        lines.push(format!("    {verify_fn}::<{generics}>(proof, vk, &verifier_info(), &constraints)"));
-        lines.push("}\n".to_string());
+        lines.push(format!("        {verify_fn}::<{generics}>(proof, vk, &self.info, &self.constraints)"));
     }
+    lines.extend([
+        "    }".to_string(),
+        "}\n".into(),
+        "/// One `Verifier` per call: hold a `Verifier` to verify more than one proof.".into(),
+        "pub fn verify(proof: &VadcopFinalProof, vk: &[u64]) -> bool {".into(),
+        "    Verifier::new().is_some_and(|v| v.verify(proof, vk))".into(),
+        "}\n".into(),
+        "pub fn verify_u64(proof: &[u64], vk: &[u64]) -> bool {".into(),
+        "    Verifier::new().is_some_and(|v| v.verify_u64(proof, vk))".into(),
+        "}\n".into(),
+    ]);
 
     let expected_fn = if is_stir { "expected_stir_proof_size_bytes" } else { "expected_proof_size_bytes" };
     if stark_info.multiproof {
@@ -323,8 +337,8 @@ mod tests {
             assert!(out.contains(&format!("        n_publics: {},", si.n_publics)), "{out}");
             assert_eq!(out.matches("            ColRef {").count(), si.ev_map.len());
             assert_eq!(out.matches("            (").count(), si.challenges_map.len());
-            assert!(out.contains("AirConstraints::from_json(CONSTRAINT_DAG, &dag_tables()).ok()"), "{out}");
-            assert!(out.contains("(proof, vk, &verifier_info(), &constraints)"), "{out}");
+            assert!(out.contains("AirConstraints::from_json(CONSTRAINT_DAG, &dag_tables()).ok()?"), "{out}");
+            assert!(out.contains("(proof, vk, &self.info, &self.constraints)"), "{out}");
             assert!(!out.contains("q_verify"), "{out}");
             rendered += 1;
         }
