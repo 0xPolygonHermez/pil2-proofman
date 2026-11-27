@@ -462,11 +462,15 @@ template parallel QueryBatchGL(k, n) {
             foldStep[q][f] = QueryFoldStep(k, f + 1);
             foldStep[q][f].queriesL0 <== queriesL0[q];
             foldStep[q][f].foldCosets <== foldCosets[q];
-            if (foldPathStart(arity, lastLevels, STEPS, nQueryFoldTrees) > 0) { foldStep[q][f].foldSiblings <== foldSiblings[q]; }
+            if (foldPathStart(arity, lastLevels, STEPS, nQueryFoldTrees) > 0) {
+                foldStep[q][f].foldSiblings <== foldSiblings[q];
+            } else {
+                for (var i = 0; i < wordsPerLevel; i++) { foldStep[q][f].foldSiblings[0][i] <== 0; }
+            }
             foldStep[q][f].last <== foldLast[f];
             foldStep[q][f].root <== foldRoot[f];
             if (fri == 1) { foldStep[q][f].rFold[0] <== rFold[f]; }
-            if (fri == 1 && f == nQueryFoldTrees - 1) { foldStep[q][f].finalPol <== finalPol; }
+            foldStep[q][f].finalPol <== finalPol;
             foldStep[q][f].enable <== enable;
         }
     }
@@ -499,6 +503,9 @@ template QueryL0TreeOpening(k, t) {
     Fold step s >= 1 at one query: fold tree s - 1's coset (f_{s-1} around the query) against the tree
     and, FRI only, that coset folded with rFold equals its member in the next fold tree's coset, or in
     finalPol after the last step. Reads its cosets out of the query's flat fold data.
+    No FRI input is empty: circom (circuit_design/build.rs) divides by a signal's length when it builds a
+    component array that mixes instances, as foldStep does, so every step gets finalPol (only the last
+    reads it) and fold paths all sent in clear still pass one row of zeros. Under STIR there is one step.
 */
 template QueryFoldStep(k, s) {
     var arity = key_arity(k);
@@ -515,11 +522,11 @@ template QueryFoldStep(k, s) {
 
     signal input {binary} queriesL0[STEPS[0]];
     signal input foldCosets[foldCosetStart(STEPS, nQueryFoldTrees)][3];
-    signal input foldSiblings[foldPathStart(arity, lastLevels, STEPS, nQueryFoldTrees)][wordsPerLevel];
+    signal input foldSiblings[nonEmpty(foldPathStart(arity, lastLevels, STEPS, nQueryFoldTrees))][wordsPerLevel];
     signal input last[clearLevelNodes(arity, lastLevels)][4];
     signal input root[4];
     signal input rFold[fri][3];
-    signal input finalPol[foldsIntoFinalPol * lastDomainSize(nSteps, STEPS)][3];
+    signal input finalPol[fri * lastDomainSize(nSteps, STEPS)][3];
     signal input {binary} enable;
 
     signal coset[cosetSize][3];

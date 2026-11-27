@@ -722,11 +722,15 @@ template parallel VerifySingleQueryBN128(k) {
         foldStep[f] = QueryFoldStepBN128(k, f + 1);
         foldStep[f].queriesL0 <== queriesL0;
         foldStep[f].cosets <== cosets;
-        if (foldPathStart(arity, lastLevels, STEPS, nFoldTrees) > 0) { foldStep[f].foldSiblings <== foldSiblings; }
+        if (foldPathStart(arity, lastLevels, STEPS, nFoldTrees) > 0) {
+            foldStep[f].foldSiblings <== foldSiblings;
+        } else {
+            for (var i = 0; i < sw; i++) { foldStep[f].foldSiblings[0][i] <== 0; }
+        }
         foldStep[f].last <== foldLast[f];
         foldStep[f].root <== foldRoot[f];
         foldStep[f].rFold <== rFold[f];
-        if (f == nFoldTrees - 1) { foldStep[f].finalPol <== finalPol; }
+        foldStep[f].finalPol <== finalPol;
         foldStep[f].enable <== enable;
     }
 }
@@ -734,7 +738,8 @@ template parallel VerifySingleQueryBN128(k) {
 /*
     Fold step s >= 1 at one query (QueryFoldStep, emulated): fold tree s - 1's reduced coset against the
     tree, and that coset folded with rFold equals its member in the next fold tree's coset, or in finalPol
-    after the last step.
+    after the last step. No input is empty, as for QueryFoldStep: every step gets finalPol, and fold paths
+    all sent in clear still pass one row of zeros.
 */
 template QueryFoldStepBN128(k, s) {
     var arity = key_arity(k);
@@ -752,11 +757,11 @@ template QueryFoldStepBN128(k, s) {
 
     signal input {binary} queriesL0[STEPS[0]];
     signal input {maxNum} cosets[foldCosetStart(STEPS, nFoldTrees)][3];
-    signal input foldSiblings[foldPathStart(arity, lastLevels, STEPS, nFoldTrees)][sw];
+    signal input foldSiblings[nonEmpty(foldPathStart(arity, lastLevels, STEPS, nFoldTrees))][sw];
     signal input last[clearLevelNodes(arity, lastLevels)][rw];
     signal input root[rw];
     signal input {maxNum} rFold[3];
-    signal input {maxNum} finalPol[foldsIntoFinalPol * lastDomainSize(nSteps, STEPS)][3];
+    signal input {maxNum} finalPol[lastDomainSize(nSteps, STEPS)][3];
     signal input {binary} enable;
 
     signal {maxNum} coset[cosetSize][3];
