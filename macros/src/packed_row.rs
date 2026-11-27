@@ -14,11 +14,13 @@ pub struct PackedGroup {
     pub count: usize,
 }
 
-/// Each field's first bit (lane 0's in a group) and lane stride, and the row's bits.
+/// Each field's first bit (lane 0's in a group) and lane stride, the row's bits, and each column's
+/// bits in order (`UNPACK_INFO`).
 pub struct PackedLayout {
     pub start: Vec<usize>,
     pub lane_bits: Vec<Option<usize>>,
     pub bits: usize,
+    pub widths: Vec<u64>,
 }
 
 /// Each element's width.
@@ -31,54 +33,37 @@ pub fn element_bits(ty: &BitType) -> usize {
 }
 
 /// Fields in order, a group's lane by lane; `F` fields take no bits.
-pub fn packed_layout(fields: &[TraceField], groups: &[PackedGroup]) -> PackedLayout {
+fn packed_layout(fields: &[TraceField], groups: &[PackedGroup]) -> PackedLayout {
     let bits = |j: usize| compute_total_bits(&fields[j].ty);
-    let mut start = vec![0; fields.len()];
-    let mut lane_bits = vec![None; fields.len()];
-    let (mut offset, mut i) = (0, 0);
+    let mut layout =
+        PackedLayout { start: vec![0; fields.len()], lane_bits: vec![None; fields.len()], bits: 0, widths: vec![] };
+    // Field `j`'s columns in one of `lanes` lanes.
+    let columns = |widths: &mut Vec<u64>, j: usize, lanes: usize| {
+        let w = element_bits(&fields[j].ty);
+        widths.extend(std::iter::repeat_n(w as u64, bits(j).checked_div(w).unwrap_or(0) / lanes));
+    };
+    let mut i = 0;
     while i < fields.len() {
         let Some(g) = groups.iter().find(|g| g.first == i) else {
-            start[i] = offset;
-            offset += bits(i);
+            layout.start[i] = layout.bits;
+            layout.bits += bits(i);
+            columns(&mut layout.widths, i, 1);
             i += 1;
             continue;
         };
         let lane: usize = (i..i + g.len).map(|j| bits(j) / g.count).sum();
-        let mut at = offset;
+        let mut at = layout.bits;
         for j in i..i + g.len {
-            (start[j], lane_bits[j]) = (at, Some(lane));
+            (layout.start[j], layout.lane_bits[j]) = (at, Some(lane));
             at += bits(j) / g.count;
         }
-        offset += g.count * lane;
+        for _ in 0..g.count {
+            (i..i + g.len).for_each(|j| columns(&mut layout.widths, j, g.count));
+        }
+        layout.bits += g.count * lane;
         i += g.len;
     }
-    PackedLayout { start, lane_bits, bits: offset }
-}
-
-/// Each column's bits in `UNPACK_INFO` order, a group lane by lane.
-pub fn unpack_widths(fields: &[TraceField], groups: &[PackedGroup]) -> Vec<u64> {
-    let mut widths = vec![];
-    let mut push = |j: usize, lanes: usize| {
-        let w = element_bits(&fields[j].ty);
-        let elements = compute_total_bits(&fields[j].ty).checked_div(w).unwrap_or(0) / lanes;
-        widths.extend(std::iter::repeat_n(w as u64, elements));
-    };
-    let mut i = 0;
-    while i < fields.len() {
-        match groups.iter().find(|g| g.first == i) {
-            Some(g) => {
-                for _ in 0..g.count {
-                    (i..i + g.len).for_each(|j| push(j, g.count));
-                }
-                i += g.len;
-            }
-            None => {
-                push(i, 1);
-                i += 1;
-            }
-        }
-    }
-    widths
+    layout
 }
 
 /// With `unpack`, the row also has `UNPACK_INFO`, its columns' bits for the prover's unpack.
@@ -100,7 +85,7 @@ pub fn packed_row_impl(
     let packed_bits = layout.bits;
     let packed_words = packed_bits.div_ceil(64);
     let unpack_info = (unpack && fields.iter().all(|f| !contains_generic(&f.ty))).then(|| {
-        let widths = unpack_widths(fields, groups);
+        let widths = &layout.widths;
         let n = widths.len();
         quote! { pub const UNPACK_INFO: [u64; #n] = [#(#widths),*]; }
     });
@@ -124,9 +109,18 @@ pub fn packed_row_impl(
     };
 
     let generic_fields = get_packed_fields(fields);
-    let setter_getters = get_packed_setters_getters(fields, &layout);
+    let (setter_getters, hidden_setter_getters) = get_packed_setters_getters(fields, &layout);
 
     let default_field_exprs = get_default_field_exprs(fields);
+    // A lane's columns: the plumbing of its views.
+    let hidden_impl = (!hidden_setter_getters.is_empty()).then(|| {
+        quote! {
+            #[doc(hidden)]
+            impl #generics_with_bounds #name #generics {
+                #(#hidden_setter_getters)*
+            }
+        }
+    });
 
     quote! {
         #[repr(C)]
@@ -151,6 +145,8 @@ pub fn packed_row_impl(
             #unpack_info
             #(#setter_getters)*
         }
+
+        #hidden_impl
 
         impl #generics_with_bounds proofman_common::trace::TraceRow for #name #generics {
             const ROW_SIZE: usize = #total_row_size; // Packed words + generic fields
@@ -184,22 +180,25 @@ fn get_packed_fields(fields: &[TraceField]) -> Vec<TokenStream> {
     packed_fields
 }
 
-fn get_packed_setters_getters(fields: &[TraceField], layout: &PackedLayout) -> Vec<TokenStream> {
-    let mut setter_getters = vec![];
+/// The fields' accessors, and the hidden fields' apart.
+fn get_packed_setters_getters(fields: &[TraceField], layout: &PackedLayout) -> (Vec<TokenStream>, Vec<TokenStream>) {
+    let (mut shown, mut hidden) = (vec![], vec![]);
     for (i, f) in fields.iter().enumerate() {
+        let setter_getters = if f.hidden { &mut hidden } else { &mut shown };
         if contains_generic(&f.ty) {
             // For generic fields, only generate setters/getters for non-array fields
             // Array fields can be accessed directly
             if !is_array(&f.ty) {
-                add_generic_setter_getter(&f.name, &mut setter_getters);
+                add_generic_setter_getter(&f.name, setter_getters);
             }
         } else if is_array(&f.ty) {
-            add_packed_array_setter_getter(&f.name, &f.ty, layout.start[i], layout.lane_bits[i], &mut setter_getters);
+            let whole = !f.hidden;
+            add_packed_array_setter_getter(&f.name, &f.ty, layout.start[i], layout.lane_bits[i], whole, setter_getters);
         } else {
-            add_packed_setter_getter(&f.name, &f.ty, layout.start[i], &mut setter_getters);
+            add_packed_setter_getter(&f.name, &f.ty, layout.start[i], setter_getters);
         }
     }
-    setter_getters
+    (shown, hidden)
 }
 
 fn add_generic_setter_getter(field_name: &Ident, setter_getters: &mut Vec<TokenStream>) {
@@ -247,12 +246,14 @@ fn add_packed_setter_getter(
     setter_getters.push(tokens);
 }
 
-/// With `lane_bits`, `dims[0]` is the lane and lane `i0` sits `i0 * lane_bits` bits further.
+/// With `lane_bits`, `dims[0]` is the lane and lane `i0` sits `i0 * lane_bits` bits further;
+/// with `whole`, also the whole-array accessors.
 fn add_packed_array_setter_getter(
     field_name: &Ident,
     field_type: &BitType,
     base_offset: usize,
     lane_bits: Option<usize>,
+    whole: bool,
     setter_getters: &mut Vec<TokenStream>,
 ) {
     let (bit_width, dims, acc_dims) = collect_dimensions(field_type);
@@ -422,6 +423,27 @@ fn add_packed_array_setter_getter(
     // arrays was only stabilized in Rust 1.55).
     let zero_init = zero_init_expr(bit_width, field_type);
 
+    // Whole-array versions — fully unrolled, all bit-offsets and masks are immediate
+    // literals.  No branches; LLVM can auto-vectorise the straight-line code.
+    // `values` and the return type preserve the declared shape (e.g. [[u8; 4]; 3]).
+    // #[inline] (not always) to let the compiler decide at each call site.
+    let whole_array = whole.then(|| {
+        quote! {
+            #[inline]
+            pub fn #setter_name_all(&mut self, values: &#nested_type) {
+                #(#bulk_clear_stmts)*
+                #(#all_setter_stmts)*
+            }
+
+            #[inline]
+            pub fn #getter_name_all(&self) -> #nested_type {
+                let mut result: #nested_type = #zero_init;
+                #(#all_getter_stmts)*
+                result
+            }
+        }
+    });
+
     setter_getters.push(quote! {
         // Runtime-indexed version — arithmetic-based, O(1) generated code regardless of
         // array size. Per-dimension bounds checks catch aliased out-of-range indices in
@@ -476,22 +498,7 @@ fn add_packed_array_setter_getter(
             #conversion
         }
 
-        // Whole-array versions — fully unrolled, all bit-offsets and masks are immediate
-        // literals.  No branches; LLVM can auto-vectorise the straight-line code.
-        // `values` and the return type preserve the declared shape (e.g. [[u8; 4]; 3]).
-        // #[inline] (not always) to let the compiler decide at each call site.
-        #[inline]
-        pub fn #setter_name_all(&mut self, values: &#nested_type) {
-            #(#bulk_clear_stmts)*
-            #(#all_setter_stmts)*
-        }
-
-        #[inline]
-        pub fn #getter_name_all(&self) -> #nested_type {
-            let mut result: #nested_type = #zero_init;
-            #(#all_getter_stmts)*
-            result
-        }
+        #whole_array
     });
 }
 

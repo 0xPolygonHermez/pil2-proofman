@@ -163,9 +163,9 @@ fn stage1_columns(
     Ok(columns)
 }
 
-/// Lane names the generated Rust would reject: a type of the row (`{Row}{Lane}`, its `View`/`Ops`,
-/// the row's own), a row field or flattened accessor (`{lane}_{column}`) defined twice, or a lane's
-/// trait method (`x(lane)`) named as a column's.
+/// Lane names the generated Rust would reject: a name that is not an identifier, a type of the row
+/// (`{Row}{Lane}`, its `View`, the row's own), a row field or flattened accessor (the lane prefixing its column)
+/// defined twice, or a lane's trait method (`x(lane)`) named as a column's.
 fn check_lane_names(plain: &[String], groups: &[LaneGroup]) -> Result<(), String> {
     // As the macro names a lane's struct: each `_`-separated word capitalised.
     let pascal = |s: &str| -> String {
@@ -174,14 +174,18 @@ fn check_lane_names(plain: &[String], groups: &[LaneGroup]) -> Result<(), String
             .collect()
     };
     let lanes: Vec<&str> = groups.iter().map(|g| g.name.as_str()).collect();
-    let flat = groups.iter().flat_map(|g| g.fields.iter().map(move |f| format!("{}_{}", g.name, f.name)));
+    if let Some(lane) = lanes.iter().find(|l| !is_identifier(l)) {
+        return Err(format!("lane `{lane}` is not a Rust identifier"));
+    }
+    let flat: Vec<String> =
+        groups.iter().flat_map(|g| g.fields.iter().map(move |f| flat_name(&g.name, &f.name))).collect();
     let mut names: Vec<String> = plain.iter().cloned().chain(lanes.iter().map(|l| l.to_string())).collect();
-    let mut accessors: Vec<String> = plain.iter().cloned().chain(flat).collect();
+    let mut accessors: Vec<String> = plain.iter().chain(&flat).cloned().collect();
     // Suffixes of the row's name.
     let mut types: Vec<String> = ["", "Ops", "Packed", "PackedIndexed", "InstrTable"].map(String::from).to_vec();
     types.extend(lanes.iter().flat_map(|l| {
         let t = pascal(l);
-        [format!("{t}View"), format!("{t}Ops"), t]
+        [format!("{t}View"), t]
     }));
     for (what, list) in [("field", &mut names), ("accessor", &mut accessors), ("type suffix", &mut types)] {
         list.sort();
@@ -189,13 +193,42 @@ fn check_lane_names(plain: &[String], groups: &[LaneGroup]) -> Result<(), String
             return Err(format!("its row would define {what} `{}` twice", w[0]));
         }
     }
-    // The row trait has a lane's method beside each column's setters and getters.
-    let methods: Vec<String> =
-        accessors.iter().flat_map(|a| ["set_", "get_", "set_all_", "get_all_"].map(|p| format!("{p}{a}"))).collect();
+    // The row trait has a lane's method beside each column's setters and getters; a lane's
+    // flattened columns have no whole-array ones.
+    let methods: Vec<String> = plain
+        .iter()
+        .flat_map(|a| ["set_", "get_", "set_all_", "get_all_"].map(|p| format!("{p}{a}")))
+        .chain(flat.iter().flat_map(|a| ["set_", "get_"].map(|p| format!("{p}{a}"))))
+        .collect();
     if let Some(lane) = lanes.iter().find(|l| methods.iter().any(|m| m == *l)) {
         return Err(format!("its row would define method `{lane}` twice"));
     }
     Ok(())
+}
+
+/// As the macro flattens field `f` of lane `l` into the row: `l` as a prefix (`a_` and `a` give `a_x`).
+fn flat_name(lane: &str, field: &str) -> String {
+    if lane.ends_with('_') {
+        format!("{lane}{field}")
+    } else {
+        format!("{lane}_{field}")
+    }
+}
+
+/// Whether `s` can name a Rust field and method: not `_`, nor a keyword.
+fn is_identifier(s: &str) -> bool {
+    const KEYWORDS: &[&str] = &[
+        "as", "async", "await", "break", "const", "continue", "crate", "dyn", "else", "enum", "extern", "false", "fn",
+        "for", "if", "impl", "in", "let", "loop", "match", "mod", "move", "mut", "pub", "ref", "return", "self",
+        "Self", "static", "struct", "super", "trait", "true", "type", "unsafe", "use", "where", "while", "abstract",
+        "become", "box", "do", "final", "gen", "macro", "override", "priv", "try", "typeof", "unsized", "virtual",
+        "yield",
+    ];
+    let mut chars = s.chars();
+    chars.next().is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+        && s != "_"
+        && !KEYWORDS.contains(&s)
 }
 
 /// Whether `pilout` is over BN128's `Fr` rather than Goldilocks: whether its `baseField`, a big-endian
@@ -926,5 +959,12 @@ mod tests {
         }
         let err = pil_helpers(&dir, &pilout).unwrap_err();
         assert!(err.contains("method `get_a` twice"), "{err}");
+        // An inline with no prefix (`alias _[n]`) has no name to give its field.
+        let mut pilout = lanes_pilout();
+        for s in pilout.symbols.iter_mut().filter_map(|s| s.lane.as_mut()).filter(|l| l.lane_name == "bin") {
+            s.lane_name = "_".into();
+        }
+        let err = pil_helpers(&dir, &pilout).unwrap_err();
+        assert!(err.contains("lane `_` is not a Rust identifier"), "{err}");
     }
 }

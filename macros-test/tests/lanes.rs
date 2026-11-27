@@ -28,13 +28,13 @@ type F = Goldilocks;
 const _: () = assert!(<LRow<F> as TraceRow>::ROW_SIZE == <FlatRow<F> as TraceRow>::ROW_SIZE);
 const _: () = assert!(LRowPacked::<F>::UNPACK_INFO.len() == FlatRowPacked::<F>::UNPACK_INFO.len());
 const _: () = assert!(LRowPacked::<F>::PACKED_BITS == FlatRowPacked::<F>::PACKED_BITS);
-const _: () = assert!(LRowHiView::<'static, LRowPacked<F>>::LANES == 3);
 
 fn value(l: usize, k: u64) -> u64 {
     (l as u64 + 1).wrapping_mul(0x9E37_79B9_7F4A_7C15u64.wrapping_mul(k + 1))
 }
 
-fn fill_hi<L: LRowHiOps<F>>(lane: &mut L, l: usize) {
+fn fill_hi<R: LRowOps<F>>(row: &mut R, l: usize) {
+    let mut lane = row.hi(l);
     lane.set_flag(l % 2 == 1);
     lane.set_a(value(l, 0) & ((1 << 40) - 1));
     for i in 0..2 {
@@ -57,7 +57,7 @@ fn fill_into<R: LRowOps<F>>(row: &mut R) {
     bin.set_flag(true);
     bin.set_a(value(7, 0) & ((1 << 40) - 1));
     for l in 0..3 {
-        fill_hi(&mut row.hi(l), l);
+        fill_hi(row, l);
     }
     for l in 0..2 {
         row.lo(l).set_b(100 + l as u8);
@@ -153,27 +153,28 @@ fn a_lane_reads_back_what_the_row_wrote() {
         assert_eq!(lane.get_a(), value(l, 0) & ((1 << 40) - 1));
         assert_eq!(lane.get_v(1), value(l, 2) as u16);
         assert_eq!(lane.get_w(1, 2), value(l, 8) as u8);
-        assert_eq!(row.get_hi_w(l, 1, 2), value(l, 8) as u8);
     }
-    assert_eq!(row.get_all_lo_b(), [100, 101]);
+    assert_eq!([row.lo(0).get_b(), row.lo(1).get_b()], [100, 101]);
 }
 
+// A lane's array is whole inside the lane, as in a row of its own.
 #[test]
-fn whole_arrays_span_every_lane() {
+fn a_lanes_arrays_are_whole() {
     let mut row = LRowPacked::<F>::default();
     let w = [[1, 2, 3], [4, 5, 6]];
-    row.set_all_hi_v(&[[7, 8], [9, 10], [11, 12]]);
+    row.hi(1).set_all_v(&[9, 10]);
     assert_eq!(row.hi(1).get_v(1), 10);
-    row.set_all_hi_flag(&[true, false, true]);
-    assert_eq!(row.get_all_hi_flag(), [true, false, true]);
+    assert_eq!(row.hi(0).get_all_v(), [0, 0]);
+    row.hi(2).set_all_w(&w);
+    assert_eq!(row.hi(2).get_all_w(), w);
 
-    // The unpacked lane is a row of its own.
+    // The unpacked lane is a struct, its columns `F`s.
     let mut unpacked = LRow::<F>::default();
     unpacked.hi[1].set_all_w(&w);
-    assert_eq!(unpacked.get_hi_w(1, 1, 0), 4);
+    assert_eq!(unpacked.hi(1).get_w(1, 0), 4);
     assert_eq!(unpacked.hi[1].w[1][0], F::from_u64(4));
     unpacked.bin.set_a(9);
-    assert_eq!(unpacked.get_bin_a(), 9);
+    assert_eq!(unpacked.bin().get_a(), 9);
 }
 
 // Without `bits(n)` every column is an `F`: unpacked only.
@@ -204,12 +205,27 @@ fn a_row_of_f_columns_has_its_lanes_side_by_side() {
     assert_eq!(words::<_, F>(&row)[4], F::from_u64(7));
 }
 
+// Steps spread over the lanes of a row before the next row.
 #[test]
 fn steps_fill_a_row_lane_by_lane() {
     let mut rows = [LRowPacked::<F>::default(); 2];
     for step in 0..6 {
-        LRowHiView::step(&mut rows, step).set_a(step as u64);
+        rows[step / 3].hi(step % 3).set_a(step as u64);
     }
-    assert_eq!(rows[0].get_all_hi_a(), [0, 1, 2]);
-    assert_eq!(rows[1].get_all_hi_a(), [3, 4, 5]);
+    let a = |r: &mut LRowPacked<F>| [0, 1, 2].map(|l| r.hi(l).get_a());
+    assert_eq!(a(&mut rows[0]), [0, 1, 2]);
+    assert_eq!(a(&mut rows[1]), [3, 4, 5]);
+}
+
+// The lane is named as the PIL's alias, its trailing `_` included.
+trace_row!(AliasRow<F> {
+    a_: [lane { x: u16, v: [u8; 2] }; 2],
+});
+
+#[test]
+fn a_lane_keeps_the_alias() {
+    let mut row = AliasRowPacked::<F>::default();
+    row.a_(1).set_x(7);
+    row.a_(1).set_all_v(&[1, 2]);
+    assert_eq!((row.a_(1).get_x(), row.a_(1).get_v(1), row.a_(0).get_x()), (7, 2, 0));
 }

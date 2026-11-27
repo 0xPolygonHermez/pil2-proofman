@@ -1,6 +1,7 @@
 // lanes.rs - rows with lanes: `x: lane { .. }` and `x: [lane { .. }; n]` fields, laid out in
-// order. Per lane: struct `RowX<F>`, view `RowXView` (`RowOps::x(lane)`) and its `RowXOps`;
-// the row's own accessors flatten field `a` of `x` to `x_a`, the lane first for an array.
+// order. Per lane: struct `RowX<F>` and view `RowXView` (`RowOps::x(lane)`), which has the
+// accessors a row of the lane's columns would have. Under it, the row's hidden accessors of
+// field `a` of `x` (`x_a`, the lane first for an array) reach the packed or unpacked row.
 
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
@@ -65,7 +66,7 @@ pub fn flat_field(lane: &LaneItem, f: &TraceField) -> TraceField {
         Some(n) => BitType::Array(Box::new(f.ty.clone()), n),
         None => f.ty.clone(),
     };
-    TraceField { name: flat_name(&lane.name, &f.name), ty }
+    TraceField { name: flat_name(&lane.name, &f.name), ty, hidden: true }
 }
 
 pub fn lane_row_impl(input: &TraceRowInput) -> TokenStream {
@@ -90,14 +91,14 @@ pub fn lane_row_impl(input: &TraceRowInput) -> TokenStream {
         let view = format_ident!("{}View", lane_struct(name, l));
         match l.count {
             Some(n) => quote! {
-                fn #method(&mut self, lane: usize) -> #view<'_, Self> where Self: Sized {
+                fn #method(&mut self, lane: usize) -> #view<'_, #g, Self> where Self: Sized {
                     debug_assert!(lane < #n, "lane {lane} out of the {} of `{}`", #n, stringify!(#method));
-                    #view { row: self, lane }
+                    #view { row: self, lane, _field: std::marker::PhantomData }
                 }
             },
             None => quote! {
-                fn #method(&mut self) -> #view<'_, Self> where Self: Sized {
-                    #view { row: self, lane: 0 }
+                fn #method(&mut self) -> #view<'_, #g, Self> where Self: Sized {
+                    #view { row: self, lane: 0, _field: std::marker::PhantomData }
                 }
             },
         }
@@ -184,11 +185,20 @@ fn unpacked_lanes_row(name: &Ident, g: &Ident, items: &[RowItem]) -> TokenStream
 
         impl<#g: Copy + Default + Send> #name<#g> {
             #(#untyped)*
-            #(#untyped_lane)*
         }
 
         impl<#g: PrimeField64 + Copy + Default + Send> #name<#g> {
             #(#typed)*
+        }
+
+        // The lanes' columns: the plumbing of their views.
+        #[doc(hidden)]
+        impl<#g: Copy + Default + Send> #name<#g> {
+            #(#untyped_lane)*
+        }
+
+        #[doc(hidden)]
+        impl<#g: PrimeField64 + Copy + Default + Send> #name<#g> {
             #(#accessors)*
         }
 
@@ -203,16 +213,14 @@ fn unpacked_lanes_row(name: &Ident, g: &Ident, items: &[RowItem]) -> TokenStream
 fn lane_accessors(lane: &LaneItem, f: &TraceField) -> TokenStream {
     let flat = flat_name(&lane.name, &f.name);
     let (setter, getter) = (format_ident!("set_{}", flat), format_ident!("get_{}", flat));
-    let (setter_all, getter_all) = (format_ident!("set_all_{}", flat), format_ident!("get_all_{}", flat));
     let (lane_setter, lane_getter) = (format_ident!("set_{}", f.name), format_ident!("get_{}", f.name));
-    let (lane_setter_all, lane_getter_all) = (format_ident!("set_all_{}", f.name), format_ident!("get_all_{}", f.name));
-    let (rust_ty, idx, nested) = lane_shape(&f.ty);
+    let (rust_ty, idx, _) = lane_shape(&f.ty);
     let field = &lane.name;
     let (lane_arg, at) = match lane.count {
         Some(_) => (quote! { lane: usize, }, quote! { [lane] }),
         None => (quote! {}, quote! {}),
     };
-    let one = quote! {
+    quote! {
         #[inline(always)]
         pub fn #setter(&mut self, #lane_arg #(#idx: usize,)* value: #rust_ty) {
             self.#field #at.#lane_setter(#(#idx,)* value)
@@ -221,96 +229,65 @@ fn lane_accessors(lane: &LaneItem, f: &TraceField) -> TokenStream {
         pub fn #getter(&self, #lane_arg #(#idx: usize),*) -> #rust_ty {
             self.#field #at.#lane_getter(#(#idx),*)
         }
-    };
-    // Whole arrays: a single lane's own, or one value per lane of an array.
-    let all = match (lane.count, is_array(&f.ty)) {
-        (None, false) => quote! {},
-        (None, true) => quote! {
-            #[inline]
-            pub fn #setter_all(&mut self, values: &#nested) { self.#field.#lane_setter_all(values) }
-            #[inline]
-            pub fn #getter_all(&self) -> #nested { self.#field.#lane_getter_all() }
-        },
-        (Some(n), array) => {
-            let (set, get) = if array {
-                (quote! { lane.#lane_setter_all(v) }, quote! { self.#field[l].#lane_getter_all() })
-            } else {
-                (quote! { lane.#lane_setter(*v) }, quote! { self.#field[l].#lane_getter() })
-            };
-            quote! {
-                #[inline]
-                pub fn #setter_all(&mut self, values: &[#nested; #n]) {
-                    for (lane, v) in self.#field.iter_mut().zip(values) {
-                        #set;
-                    }
-                }
-                #[inline]
-                pub fn #getter_all(&self) -> [#nested; #n] {
-                    std::array::from_fn(|l| #get)
-                }
-            }
-        }
-    };
-    quote! { #one #all }
+    }
 }
 
-/// `RowXView`, one lane of a row, and its `RowXOps` accessors, which forward to the row's.
+/// `RowXView`, one lane of a row, with the accessors a row of the lane's columns would have.
 fn lane_view(row: &Ident, row_trait: &Ident, g: &Ident, lane: &LaneItem) -> TokenStream {
-    let lane_name = lane_struct(row, lane);
-    let lane_trait = format_ident!("{}Ops", lane_name);
-    let view = format_ident!("{}View", lane_name);
+    let view = format_ident!("{}View", lane_struct(row, lane));
     let lane_arg = lane.count.map(|_| quote! { self.lane, });
 
     // `F` fields have no accessors, as in a row without lanes.
-    let (signatures, methods): (Vec<_>, Vec<_>) = lane
-        .fields
-        .iter()
-        .filter(|f| !contains_generic(&f.ty))
-        .map(|f| {
-            let flat = flat_name(&lane.name, &f.name);
-            let (row_setter, row_getter) = (format_ident!("set_{}", flat), format_ident!("get_{}", flat));
-            let (setter, getter) = (format_ident!("set_{}", f.name), format_ident!("get_{}", f.name));
-            let (rust_ty, idx, _) = lane_shape(&f.ty);
-            let set = quote! { fn #setter(&mut self, #(#idx: usize,)* value: #rust_ty) where #g: PrimeField64 };
-            let get = quote! { fn #getter(&self, #(#idx: usize),*) -> #rust_ty where #g: PrimeField64 };
-            (
-                quote! { #set; #get; },
-                quote! {
-                    #[inline(always)]
-                    #set { #row_trait::#row_setter(self.row, #lane_arg #(#idx,)* value) }
-                    #[inline(always)]
-                    #get { #row_trait::#row_getter(&*self.row, #lane_arg #(#idx),*) }
-                },
-            )
-        })
-        .unzip();
-
-    let steps = lane.count.map(|n| {
+    let methods = lane.fields.iter().filter(|f| !contains_generic(&f.ty)).map(|f| {
+        let flat = flat_name(&lane.name, &f.name);
+        let (row_setter, row_getter) = (format_ident!("set_{}", flat), format_ident!("get_{}", flat));
+        let (setter, getter) = (format_ident!("set_{}", f.name), format_ident!("get_{}", f.name));
+        let (rust_ty, idx, nested) = lane_shape(&f.ty);
+        let one = quote! {
+            #[inline(always)]
+            pub fn #setter(&mut self, #(#idx: usize,)* value: #rust_ty) where #g: PrimeField64 {
+                #row_trait::#row_setter(self.row, #lane_arg #(#idx,)* value)
+            }
+            #[inline(always)]
+            pub fn #getter(&self, #(#idx: usize),*) -> #rust_ty where #g: PrimeField64 {
+                #row_trait::#row_getter(&*self.row, #lane_arg #(#idx),*)
+            }
+        };
+        if !is_array(&f.ty) {
+            return one;
+        }
+        // The whole array, as a row's `set_all_` / `get_all_`, element by element.
+        let (_, dims, _) = collect_dimensions(&f.ty);
+        let elements: Vec<Vec<usize>> = dims.iter().fold(vec![vec![]], |acc, &d| {
+            acc.into_iter().flat_map(|p| (0..d).map(move |i| [p.clone(), vec![i]].concat())).collect()
+        });
+        let (setter_all, getter_all) = (format_ident!("set_all_{}", f.name), format_ident!("get_all_{}", f.name));
+        let sets = elements.iter().map(|e| quote! { self.#setter(#(#e,)* values #([#e])*); });
+        let gets = elements.iter().map(|e| quote! { result #([#e])* = self.#getter(#(#e),*); });
+        let zero = dims.iter().rev().fold(quote! { <#rust_ty>::default() }, |acc, d| quote! { [#acc; #d] });
         quote! {
-            impl<'a, R> #view<'a, R> {
-                pub const LANES: usize = #n;
-
-                /// The lane of `rows` holding `step`, a row's lanes filled before the next row.
-                pub fn step(rows: &'a mut [R], step: usize) -> Self {
-                    Self { row: &mut rows[step / #n], lane: step % #n }
-                }
+            #one
+            #[inline]
+            pub fn #setter_all(&mut self, values: &#nested) where #g: PrimeField64 {
+                #(#sets)*
+            }
+            #[inline]
+            pub fn #getter_all(&self) -> #nested where #g: PrimeField64 {
+                let mut result: #nested = #zero;
+                #(#gets)*
+                result
             }
         }
     });
 
     quote! {
-        pub struct #view<'a, R> {
-            pub row: &'a mut R,
-            pub lane: usize,
+        pub struct #view<'a, #g, R> {
+            row: &'a mut R,
+            lane: usize,
+            _field: std::marker::PhantomData<#g>,
         }
 
-        #steps
-
-        pub trait #lane_trait<#g: Copy + Default + Send + 'static> {
-            #(#signatures)*
-        }
-
-        impl<'a, #g: Copy + Default + Send + 'static, R: #row_trait<#g>> #lane_trait<#g> for #view<'a, R> {
+        impl<'a, #g: Copy + Default + Send + 'static, R: #row_trait<#g>> #view<'a, #g, R> {
             #(#methods)*
         }
     }

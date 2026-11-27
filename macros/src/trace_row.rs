@@ -48,6 +48,9 @@ pub struct LaneItem {
 pub struct TraceField {
     pub name: Ident,
     pub ty: BitType,
+    /// A lane's column flattened into the row: its accessors are the views' plumbing, hidden,
+    /// with no whole-array ones.
+    pub hidden: bool,
 }
 
 /// This enum represents the type of a field in the trace row.
@@ -78,9 +81,18 @@ impl Parse for TraceRowInput {
     }
 }
 
-/// The name a lane's field has in its row: `{lane}_{field}`.
+/// The name a lane's field has in its row: the lane as a prefix, as the PIL's alias is, with a
+/// `_` between unless it ends in one (`a_` and `a` give `a_x`).
 pub fn flat_name(lane: &Ident, field: &Ident) -> Ident {
-    format_ident!("{}_{}", lane, field)
+    format_ident!("{}", flat_str(&lane.to_string(), &field.to_string()))
+}
+
+fn flat_str(lane: &str, field: &str) -> String {
+    if lane.ends_with('_') {
+        format!("{lane}{field}")
+    } else {
+        format!("{lane}_{field}")
+    }
 }
 
 /// A row's items and the row-level names tagged `@instr` (only with `tags`).
@@ -106,14 +118,14 @@ pub fn parse_items(
             if fields.is_empty() {
                 return Err(syn::Error::new_spanned(name, "a lane has at least one field"));
             }
-            instr.extend(lane_instr.iter().map(|f| format!("{name}_{f}")));
+            instr.extend(lane_instr.iter().map(|f| flat_str(&name.to_string(), f)));
             items.push(RowItem::Lane(LaneItem { name, count, fields }));
         } else {
             let ty = parse_bit_type(content, generic)?;
             if parse_tag(content, tags)? {
                 instr.insert(name.to_string());
             }
-            items.push(RowItem::Field(TraceField { name, ty }));
+            items.push(RowItem::Field(TraceField { name, ty, hidden: false }));
         }
         if content.peek(Token![,]) {
             let _comma: Token![,] = content.parse()?;

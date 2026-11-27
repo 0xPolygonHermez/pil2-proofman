@@ -108,11 +108,12 @@ pub fn indexed_trace_row_entrypoint(input: proc_macro::TokenStream) -> proc_macr
     let mut runtime_fields = vec![TraceField {
         name: format_ident!("index"),
         ty: BitType::Array(Box::new(BitType::Bit(INDEX_BITS as usize)), lanes),
+        hidden: false,
     }];
     let mut table_fields = vec![];
     for (f, instr) in &fields {
         if *instr {
-            table_fields.push(TraceField { name: f.name.clone(), ty: strip_lane(&f.ty) });
+            table_fields.push(TraceField { name: f.name.clone(), ty: strip_lane(&f.ty), hidden: f.hidden });
         } else {
             runtime_fields.push(f.clone());
         }
@@ -375,26 +376,36 @@ fn indexed_ops_impl(
             let nested = nested_type(&rust_ty, &dims);
             if *instr {
                 let default_nested = nested_value(&quote! { <#rust_ty>::default() }, &dims);
+                let whole = (!f.hidden).then(|| {
+                    quote! {
+                        #[inline(always)]
+                        fn #setter_all(&mut self, _values: &#nested) {}
+                        #[inline(always)]
+                        fn #getter_all(&self) -> #nested { #default_nested }
+                    }
+                });
                 methods.push(quote! {
                     #[inline(always)]
                     fn #setter(&mut self, #(#ignored: usize,)* _value: #rust_ty) {}
                     #[inline(always)]
                     fn #getter(&self, #(#ignored: usize),*) -> #rust_ty { <#rust_ty>::default() }
-                    #[inline(always)]
-                    fn #setter_all(&mut self, _values: &#nested) {}
-                    #[inline(always)]
-                    fn #getter_all(&self) -> #nested { #default_nested }
+                    #whole
                 });
             } else {
+                let whole = (!f.hidden).then(|| {
+                    quote! {
+                        #[inline(always)]
+                        fn #setter_all(&mut self, values: &#nested) { #indexed_name::#setter_all(self, values); }
+                        #[inline(always)]
+                        fn #getter_all(&self) -> #nested { #indexed_name::#getter_all(self) }
+                    }
+                });
                 methods.push(quote! {
                     #[inline(always)]
                     fn #setter(&mut self, #(#idx_args: usize,)* value: #rust_ty) { #indexed_name::#setter(self, #(#idx_args,)* value); }
                     #[inline(always)]
                     fn #getter(&self, #(#idx_args: usize),*) -> #rust_ty { #indexed_name::#getter(self, #(#idx_args),*) }
-                    #[inline(always)]
-                    fn #setter_all(&mut self, values: &#nested) { #indexed_name::#setter_all(self, values); }
-                    #[inline(always)]
-                    fn #getter_all(&self) -> #nested { #indexed_name::#getter_all(self) }
+                    #whole
                 });
             }
         } else {
@@ -479,28 +490,38 @@ fn table_ops_impl(
                         quote! { [#table_name::#getter_all(self); #lanes] },
                     )
                 };
+                let whole = (!f.hidden).then(|| {
+                    quote! {
+                        #[inline(always)]
+                        fn #setter_all(&mut self, values: &#nested) { #set_all; }
+                        #[inline(always)]
+                        fn #getter_all(&self) -> #nested { #get_all }
+                    }
+                });
                 methods.push(quote! {
                     #[inline(always)]
                     fn #setter(&mut self, _lane: usize, #(#inner_args: usize,)* value: #rust_ty) { #set_one; }
                     #[inline(always)]
                     fn #getter(&self, _lane: usize, #(#inner_args: usize),*) -> #rust_ty { #get_one }
-                    #[inline(always)]
-                    fn #setter_all(&mut self, values: &#nested) { #set_all; }
-                    #[inline(always)]
-                    fn #getter_all(&self) -> #nested { #get_all }
+                    #whole
                 });
             } else {
                 let ignored: Vec<Ident> = (0..dims.len()).map(|i| format_ident!("_i{}", i)).collect();
                 let default_nested = nested_value(&quote! { <#rust_ty>::default() }, &dims);
+                let whole = (!f.hidden).then(|| {
+                    quote! {
+                        #[inline(always)]
+                        fn #setter_all(&mut self, _values: &#nested) {}
+                        #[inline(always)]
+                        fn #getter_all(&self) -> #nested { #default_nested }
+                    }
+                });
                 methods.push(quote! {
                     #[inline(always)]
                     fn #setter(&mut self, #(#ignored: usize,)* _value: #rust_ty) {}
                     #[inline(always)]
                     fn #getter(&self, #(#ignored: usize),*) -> #rust_ty { <#rust_ty>::default() }
-                    #[inline(always)]
-                    fn #setter_all(&mut self, _values: &#nested) {}
-                    #[inline(always)]
-                    fn #getter_all(&self) -> #nested { #default_nested }
+                    #whole
                 });
             }
         } else {

@@ -62,118 +62,75 @@ pub fn trait_impl(
     }
 }
 
-fn trait_method_signatures(fields: &[TraceField]) -> Vec<TokenStream> {
-    let mut out = vec![];
+/// Each method the trait has for field `f`: its signature, name and the arguments it passes on.
+fn field_methods(f: &TraceField) -> Vec<(TokenStream, Ident, TokenStream)> {
+    let setter = format_ident!("set_{}", f.name);
+    let getter = format_ident!("get_{}", f.name);
+    let hidden = f.hidden.then(|| quote! { #[doc(hidden)] });
 
-    for f in fields.iter() {
-        let setter = format_ident!("set_{}", f.name);
-        let getter = format_ident!("get_{}", f.name);
-
-        if contains_generic(&f.ty) {
-            if !is_array(&f.ty) {
-                out.push(quote! {
-                    fn #setter(&mut self, value: F);
-                    fn #getter(&self) -> F;
-                });
-            }
-        } else if is_array(&f.ty) {
-            let (bits, dims, _) = collect_dimensions(&f.ty);
-            let rust_ty = rust_type_for_bits(bits);
-            let idx_args: Vec<Ident> = (0..dims.len()).map(|i| format_ident!("i{}", i)).collect();
-            let setter_all = format_ident!("set_all_{}", f.name);
-            let getter_all = format_ident!("get_all_{}", f.name);
-            let mut nested_type = rust_ty.clone();
-            for &len in dims.iter().rev() {
-                nested_type = quote! { [#nested_type; #len] };
-            }
-
-            out.push(quote! {
-                fn #setter(&mut self, #(#idx_args: usize,)* value: #rust_ty) where F: PrimeField64;
-                fn #getter(&self, #(#idx_args: usize),*) -> #rust_ty where F: PrimeField64;
-                fn #setter_all(&mut self, values: &#nested_type) where F: PrimeField64;
-                fn #getter_all(&self) -> #nested_type where F: PrimeField64;
-            });
-        } else {
-            let bits = compute_total_bits(&f.ty);
-            let rust_ty = rust_type_for_bits(bits);
-
-            out.push(quote! {
-                fn #setter(&mut self, value: #rust_ty) where F: PrimeField64;
-                fn #getter(&self) -> #rust_ty where F: PrimeField64;
-            });
+    if contains_generic(&f.ty) {
+        if is_array(&f.ty) {
+            return vec![];
         }
+        return vec![
+            (quote! { #hidden fn #setter(&mut self, value: F) }, setter, quote! { value }),
+            (quote! { #hidden fn #getter(&self) -> F }, getter, quote! {}),
+        ];
+    }
+    if !is_array(&f.ty) {
+        let rust_ty = rust_type_for_bits(compute_total_bits(&f.ty));
+        return vec![
+            (quote! { #hidden fn #setter(&mut self, value: #rust_ty) where F: PrimeField64 }, setter, quote! { value }),
+            (quote! { #hidden fn #getter(&self) -> #rust_ty where F: PrimeField64 }, getter, quote! {}),
+        ];
     }
 
-    out
+    let (bits, dims, _) = collect_dimensions(&f.ty);
+    let rust_ty = rust_type_for_bits(bits);
+    let idx: Vec<Ident> = (0..dims.len()).map(|i| format_ident!("i{}", i)).collect();
+    let nested = dims.iter().rev().fold(rust_ty.clone(), |acc, len| quote! { [#acc; #len] });
+    let mut methods = vec![
+        (
+            quote! { #hidden fn #setter(&mut self, #(#idx: usize,)* value: #rust_ty) where F: PrimeField64 },
+            setter,
+            quote! { #(#idx,)* value },
+        ),
+        (
+            quote! { #hidden fn #getter(&self, #(#idx: usize),*) -> #rust_ty where F: PrimeField64 },
+            getter,
+            quote! { #(#idx),* },
+        ),
+    ];
+    // A lane's flattened column has no whole-array accessors.
+    if !f.hidden {
+        let (setter_all, getter_all) = (format_ident!("set_all_{}", f.name), format_ident!("get_all_{}", f.name));
+        methods.push((
+            quote! { fn #setter_all(&mut self, values: &#nested) where F: PrimeField64 },
+            setter_all,
+            quote! { values },
+        ));
+        methods.push((quote! { fn #getter_all(&self) -> #nested where F: PrimeField64 }, getter_all, quote! {}));
+    }
+    methods
+}
+
+fn trait_method_signatures(fields: &[TraceField]) -> Vec<TokenStream> {
+    fields.iter().flat_map(field_methods).map(|(sig, _, _)| quote! { #sig; }).collect()
 }
 
 fn forwarding_methods(type_name: &Ident, fields: &[TraceField]) -> Vec<TokenStream> {
-    let mut out = vec![];
-
-    for f in fields.iter() {
-        let setter = format_ident!("set_{}", f.name);
-        let getter = format_ident!("get_{}", f.name);
-
-        if contains_generic(&f.ty) {
-            if !is_array(&f.ty) {
-                out.push(quote! {
-                    #[inline(always)]
-                    fn #setter(&mut self, value: F) {
-                        #type_name::#setter(self, value);
-                    }
-                    #[inline(always)]
-                    fn #getter(&self) -> F {
-                        #type_name::#getter(self)
-                    }
-                });
+    fields
+        .iter()
+        .flat_map(field_methods)
+        .map(|(sig, name, args)| {
+            quote! {
+                #[inline(always)]
+                #sig {
+                    #type_name::#name(self, #args)
+                }
             }
-        } else if is_array(&f.ty) {
-            let (bits, dims, _) = collect_dimensions(&f.ty);
-            let rust_ty = rust_type_for_bits(bits);
-            let idx_args: Vec<Ident> = (0..dims.len()).map(|i| format_ident!("i{}", i)).collect();
-            let setter_all = format_ident!("set_all_{}", f.name);
-            let getter_all = format_ident!("get_all_{}", f.name);
-            let mut nested_type = rust_ty.clone();
-            for &len in dims.iter().rev() {
-                nested_type = quote! { [#nested_type; #len] };
-            }
-
-            out.push(quote! {
-                #[inline(always)]
-                fn #setter(&mut self, #(#idx_args: usize,)* value: #rust_ty) where F: PrimeField64 {
-                    #type_name::#setter(self, #(#idx_args,)* value);
-                }
-                #[inline(always)]
-                fn #getter(&self, #(#idx_args: usize),*) -> #rust_ty where F: PrimeField64 {
-                    #type_name::#getter(self, #(#idx_args),*)
-                }
-                #[inline(always)]
-                fn #setter_all(&mut self, values: &#nested_type) where F: PrimeField64 {
-                    #type_name::#setter_all(self, values);
-                }
-                #[inline(always)]
-                fn #getter_all(&self) -> #nested_type where F: PrimeField64 {
-                    #type_name::#getter_all(self)
-                }
-            });
-        } else {
-            let bits = compute_total_bits(&f.ty);
-            let rust_ty = rust_type_for_bits(bits);
-
-            out.push(quote! {
-                #[inline(always)]
-                fn #setter(&mut self, value: #rust_ty) where F: PrimeField64 {
-                    #type_name::#setter(self, value);
-                }
-                #[inline(always)]
-                fn #getter(&self) -> #rust_ty where F: PrimeField64 {
-                    #type_name::#getter(self)
-                }
-            });
-        }
-    }
-
-    out
+        })
+        .collect()
 }
 
 /// The generics of a row, bare and with the bounds of a packed row, whose words are 64-bit.
