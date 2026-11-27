@@ -1504,6 +1504,7 @@ name = "proofman-verifier"
 version = "1.5.0-alpha"
 dependencies = [
  "bincode",
+ "constraint-dag",
  "num-traits",
  "proofman-fields",
  "serde",

@@ -1,6 +1,6 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 
-//! STARK verification primitives: `stark_verify`, the `VerifierInfo` it reads, the `ConstraintDag` it evaluates,
+//! STARK verification primitives: `stark_verify`, the `VerifierInfo` it reads, the `AirConstraints` it evaluates,
 //! and the proof types.
 //!
 //! No per-family verifier is committed here. The recursion aggregator binds the
@@ -16,7 +16,7 @@ extern crate alloc;
 #[macro_use]
 mod log;
 
-mod constraint_dag;
+mod constraints;
 mod layout;
 mod multiproof;
 mod proof;
@@ -24,7 +24,8 @@ mod replay;
 mod stir;
 mod verifier;
 
-pub use constraint_dag::*;
+pub use constraint_dag::{ColRef, ColType, DagError, LowerTables};
+pub use constraints::*;
 pub use layout::*;
 pub use multiproof::*;
 pub use proof::*;

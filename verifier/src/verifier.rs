@@ -4,7 +4,7 @@ use alloc::vec::Vec;
 #[allow(unused)]
 use num_traits::Float;
 
-use crate::constraint_dag::ConstraintDag;
+use crate::constraints::AirConstraints;
 use crate::layout::{merkle_proof_levels, sibling_words};
 use crate::replay::{fri_transcript, prefix_transcript};
 use proofman_fields::{
@@ -196,7 +196,7 @@ pub fn stark_verify<LeafHash, CompressionHash, TranscriptT, GrindingHash>(
     proof: &[u64],
     vk: &[u64],
     verifier_info: &VerifierInfo,
-    constraints: &ConstraintDag,
+    constraints: &AirConstraints,
 ) -> bool
 where
     LeafHash: Hash<Goldilocks>,

@@ -2,7 +2,8 @@
 #define CONSTRAINT_DAG_HPP
 
 // The constraint DAG of verifierinfo.json (key constraintDag) and its evaluation at xi; the global DAG of
-// globalInfo.json (key globalConstraintDag) and its roots' values.
+// globalInfo.json (key globalConstraintDag) and its roots' values. The Rust source of the format and its semantics is
+// the constraint-dag crate (constraint-dag/src); this file mirrors it.
 #include <algorithm>
 #include <cstdint>
 #include <map>
@@ -81,7 +82,7 @@ inline bool readConst(const json &j, Goldilocks::Element &out)
     return true;
 }
 
-// The only resolver of col/challenge/value references (mirrors Rust LowerCtx::resolve and its unique-key rule).
+// The only resolver of col/challenge/value references (mirrors constraint_dag::LowerCtx::resolve and its unique-key rule).
 struct Resolver
 {
     std::map<std::tuple<uint64_t, uint64_t, uint64_t, int64_t>, uint64_t> ev;
@@ -369,7 +370,7 @@ inline void evalConstraintDag(const ConstraintDag &dag, const DagInputs &in, Gol
     Goldilocks3::mul(*(E3 *)out, acc, *(const E3 *)in.zi);
 }
 
-// A global DAG's leaves (mirrors Rust GlobalTables): publics; challenges numbered across stages (numChallenges);
+// A global DAG's leaves (mirrors constraint_dag::GlobalTables): publics; challenges numbered across stages (numChallenges);
 // proof values packed by stage (1 element at stage 1, else 3); airgroup values, the airgroups one after the other,
 // 3 elements each (a stage-1 one reads its first). Every root global (boundary 1); no column or air value.
 inline bool checkGlobalConstraintDag(ConstraintDag &dag, const json &globalInfo, std::string &err)

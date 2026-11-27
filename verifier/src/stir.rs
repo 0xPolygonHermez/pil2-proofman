@@ -28,7 +28,7 @@ use proofman_fields::{
     TranscriptLike,
 };
 
-use crate::constraint_dag::ConstraintDag;
+use crate::constraints::AirConstraints;
 use crate::layout::{merkle_proof_levels, sibling_words};
 use crate::multiproof::{expand_stir_checked, Proven};
 use crate::replay::{prefix_transcript, stir_transcript, StirTranscript};
@@ -795,7 +795,7 @@ pub fn stark_verify_stir<LeafHash, CompressionHash, TranscriptT, GrindingHash>(
     proof: &[u64],
     vk: &[u64],
     verifier_info: &StirVerifierInfo,
-    constraints: &ConstraintDag,
+    constraints: &AirConstraints,
 ) -> bool
 where
     LeafHash: Hash<Goldilocks>,
@@ -819,7 +819,7 @@ pub fn verify_multiproof_stir<LeafHash, CompressionHash, TranscriptT, GrindingHa
     wire: &[u64],
     vk: &[u64],
     verifier_info: &StirVerifierInfo,
-    constraints: &ConstraintDag,
+    constraints: &AirConstraints,
 ) -> bool
 where
     LeafHash: Hash<Goldilocks>,
@@ -847,7 +847,7 @@ fn stark_verify_stir_impl<LeafHash, CompressionHash, TranscriptT, GrindingHash>(
     proof: &[u64],
     vk: &[u64],
     verifier_info: &StirVerifierInfo,
-    constraints: &ConstraintDag,
+    constraints: &AirConstraints,
     proven: Option<&Proven>,
 ) -> bool
 where

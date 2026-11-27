@@ -3,7 +3,7 @@ use std::fs;
 
 use proofman_common::hash_family::{self, HashFamily};
 use proofman_common::{EvMapEType, LowDegreeLayout};
-use proofman_verifier::{ChallengeKey, ConstraintDag, DagTables, EvKey};
+use proofman_verifier::{AirConstraints, ColRef, ColType, LowerTables};
 use crate::types::stark_info::{StarkInfo, VerifierInfo};
 use crate::types::stark_struct::LowDegreeTest;
 
@@ -56,8 +56,8 @@ fn prepare_verifier_rust(stark_info: &StarkInfo, verifier_info: &VerifierInfo, h
     // The constraints are the verifierinfo's constraintDag, verbatim: the verifier crate checks and resolves it
     // against the tables (as C++ checkConstraintDag), here first so that a key it refuses fails the setup.
     let dag_json = serde_json::to_string(&verifier_info.constraint_dag)?;
-    let tables = dag_tables(stark_info);
-    ConstraintDag::from_json(&dag_json, &tables).map_err(|e| anyhow!("the native verifier refuses the DAG: {e}"))?;
+    let tables = dag_tables(stark_info)?;
+    AirConstraints::from_json(&dag_json, &tables).map_err(|e| anyhow!("the native verifier refuses the DAG: {e:?}"))?;
 
     let mut lines: Vec<String> = Vec::new();
 
@@ -80,7 +80,7 @@ fn prepare_verifier_rust(stark_info: &StarkInfo, verifier_info: &VerifierInfo, h
     } else {
         lines.push("use crate::{stark_verify, FriEvalGroup, FriEvalRef, VerifierInfo};".to_string());
     }
-    lines.push("use crate::{ChallengeKey, ConstraintDag, DagTables, EvKey};".to_string());
+    lines.push("use crate::{AirConstraints, ColRef, ColType, LowerTables};".to_string());
     lines.push("use crate::VadcopFinalProof;".to_string());
     lines.push(String::new());
 
@@ -89,8 +89,8 @@ fn prepare_verifier_rust(stark_info: &StarkInfo, verifier_info: &VerifierInfo, h
     lines.push(String::new());
     lines.extend(dag_tables_rust(&tables));
     lines.push(String::new());
-    lines.push("fn constraints() -> Option<ConstraintDag> {".to_string());
-    lines.push("    ConstraintDag::from_json(CONSTRAINT_DAG, &dag_tables()).ok()".to_string());
+    lines.push("fn constraints() -> Option<AirConstraints> {".to_string());
+    lines.push("    AirConstraints::from_json(CONSTRAINT_DAG, &dag_tables()).ok()".to_string());
     lines.push("}\n".to_string());
 
     // The shared STARK geometry, identical for both low-degree tests.
@@ -243,50 +243,55 @@ fn prepare_verifier_rust(stark_info: &StarkInfo, verifier_info: &VerifierInfo, h
     Ok(lines.join("\n"))
 }
 
-/// The tables the native verifier resolves the DAG against: the starkinfo's evMap, challengesMap and nPublics.
-pub fn dag_tables(stark_info: &StarkInfo) -> DagTables {
-    let col = |t: &EvMapEType| match t {
-        EvMapEType::Cm => 0,
-        EvMapEType::Const => 1,
-        EvMapEType::Custom => 2,
-    };
-    DagTables {
-        ev_map: (stark_info.ev_map.iter())
-            .map(|e| EvKey {
-                col: col(&e.ev_type),
-                id: e.id,
-                offset: e.prime,
-                commit_id: if e.ev_type == EvMapEType::Custom { e.commit_id } else { 0 },
-            })
-            .collect(),
-        challenges: (stark_info.challenges_map.iter())
-            .map(|c| ChallengeKey { stage: c.stage, stage_id: c.stage_id, name: c.name.clone() })
-            .collect(),
-        n_publics: stark_info.n_publics,
-    }
+/// The tables the native verifier resolves the DAG against: the starkinfo's evMap, challengesMap and nPublics (it
+/// reads no value, so it has no value stages).
+pub fn dag_tables(stark_info: &StarkInfo) -> Result<LowerTables> {
+    let small = |v: u64| u32::try_from(v).map_err(|_| anyhow!("{v} does not fit a DAG index"));
+    let ev_map = (stark_info.ev_map.iter())
+        .map(|e| {
+            let (col, commit_id) = match e.ev_type {
+                EvMapEType::Cm => (ColType::Witness, None),
+                EvMapEType::Const => (ColType::Fixed, None),
+                EvMapEType::Custom => (ColType::Custom, Some(small(e.commit_id)?)),
+            };
+            Ok(ColRef { col, commit_id, id: small(e.id)?, offset: e.prime })
+        })
+        .collect::<Result<_>>()?;
+    let challenges = (stark_info.challenges_map.iter())
+        .map(|c| Ok((small(c.stage)?, small(c.stage_id)?, c.name.as_str())))
+        .collect::<Result<Vec<_>>>()?;
+    let n_publics = small(stark_info.n_publics)?;
+    LowerTables::new(
+        ev_map,
+        &challenges,
+        n_publics,
+        Default::default(),
+        pil_info::core::dag::format::DagField::Goldilocks,
+    )
+    .map_err(|e| anyhow!("the native verifier's tables: {e:?}"))
 }
 
-/// `fn dag_tables() -> DagTables` rendering `t`.
-fn dag_tables_rust(t: &DagTables) -> Vec<String> {
+/// `fn dag_tables() -> LowerTables` rendering `t` (no value stages).
+fn dag_tables_rust(t: &LowerTables) -> Vec<String> {
     let mut lines =
-        vec!["#[rustfmt::skip]".to_string(), "fn dag_tables() -> DagTables {".into(), "    DagTables {".into()];
+        vec!["#[rustfmt::skip]".to_string(), "fn dag_tables() -> LowerTables {".into(), "    LowerTables {".into()];
     lines.push("        ev_map: vec![".into());
     for e in &t.ev_map {
         lines.push(format!(
-            "            EvKey {{ col: {}, id: {}, offset: {}, commit_id: {} }},",
-            e.col, e.id, e.offset, e.commit_id
+            "            ColRef {{ col: ColType::{:?}, commit_id: {:?}, id: {}, offset: {} }},",
+            e.col, e.commit_id, e.id, e.offset
         ));
     }
     lines.push("        ],".into());
     lines.push("        challenges: vec![".into());
-    for c in &t.challenges {
-        lines.push(format!(
-            "            ChallengeKey {{ stage: {}, stage_id: {}, name: {:?}.into() }},",
-            c.stage, c.stage_id, c.name
-        ));
+    for &(stage, stage_id) in &t.challenges {
+        lines.push(format!("            ({stage}, {stage_id}),"));
     }
     lines.push("        ],".into());
+    lines.push(format!("        vc: {},", t.vc));
     lines.push(format!("        n_publics: {},", t.n_publics));
+    lines.push(format!("        ext_dim: {},", t.ext_dim));
+    lines.push("        ..Default::default()".into());
     lines.push("    }".into());
     lines.push("}".into());
     lines
@@ -316,9 +321,9 @@ mod tests {
             let json = serde_json::to_string(&f.vi.constraint_dag).unwrap();
             assert!(out.contains(&format!("const CONSTRAINT_DAG: &str = {json:?};")), "{out}");
             assert!(out.contains(&format!("        n_publics: {},", si.n_publics)), "{out}");
-            assert_eq!(out.matches("            EvKey {").count(), si.ev_map.len());
-            assert_eq!(out.matches("            ChallengeKey {").count(), si.challenges_map.len());
-            assert!(out.contains("ConstraintDag::from_json(CONSTRAINT_DAG, &dag_tables()).ok()"), "{out}");
+            assert_eq!(out.matches("            ColRef {").count(), si.ev_map.len());
+            assert_eq!(out.matches("            (").count(), si.challenges_map.len());
+            assert!(out.contains("AirConstraints::from_json(CONSTRAINT_DAG, &dag_tables()).ok()"), "{out}");
             assert!(out.contains("(proof, vk, &verifier_info(), &constraints)"), "{out}");
             assert!(!out.contains("q_verify"), "{out}");
             rendered += 1;

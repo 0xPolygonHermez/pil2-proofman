@@ -6,6 +6,7 @@ use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
 use core::cell::RefCell;
+use core::ops::{Add, Mul, Neg, Sub};
 
 use crate::format::{ColRef, ColType, ConstraintDag, DagBoundary, DagError, DagField, DagNode};
 use crate::{fold_roots, value_dim};
@@ -376,4 +377,73 @@ fn emit(code: &mut Vec<Instr>, op: CodeOp, src: Vec<Src>) -> Src {
     let dim = src.iter().map(|s| s.dim).max().unwrap_or(1);
     code.push(Instr { op, dest, dim, src });
     Src { operand: Operand::Tmp(dest), dim }
+}
+
+/// An air's DAG with every leaf resolved once and mapped by its consumer (say, a constant to a field element): what a
+/// verifier evaluates at each proof without parsing, checking or resolving again.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ResolvedDag<L> {
+    nodes: Vec<Resolved<L>>,
+    roots: Vec<u32>,
+    vc: L,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Resolved<L> {
+    Add(u32, u32),
+    Sub(u32, u32),
+    Mul(u32, u32),
+    Neg(u32),
+    Leaf(L),
+}
+
+impl LowerCtx {
+    /// `dag` (its roots everyRow) with each leaf resolved and `std_vc`, then mapped by `leaf`.
+    pub fn resolve_dag<L>(
+        &self,
+        dag: &ConstraintDag,
+        mut leaf: impl FnMut(u32, Operand) -> Result<L, DagError>,
+    ) -> Result<ResolvedDag<L>, DagError> {
+        if dag.ext_dim as usize != self.t.ext_dim {
+            return Err(DagError::NonCanonical { node: 0, why: "the DAG's extDim is not the lowering context's" });
+        }
+        let roots = stark_roots(dag)?;
+        let mut nodes = Vec::with_capacity(dag.nodes.len());
+        for (i, n) in dag.nodes.iter().enumerate() {
+            let i = i as u32;
+            nodes.push(match (self.resolve(i, n)?, n) {
+                (Some(op), _) => Resolved::Leaf(leaf(i, op)?),
+                (None, &DagNode::Add { a, b }) => Resolved::Add(a, b),
+                (None, &DagNode::Sub { a, b }) => Resolved::Sub(a, b),
+                (None, &DagNode::Mul { a, b }) => Resolved::Mul(a, b),
+                (None, &DagNode::Neg { a }) => Resolved::Neg(a),
+                (None, _) => return Err(DagError::NonCanonical { node: i, why: "a leaf did not resolve" }),
+            });
+        }
+        let vc = leaf(0, self.vc_operand()?)?;
+        Ok(ResolvedDag { nodes, roots, vc })
+    }
+}
+
+impl<L> ResolvedDag<L> {
+    /// `fold_roots` of the roots' values with `std_vc`, `value` reading each leaf; `None` when a leaf has none.
+    /// The DAG was validated (children precede their parents, roots in range), so indexing cannot fail.
+    pub fn eval<T>(&self, mut value: impl FnMut(&L) -> Option<T>) -> Option<T>
+    where
+        T: Copy + Add<Output = T> + Sub<Output = T> + Mul<Output = T> + Neg<Output = T>,
+    {
+        let mut v: Vec<T> = Vec::with_capacity(self.nodes.len());
+        for n in &self.nodes {
+            let x = match *n {
+                Resolved::Add(a, b) => v[a as usize] + v[b as usize],
+                Resolved::Sub(a, b) => v[a as usize] - v[b as usize],
+                Resolved::Mul(a, b) => v[a as usize] * v[b as usize],
+                Resolved::Neg(a) => -v[a as usize],
+                Resolved::Leaf(ref l) => value(l)?,
+            };
+            v.push(x);
+        }
+        let vc = value(&self.vc)?;
+        fold_roots(self.roots.iter().map(|&r| v[r as usize]), |acc| vc * acc, |acc, c| acc + c)
+    }
 }
