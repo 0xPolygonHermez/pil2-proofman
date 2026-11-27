@@ -82,7 +82,7 @@ pub fn gen_stark_verifier(
 
 /// The main's access to the keys it verifies, key `k` being `keys[k]`: their data `key_<name>(k)` and,
 /// for GL keys, `ConstraintRootsAt(k)` (a BN128 key's `ConstraintEval` is called directly).
-pub(crate) fn key_dispatch(keys: &[KeyData], gl: bool) -> String {
+pub fn key_dispatch(keys: &[KeyData], gl: bool) -> String {
     if keys.is_empty() {
         return String::new();
     }

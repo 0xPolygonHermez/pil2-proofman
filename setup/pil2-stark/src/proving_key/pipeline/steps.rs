@@ -72,7 +72,10 @@ pub enum Prime {
 /// One step of a proving-key pipeline, in the order the kinds run them (`kinds.rs`):
 ///
 /// - `CircomPrologue`: writes the verifier circoms and the circuit's main (no template: compiles
-///   `ctx.circom_file` as is), compiles them with circom, copies the `.dat`.
+///   `ctx.circom_file` as is); the trusted checker (`stark2circom::check`) then compiles each key's generated
+///   constraint template alone on random inputs against its constraint DAG, and the main's key and vadcop data
+///   against the starkinfo and globalInfo, refusing a mismatch; then circom compiles the circuit and the `.dat`
+///   is copied.
 /// - `WitnessLib`: builds the circuit's witness library in the background.
 /// - `Plonk2Pil`: the r1cs as plonk rows, fixed columns and PIL (the generator; untrusted).
 /// - `WriteFixed`: writes those fixed columns, PIL and exec.
