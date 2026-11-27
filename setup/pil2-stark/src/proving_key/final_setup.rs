@@ -20,7 +20,6 @@ pub struct FinalSetupConfig<'a> {
     pub build_dir: &'a str,
     pub hash: HashFamily,
     pub global_info: &'a Value,
-    pub global_constraints: &'a Value,
     pub tools: &'a Tools,
 }
 
@@ -89,11 +88,8 @@ pub fn gen_final_setup(config: &FinalSetupConfig<'_>, witness_tracker: &WitnessT
         })
         .collect();
 
-    // The global info the template reads carries the global constraints.
-    let mut final_global_info = config.global_info.clone();
-    if let Some(constraints) = config.global_constraints.get("constraints") {
-        final_global_info.as_object_mut().map(|obj| obj.insert("globalConstraints".to_string(), constraints.clone()));
-    }
+    // The global info carries the global constraints (globalConstraintDag).
+    let final_global_info = config.global_info.clone();
     // One proof per airgroup, not an aggregation fan-in: the template never reads `agg_arity`.
     ctx.circuit_input = Some(CircuitInput {
         stark_infos,

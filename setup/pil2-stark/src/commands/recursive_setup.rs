@@ -52,11 +52,6 @@ pub(crate) fn run_recursive_setup(
     let tools = Tools::from_env();
     let witness_tracker = witness_tracker_from_env();
 
-    let global_constraints_path = Path::new(build_dir).join("provingKey").join("pilout.globalConstraints.json");
-    if !global_constraints_path.exists() {
-        anyhow::bail!("globalConstraints.json not found at {:?}, cannot run recursive setup", global_constraints_path);
-    }
-    let global_constraints: serde_json::Value = serde_json::from_str(&fs::read_to_string(&global_constraints_path)?)?;
     let hash = opts.hash;
     let run = Run {
         // What every recursion circuit of the run shares.
@@ -128,13 +123,7 @@ pub(crate) fn run_recursive_setup(
     }
 
     tracing::info!("Running final setup...");
-    let final_config = final_setup::FinalSetupConfig {
-        build_dir,
-        hash,
-        global_info: &global_info,
-        global_constraints: &global_constraints,
-        tools: &tools,
-    };
+    let final_config = final_setup::FinalSetupConfig { build_dir, hash, global_info: &global_info, tools: &tools };
     let final_result = final_setup::gen_final_setup(&final_config, &witness_tracker).context("Final setup failed")?;
     tracing::info!("Final setup complete");
 
@@ -438,31 +427,6 @@ mod tests {
             exps_chunk: None,
             exps_stark_src: None,
         }
-    }
-
-    #[test]
-    fn test_recursive_fails_on_missing_global_constraints() {
-        let base = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
-        let pilout_path = base.join("pil/zisk.pilout");
-        if !pilout_path.exists() {
-            eprintln!("Skipping: zisk.pilout not found");
-            return;
-        }
-
-        let tmp = std::env::temp_dir().join(format!("pil2_recursive_failfast_{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&tmp);
-        let build_dir = tmp.join("build");
-        let pk_dir = build_dir.join("provingKey");
-        std::fs::create_dir_all(&pk_dir).unwrap();
-        std::fs::write(pk_dir.join("pilout.globalInfo.json"), r#"{"name":"zisk","nPublics":68,"hash":"Poseidon2"}"#)
-            .unwrap();
-
-        let pilout = pb::PilOut::decode(std::fs::read(&pilout_path).unwrap().as_slice()).unwrap();
-        let opts = options(&pilout_path, &build_dir);
-        let result = run_recursive_setup(&pilout, "zisk", &opts, &StarkStructsConfig::default(), serde_json::json!({}));
-        assert!(result.is_err());
-        assert!(format!("{:#}", result.unwrap_err()).contains("globalConstraints.json not found"));
-        let _ = std::fs::remove_dir_all(&tmp);
     }
 
     #[test]

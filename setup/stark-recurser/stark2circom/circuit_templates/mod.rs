@@ -5,7 +5,6 @@
 
 pub(crate) mod vadcop_inputs;
 pub(crate) mod get_sha256_inputs;
-pub(crate) mod verify_global_constraints;
 mod mains;
 mod solidity;
 

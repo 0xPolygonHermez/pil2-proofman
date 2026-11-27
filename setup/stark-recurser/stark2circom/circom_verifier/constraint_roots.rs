@@ -2,9 +2,13 @@
 //! `ConstraintRoots<suffix>`, one root each (`lower_roots`); the fold, Zi and the Q check are the
 //! library's (`verifier/stark_verifier.circom`). BN128: `ConstraintEval`, the roots folded with
 //! `lower_to_code` in lazily reduced `GL*` templates (`verifier/stark_verifier_bn128.circom`).
+//! Global constraints: `GlobalConstraints` of vadcop_final from the global DAG, each root `=== 0`.
+
+use std::collections::BTreeSet;
 
 use anyhow::{anyhow, bail, Result};
-use pil_info::core::dag::format::ConstraintDag;
+use pil_info::core::dag::format::{ConstraintDag, DagNode};
+use pil_info::core::dag::global::{GlobalLeaf, GlobalTables};
 use pil_info::core::dag::lower_code::{
     lower_roots, lower_to_code, CodeOp, Fold, Instr, LowerCtx, Operand, Src, VerifierCode,
 };
@@ -42,12 +46,9 @@ fn gl_operand(src: &Src) -> Result<String> {
     })
 }
 
-/// One instruction, in unroll_code's forms so the constraints are today's.
-// The former templated verifier's forms over lower_roots' stream (counts measured identical).
-fn gl_instr(i: &Instr) -> Result<String> {
-    let [a, b] = &i.src[..] else { bail!("tmp_{} has {} operands", i.dest, i.src.len()) };
-    let (x, y) = (gl_operand(a)?, gl_operand(b)?);
-    let rhs = match (i.op, a.dim, b.dim) {
+/// The right-hand side of `x op y` over operands of dimensions `dx`, `dy`, in unroll_code's forms.
+fn gl_rhs(op: CodeOp, x: &str, dx: usize, y: &str, dy: usize) -> Option<String> {
+    Some(match (op, dx, dy) {
         (CodeOp::Add, 1, 1) => format!("{x} + {y}"),
         (CodeOp::Add, 1, 3) => format!("[{x} + {y}[0], {y}[1],  {y}[2]]"),
         (CodeOp::Add, 3, 1) => format!("[{x}[0] + {y}, {x}[1], {x}[2]]"),
@@ -60,7 +61,17 @@ fn gl_instr(i: &Instr) -> Result<String> {
         (CodeOp::Mul, 1, 3) => format!("[{x} * {y}[0], {x} * {y}[1], {x} * {y}[2]]"),
         (CodeOp::Mul, 3, 1) => format!("[{x}[0] * {y}, {x}[1] * {y}, {x}[2] * {y}]"),
         (CodeOp::Mul, 3, 3) => format!("CMul()({x}, {y})"),
-        (op, da, db) => bail!("tmp_{}: no circom form for {op:?} of dims {da}, {db}", i.dest),
+        _ => return None,
+    })
+}
+
+/// One instruction, in unroll_code's forms so the constraints are today's.
+// The former templated verifier's forms over lower_roots' stream (counts measured identical).
+fn gl_instr(i: &Instr) -> Result<String> {
+    let [a, b] = &i.src[..] else { bail!("tmp_{} has {} operands", i.dest, i.src.len()) };
+    let (x, y) = (gl_operand(a)?, gl_operand(b)?);
+    let Some(rhs) = gl_rhs(i.op, &x, a.dim, &y, b.dim) else {
+        bail!("tmp_{}: no circom form for {:?} of dims {}, {}", i.dest, i.op, a.dim, b.dim)
     };
     let decl = if i.dim == 1 { format!("signal tmp_{}", i.dest) } else { format!("signal tmp_{}[3]", i.dest) };
     Ok(format!("    {decl} <== {rhs};\n"))
@@ -106,6 +117,159 @@ pub(crate) fn constraint_roots(suffix: &str, dag: &ConstraintDag, ctx: &LowerCtx
     out += "}\n";
     let first_root_dim = roots.first().map_or(3, |r| r.dim);
     Ok(ConstraintRoots { template: out, n_roots: roots.len(), first_root_dim })
+}
+
+// ── Global constraints: `GlobalConstraints` ───────────────────────────────────
+
+/// The tables a vadcop_final reads its global values by, from its globalInfo.
+fn global_tables(gi: &serde_json::Value) -> Result<GlobalTables> {
+    let u32s = |v: &serde_json::Value| v.as_u64().and_then(|n| u32::try_from(n).ok());
+    let stages =
+        |list: &serde_json::Value| -> Option<Vec<u32>> { list.as_array()?.iter().map(|v| u32s(&v["stage"])).collect() };
+    Ok(GlobalTables {
+        n_publics: u32s(&gi["nPublics"]).ok_or_else(|| anyhow!("globalInfo has no nPublics"))?,
+        num_challenges: (gi["numChallenges"].as_array().into_iter().flatten())
+            .map(|n| u32s(n).ok_or_else(|| anyhow!("numChallenges: {n}")))
+            .collect::<Result<_>>()?,
+        proof_values_stage: match gi.get("proofValuesMap") {
+            Some(m) => stages(m).ok_or_else(|| anyhow!("proofValuesMap without stages"))?,
+            None => Vec::new(),
+        },
+        airgroup_values_stage: (gi["aggTypes"].as_array().ok_or_else(|| anyhow!("globalInfo has no aggTypes"))?)
+            .iter()
+            .map(|g| stages(g).ok_or_else(|| anyhow!("aggTypes without stages")))
+            .collect::<Result<_>>()?,
+        ext_dim: 3,
+    })
+}
+
+/// A global leaf as a circom expression over `GlobalConstraints`' inputs (a stage-1 value is its limb 0).
+fn global_operand(leaf: &GlobalLeaf, t: &GlobalTables) -> Result<String> {
+    Ok(match *leaf {
+        GlobalLeaf::Number(ref v) => v.clone(),
+        GlobalLeaf::Public(id) => format!("publics[{id}]"),
+        // vadcop_final draws only the stage-2 challenges (`GlobalChallenges`): the input holds those
+        GlobalLeaf::Challenge(k) => {
+            let first = *t.num_challenges.first().unwrap_or(&0);
+            let n = *t.num_challenges.get(1).unwrap_or(&0);
+            if k < first || k - first >= n {
+                bail!("global challenge {k} is not a stage-2 challenge");
+            }
+            format!("challenges[{}]", k - first)
+        }
+        GlobalLeaf::ProofValue { id, stage } => gl_value("proofValues", id, stage),
+        GlobalLeaf::AirgroupValue { airgroup, id, stage } => {
+            gl_value(&format!("airgroupvalues[{airgroup}]"), id, stage)
+        }
+    })
+}
+
+/// Operation nodes per `GlobalConstraintsPart` template: one template of a few thousand signals takes the witness
+/// compiler three times as long (measured: 37 s against 13 s for 5000 nodes).
+const GLOBAL_PART_SIZE: usize = 50;
+
+const GLOBAL_INPUTS: &str = "    signal input airgroupvalues[nAg][maxAgg][3];
+    signal input publics[nPub];
+    signal input proofValues[nPV][3];
+    signal input challenges[nCh][3];
+";
+const GLOBAL_PARAMS: &str = "nAg, maxAgg, nPub, nPV, nCh";
+
+/// `vadcop_nGlobalChallenges()` and `template GlobalConstraints(nAg, maxAgg, nPub, nPV, nCh)` of globalInfo `gi`:
+/// each root of its `globalConstraintDag` `=== 0` (none without the key). The operation nodes, one signal each,
+/// are computed in `GlobalConstraintsPart{k}` templates of `GLOBAL_PART_SIZE` nodes, in node order; a part takes
+/// the earlier nodes it reads and returns those read after it.
+pub(crate) fn global_constraints(gi: &serde_json::Value) -> Result<String> {
+    let t = global_tables(gi)?;
+    let f = pil_info::FieldCfg::goldilocks();
+    let dag = ConstraintDag::from_global_info(gi, &f).map_err(|e| anyhow!("globalConstraintDag: {e:?}"))?;
+    let n_challenges = t.num_challenges.get(1).copied().unwrap_or(0);
+    let mut out = format!("function vadcop_nGlobalChallenges() {{ return {n_challenges}; }}\n\n");
+    let main_head = format!("// The global constraints, one value per root, each zero.\ntemplate GlobalConstraints({GLOBAL_PARAMS}) {{\n{GLOBAL_INPUTS}\n");
+    let Some(dag) = dag else { return Ok(out + &main_head + "}\n") };
+    let leaves = t.resolve_all(&dag).map_err(|e| anyhow!("globalConstraintDag: {e:?}"))?;
+
+    // each node as (circom expression, dimension); an operation node is the signal `node_{i}`
+    let mut val: Vec<(String, usize)> = Vec::with_capacity(dag.nodes.len());
+    let mut lines: Vec<(usize, String)> = Vec::new(); // (operation node, its right-hand side)
+    for (i, (n, leaf)) in dag.nodes.iter().zip(&leaves).enumerate() {
+        if let Some(l) = leaf {
+            val.push((global_operand(l, &t)?, t.dim(l)));
+            continue;
+        }
+        let zero = ("0".to_string(), 1);
+        let (op, (x, dx), (y, dy)) = match *n {
+            DagNode::Add { a, b } => (CodeOp::Add, &val[a as usize], &val[b as usize]),
+            DagNode::Sub { a, b } => (CodeOp::Sub, &val[a as usize], &val[b as usize]),
+            DagNode::Mul { a, b } => (CodeOp::Mul, &val[a as usize], &val[b as usize]),
+            DagNode::Neg { a } => (CodeOp::Sub, &zero, &val[a as usize]),
+            _ => bail!("node {i} is neither an operation nor a resolved leaf"),
+        };
+        let rhs = gl_rhs(op, x, *dx, y, *dy).ok_or_else(|| anyhow!("node {i}: dims {dx}, {dy}"))?;
+        let dim = (*dx).max(*dy);
+        lines.push((i, rhs));
+        val.push((format!("node_{i}"), dim));
+    }
+
+    // part of each operation node, and the parts' inputs and outputs
+    let mut part = vec![usize::MAX; dag.nodes.len()];
+    for (k, &(i, _)) in lines.iter().enumerate() {
+        part[i] = k / GLOBAL_PART_SIZE;
+    }
+    let n_parts = lines.len().div_ceil(GLOBAL_PART_SIZE);
+    let (mut inputs, mut outputs) = (vec![BTreeSet::new(); n_parts], vec![BTreeSet::new(); n_parts]);
+    for &(i, _) in &lines {
+        for c in dag.nodes[i].children() {
+            let c = c as usize;
+            if part[c] != usize::MAX && part[c] != part[i] {
+                inputs[part[i]].insert(c);
+                outputs[part[c]].insert(c);
+            }
+        }
+    }
+    for r in &dag.roots {
+        let r = r.node as usize;
+        if part[r] != usize::MAX {
+            outputs[part[r]].insert(r);
+        }
+    }
+
+    let decl = |io: &str, i: usize| format!("    signal {io}node_{i}{};\n", if val[i].1 == 3 { "[3]" } else { "" });
+    let mut main = main_head;
+    for (k, chunk) in lines.chunks(GLOBAL_PART_SIZE).enumerate() {
+        if outputs[k].is_empty() {
+            bail!("global constraint part {k} returns nothing: a node no root reaches");
+        }
+        out += &format!("template GlobalConstraintsPart{k}({GLOBAL_PARAMS}) {{\n{GLOBAL_INPUTS}");
+        out += &inputs[k].iter().map(|&i| decl("input ", i)).collect::<String>();
+        out += &outputs[k].iter().map(|&i| decl("output ", i)).collect::<String>();
+        for (i, rhs) in chunk {
+            out += &if outputs[k].contains(i) {
+                format!("    node_{i}")
+            } else {
+                decl("", *i).trim_end_matches(";\n").to_string()
+            };
+            out += &format!(" <== {rhs};\n");
+        }
+        out += "}\n\n";
+
+        main += &outputs[k].iter().map(|&i| decl("", i)).collect::<String>();
+        let args = ["airgroupvalues", "publics", "proofValues", "challenges"].map(String::from);
+        let args: Vec<String> = args.into_iter().chain(inputs[k].iter().map(|i| format!("node_{i}"))).collect();
+        let outs: Vec<String> = outputs[k].iter().map(|i| format!("node_{i}")).collect();
+        main +=
+            &format!("    ({}) <== GlobalConstraintsPart{k}({GLOBAL_PARAMS})({});\n", outs.join(", "), args.join(", "));
+    }
+    main.push('\n');
+    for r in &dag.roots {
+        let (x, dim) = &val[r.node as usize];
+        main += &if *dim == 3 {
+            format!("    {x}[0] === 0;\n    {x}[1] === 0;\n    {x}[2] === 0;\n")
+        } else {
+            format!("    {x} === 0;\n")
+        };
+    }
+    Ok(out + &main + "}\n")
 }
 
 // ── BN128: `ConstraintEval` ───────────────────────────────────────────────────
@@ -314,6 +478,102 @@ mod tests {
         d.roots[0].boundary = DagBoundary::FirstRow;
         let Err(e) = constraint_roots("0", &d, &ctx()) else { panic!("a firstRow root must be refused") };
         assert!(e.to_string().contains("everyRow"), "{e}");
+    }
+
+    /// globalInfo with two airgroups (stages [1, 2] and [2]), 2 publics, proof values of stages 1 and 2, and
+    /// challenges [1, 2]: the stage-2 ones are vadcop_final's `challenges`.
+    fn global_info(nodes: serde_json::Value, roots: serde_json::Value) -> serde_json::Value {
+        serde_json::json!({
+            "nPublics": 2, "numChallenges": [1, 2],
+            "proofValuesMap": [{"stage": 1}, {"stage": 2}],
+            "aggTypes": [[{"aggType": 0, "stage": 1}, {"aggType": 0, "stage": 2}], [{"aggType": 1, "stage": 2}]],
+            "globalConstraintDag": {"version": 1, "field": "gl", "extDim": 3, "nodes": nodes, "roots": roots},
+        })
+    }
+
+    /// One signal per operation node, leaves inline (stage-1 values as limb 0), each root `=== 0` at its dimension.
+    #[test]
+    fn global_constraints_from_the_dag() {
+        let gi = global_info(
+            serde_json::json!([
+                [10, 0, 0], // 0: airgroup 0 value 0 (stage 1)
+                [10, 0, 1], // 1: airgroup 1 value 0
+                [6, 2, 1],  // 2: challenge 2.1
+                [2, 1, 2],  // 3: 1 * 2
+                [0, 0, 3],  // 4: 0 + 3
+                [7, 1],     // 5: public 1
+                [8, 0],     // 6: proof value 0 (stage 1)
+                [1, 5, 6],  // 7: 5 - 6
+                [3, 7],     // 8: -7
+            ]),
+            serde_json::json!([[4, 1, "line 1"], [8, 1, "line 2"]]),
+        );
+        let out = global_constraints(&gi).unwrap();
+        for l in [
+            "function vadcop_nGlobalChallenges() { return 2; }",
+            "template GlobalConstraintsPart0(nAg, maxAgg, nPub, nPV, nCh) {",
+            "    signal output node_4[3];\n    signal output node_8;\n",
+            "    signal node_3[3] <== CMul()(airgroupvalues[1][0], challenges[1]);",
+            "    node_4 <== [airgroupvalues[0][0][0] + node_3[0], node_3[1],  node_3[2]];",
+            "    signal node_7 <== publics[1] - proofValues[0][0];",
+            "    node_8 <== 0 - node_7;",
+            "template GlobalConstraints(nAg, maxAgg, nPub, nPV, nCh) {",
+            "    signal node_4[3];\n    signal node_8;\n    (node_4, node_8) <== GlobalConstraintsPart0(nAg, maxAgg, nPub, nPV, nCh)(airgroupvalues, publics, proofValues, challenges);",
+            "    node_4[0] === 0;\n    node_4[1] === 0;\n    node_4[2] === 0;\n",
+            "    node_8 === 0;\n}\n",
+        ] {
+            assert!(out.contains(l), "missing `{l}`:\n{out}");
+        }
+        assert_eq!(out.matches(" <== ").count(), 5, "{out}");
+    }
+
+    /// 120 chained nodes over three parts: a part takes the earlier nodes it reads and returns the later-read ones.
+    #[test]
+    fn global_constraints_in_parts() {
+        // node 0: public 0; node 1: public 1; node k >= 2: node k-1 * node 0 (k odd) or + node 1 (k even)
+        let mut nodes = vec![serde_json::json!([7, 0]), serde_json::json!([7, 1])];
+        for k in 2..122u32 {
+            let (op, other) = if k % 2 == 1 { (2, 0) } else { (0, 1) };
+            nodes.push(serde_json::json!([op, other.min(k - 1), other.max(k - 1)]));
+        }
+        let gi = global_info(serde_json::Value::Array(nodes), serde_json::json!([[121, 1, "chain"], [51, 1, "mid"]]));
+        let out = global_constraints(&gi).unwrap();
+        for l in [
+            "template GlobalConstraintsPart2(nAg, maxAgg, nPub, nPV, nCh) {",
+            // part 0 holds nodes 2..51: node 51 is read by part 1 and is a root
+            "    (node_51) <== GlobalConstraintsPart0(nAg, maxAgg, nPub, nPV, nCh)(airgroupvalues, publics, proofValues, challenges);",
+            "    (node_101) <== GlobalConstraintsPart1(nAg, maxAgg, nPub, nPV, nCh)(airgroupvalues, publics, proofValues, challenges, node_51);",
+            "    (node_121) <== GlobalConstraintsPart2(nAg, maxAgg, nPub, nPV, nCh)(airgroupvalues, publics, proofValues, challenges, node_101);",
+            "    signal input node_51;\n    signal output node_101;\n",
+            "    signal node_52 <== publics[1] + node_51;",
+            "    node_121 === 0;\n    node_51 === 0;\n}\n",
+        ] {
+            assert!(out.contains(l), "missing `{l}`:\n{out}");
+        }
+        assert!(!out.contains("GlobalConstraintsPart3"), "{out}");
+    }
+
+    #[test]
+    fn global_constraints_refuse_what_vadcop_final_does_not_read() {
+        let refused = |leaf: serde_json::Value| {
+            let gi = global_info(serde_json::json!([leaf]), serde_json::json!([[0, 1, ""]]));
+            global_constraints(&gi).unwrap_err().to_string()
+        };
+        assert!(refused(serde_json::json!([6, 1, 0])).contains("stage-2"), "a stage-1 challenge");
+        assert!(refused(serde_json::json!([6, 2, 2])).contains("Unresolved"), "past stage 2's challenges");
+        assert!(refused(serde_json::json!([10, 1, 1])).contains("Unresolved"), "past airgroup 1's values");
+        assert!(refused(serde_json::json!([10, 2, 0])).contains("Unresolved"), "an unknown airgroup");
+        assert!(refused(serde_json::json!([7, 2])).contains("Unresolved"), "past the publics");
+        assert!(refused(serde_json::json!([10, 0])).contains("NonCanonical"), "an air's airgroup value");
+        assert!(refused(serde_json::json!([5, 0, 0, 0])).contains("NonCanonical"), "a column");
+    }
+
+    #[test]
+    fn no_global_constraints_no_body() {
+        let mut gi = global_info(serde_json::json!([]), serde_json::json!([]));
+        gi.as_object_mut().unwrap().remove("globalConstraintDag");
+        let out = global_constraints(&gi).unwrap();
+        assert!(out.ends_with("    signal input challenges[nCh][3];\n\n}\n"), "{out}");
     }
 
     /// `x - 0` on a base value is `x` itself: no GLSub against a zero constant, whose bound

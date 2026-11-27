@@ -7,10 +7,10 @@ use serde_json::Value;
 
 use super::get_sha256_inputs::sha256_defs;
 use super::vadcop_inputs::{air_id_vars, vadcop_data};
-use super::verify_global_constraints::gen_verify_global_constraints;
 use super::CircomGenOptions;
 use crate::stark2circom::circom_verifier::lib_params::parse_stark_info;
 use proofman_common::proof_inputs::{proof_inputs, Origin};
+use crate::stark2circom::circom_verifier::constraint_roots::global_constraints;
 use crate::stark2circom::circom_verifier::{key_dispatch, KeyData};
 
 /// A main's head: pragmas, the verifier files and `lib`, the keys' data and dispatch.
@@ -205,7 +205,7 @@ pub fn gen_vadcop_final(
     Ok(head(verifier_filenames, "mains/vadcop_final.circom", keys, true, true)
         + &vd
         + "\n"
-        + &gen_verify_global_constraints(vadcop_info)?
+        + &global_constraints(vadcop_info)?
         + &main_line(&GLOBALS[..1], &format!("VadcopFinal({n_ag})")))
 }
 
