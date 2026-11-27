@@ -91,8 +91,14 @@ pub fn vadcop_data(
     out += &indexed("AGG", &types.iter().map(|t| list(t)).collect::<Vec<_>>(), "[0]");
     let root = |vk: &[String]| format!("[{}]", vk.join(", "));
     out += &indexed("nBasics", &basic_vk.iter().map(|b| b.len().to_string()).collect::<Vec<_>>(), "0");
-    let basics: Vec<String> =
-        basic_vk.iter().map(|b| format!("[{}]", b.iter().map(|vk| root(vk)).collect::<Vec<_>>().join(", "))).collect();
+    // An airgroup without keys gets the default: circom has no empty array.
+    let basics: Vec<String> = basic_vk
+        .iter()
+        .map(|b| match b.is_empty() {
+            true => "[[0, 0, 0, 0]]".into(),
+            false => format!("[{}]", b.iter().map(|vk| root(vk)).collect::<Vec<_>>().join(", ")),
+        })
+        .collect();
     out += &indexed("basics", &basics, "[[0, 0, 0, 0]]");
     out += &indexed("rootCAgg", &agg_vk.iter().map(|vk| root(vk)).collect::<Vec<_>>(), "[0, 0, 0, 0]");
     Ok(out)
