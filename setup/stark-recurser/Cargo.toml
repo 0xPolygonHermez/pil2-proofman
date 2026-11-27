@@ -15,6 +15,7 @@ path = "lib.rs"
 [dependencies]
 proofman-fields = { workspace = true }
 proofman-common = { workspace = true }
+proofman-verifier = { workspace = true }
 pil-info = { workspace = true }
 constraint-dag = { workspace = true }
 pil2-pilout = { workspace = true }

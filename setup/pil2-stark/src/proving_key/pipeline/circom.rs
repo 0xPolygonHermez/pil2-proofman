@@ -5,7 +5,8 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
 use pil2_stark_recurser::stark2circom::check::witness::Circom;
-use pil2_stark_recurser::stark2circom::check::{check_circuit, Circuit, Field, Key};
+use pil2_stark_recurser::stark2circom::check::data::unhashed_publics;
+use pil2_stark_recurser::stark2circom::check::{check_circuit, Circuit, Field, Key, Vadcop};
 use pil2_stark_recurser::stark2circom::{gen_circom_circuit, CircuitTemplate, GenCircomCircuitInput};
 
 use super::steps::{path_str, Prime, VerifierGen};
@@ -138,6 +139,35 @@ fn check_templates(
         Some(input) if with_global_info => &input.vadcop_info,
         _ => &serde_json::Value::Null,
     };
+    let input = ctx.circuit_input.as_ref().context("circuit circom without its input")?;
+    let vadcop = match template {
+        CircuitTemplate::Compressor | CircuitTemplate::Recursive1 => Vadcop::Air,
+        CircuitTemplate::Recursive2 => {
+            let airgroup = input.opts.airgroup_id.context("recursive2 without its airgroup")?;
+            Vadcop::Airgroup { airgroup: airgroup as u64, recursive1: recursive1_keys(ctx, global_info, airgroup)? }
+        }
+        CircuitTemplate::VadcopFinal => {
+            let n = global_info["air_groups"].as_array().map_or(0, Vec::len);
+            Vadcop::Final {
+                recursive1: (0..n).map(|ag| recursive1_keys(ctx, global_info, ag)).collect::<Result<_>>()?,
+                recursive2: (0..n)
+                    .map(|ag| verkey(&airgroup_dir(ctx, global_info, ag)?.join("recursive2/recursive2.verkey.json")))
+                    .collect::<Result<_>>()?,
+            }
+        }
+        CircuitTemplate::Final => {
+            Vadcop::Snark { publics_info: input.publics.first().unwrap_or(&serde_json::Value::Null) }
+        }
+        _ => Vadcop::None,
+    };
+    if let Vadcop::Snark { publics_info } = &vadcop {
+        let unhashed = unhashed_publics(publics_info);
+        if !unhashed.is_empty() {
+            tracing::warn!(
+                "publics {unhashed:?} are in no publics_info definition: the final SNARK does not bind them"
+            );
+        }
+    }
     let circuit = Circuit {
         field: match prime {
             Prime::Goldilocks => Field::Goldilocks,
@@ -146,7 +176,7 @@ fn check_templates(
         main: &main,
         keys,
         global_info,
-        global_constraints: template == CircuitTemplate::VadcopFinal,
+        vadcop,
     };
     let start = std::time::Instant::now();
     let circom = Circom { exec: &ctx.tools.circom_exec, libs: &ctx.tools.libs };
@@ -159,6 +189,29 @@ fn check_templates(
         each.join(", ")
     );
     Ok(())
+}
+
+/// `provingKey/<global name>/<airgroup name>` under the build dir.
+fn airgroup_dir(ctx: &PipelineCtx, global_info: &serde_json::Value, airgroup: usize) -> Result<PathBuf> {
+    let name = global_info["air_groups"][airgroup].as_str().with_context(|| format!("no airgroup {airgroup}"))?;
+    let global = global_info["name"].as_str().unwrap_or("pilout");
+    Ok(ctx.build_dir.join("provingKey").join(global).join(name))
+}
+
+fn verkey(path: &Path) -> Result<[u64; 4]> {
+    let json = fs::read_to_string(path).with_context(|| path.display().to_string())?;
+    crate::commands::common::parse_const_root(&serde_json::from_str(&json)?).with_context(|| path.display().to_string())
+}
+
+/// The recursive1 keys the setup wrote for `airgroup`'s airs, in globalInfo's order.
+fn recursive1_keys(ctx: &PipelineCtx, global_info: &serde_json::Value, airgroup: usize) -> Result<Vec<[u64; 4]>> {
+    let dir = airgroup_dir(ctx, global_info, airgroup)?;
+    (global_info["airs"][airgroup].as_array().into_iter().flatten())
+        .map(|air| {
+            let name = air["name"].as_str().context("an air without a name")?;
+            verkey(&dir.join("airs").join(name).join("recursive1/recursive1.verkey.json"))
+        })
+        .collect()
 }
 
 pub(super) fn witness_lib(ctx: &mut PipelineCtx) -> Result<()> {
@@ -252,7 +305,7 @@ mod tests {
                 })
                 .collect(),
             global_info: &serde_json::Value::Null,
-            global_constraints: false,
+            vadcop: Vadcop::None,
         };
         let lib = root.join("setup/stark-recurser/stark2circom/circom_verifier");
         let libs = ["helper_circuits", "circuits.gl"].map(|l| lib.join(l).to_string_lossy().into_owned());

@@ -1,14 +1,15 @@
 //! The main's data functions against the starkinfo and globalInfo they copy: `key_<name>(k)` per key and the
 //! `vadcop_<name>()` of a recursion main. Each expected value is read off the artefact (a field, a list's length,
-//! its stages); the derived tables (proof offsets, the DEEP grouping, `batchSize`) are not checked here.
+//! its stages); the proof offsets and the DEEP tables have their own modules ([`super::proof`], [`super::deep`]).
 
 use std::collections::BTreeMap;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{bail, ensure, Context, Result};
 use proofman_common::{EvMapEType, LowDegreeTest, PolMap, StarkInfo};
 use serde_json::Value;
 
 use super::syntax::{DataFn, Val};
+use super::Vadcop;
 
 /// How a circuit uses a key, which the key's data records.
 pub struct KeyUse<'a> {
@@ -33,6 +34,30 @@ fn stages(m: &Option<Vec<PolMap>>) -> Vec<u64> {
     m.iter().flatten().map(|p| p.stage).collect()
 }
 
+/// An L_0 tree the verifier opens.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum L0Tree {
+    Stage(u64),
+    Fixed,
+    Custom(usize),
+}
+
+/// The L_0 trees and their widths in the main's order: stage trees with columns (and Q's), the fixed one, each
+/// custom commit's.
+pub fn l0_trees(si: &StarkInfo) -> Vec<(L0Tree, u64)> {
+    let q = u64::from(si.n_stages) + 1;
+    let width = |s: String| si.map_sections_n.get(&s).copied().unwrap_or(0);
+    let mut trees: Vec<(L0Tree, u64)> = (1..=q)
+        .filter(|&s| s == q || width(format!("cm{s}")) > 0)
+        .map(|s| (L0Tree::Stage(s), width(format!("cm{s}"))))
+        .collect();
+    trees.push((L0Tree::Fixed, si.n_constants));
+    trees.extend(
+        si.custom_commits.iter().enumerate().map(|(c, cc)| (L0Tree::Custom(c), width(format!("{}0", cc.name)))),
+    );
+    trees
+}
+
 /// What `key_<name>(k)` must return for key `si` used as `u`.
 pub fn expected_key_data(si: &StarkInfo, u: &KeyUse) -> Result<Vec<(&'static str, Val)>> {
     let ss = &si.stark_struct;
@@ -52,12 +77,7 @@ pub fn expected_key_data(si: &StarkInfo, u: &KeyUse) -> Result<Vec<(&'static str
     let q_pol_ev = (si.ev_map.iter())
         .position(|e| e.type_ == EvMapEType::Cm && e.id == q_pol as u64)
         .context("evMap has no quotient evaluation")?;
-    // L_0 trees: stage trees with columns (and Q's), the fixed one, each custom commit's
-    let width = |s: String| si.map_sections_n.get(&s).copied().unwrap_or(0);
-    let mut widths: Vec<u64> =
-        (1..=q).filter(|&s| s == q || width(format!("cm{s}")) > 0).map(|s| width(format!("cm{s}"))).collect();
-    widths.push(si.n_constants);
-    widths.extend(si.custom_commits.iter().map(|c| width(format!("{}0", c.name))));
+    let widths: Vec<u64> = l0_trees(si).into_iter().map(|t| t.1).collect();
     let mut tree_start = vec![0u64];
     for w in &widths {
         tree_start.push(tree_start.last().unwrap() + w);
@@ -131,9 +151,23 @@ pub fn check_key_data(fns: &BTreeMap<String, DataFn>, k: usize, want: &[(&str, V
     Ok(())
 }
 
-/// What the `vadcop_` functions of a main over globalInfo `gi` must return (`global`: it checks the global
-/// constraints, so it also carries their challenge count).
-pub fn expected_vadcop_data(gi: &Value, global: bool) -> Result<Vec<(&'static str, Option<u64>, Val)>> {
+/// The queries go in batches of `key_batchSize(k)` and one tail batch, so any size in 1..=nQueries covers them all.
+pub fn check_batch_size(fns: &BTreeMap<String, DataFn>, k: usize) -> Result<()> {
+    let get = |name: &str| fns.get(name).map(|f| f.value(k as u64)).with_context(|| format!("no key_{name}"));
+    let (Val::Int(batch), Val::Int(n_queries)) = (get("batchSize")?, get("nQueries")?) else {
+        bail!("key_batchSize({k}) or key_nQueries({k}) is not a number");
+    };
+    ensure!((1..=*n_queries).contains(batch), "key_batchSize({k}) is {batch}, outside 1..={n_queries}");
+    Ok(())
+}
+
+/// What the `vadcop_` functions of a main over globalInfo `gi` that verifies `role` must return; `first_key` is
+/// the starkinfo of its first key.
+pub fn expected_vadcop_data(
+    gi: &Value,
+    role: &Vadcop,
+    first_key: Option<&Value>,
+) -> Result<Vec<(&'static str, Option<u64>, Val)>> {
     let num = |v: &Value, what: &str| v.as_u64().with_context(|| format!("globalInfo {what}"));
     let agg_types = gi["aggTypes"].as_array().context("globalInfo has no aggTypes")?;
     let ec = gi["curve"].as_str().is_some_and(|c| c != "None");
@@ -177,11 +211,103 @@ pub fn expected_vadcop_data(gi: &Value, global: bool) -> Result<Vec<(&'static st
         want.push(("nAgg", Some(i as u64), int(types.len())));
         want.push(("AGG", Some(i as u64), ints(&types)));
     }
-    if global {
+    let airs: Vec<u64> =
+        (gi["airs"].as_array().into_iter().flatten()).map(|a| a.as_array().map_or(0, Vec::len) as u64).collect();
+    let (airgroup, air) = match role {
+        Vadcop::Air => {
+            let si = first_key.context("a recursion main without its key")?;
+            let (ag, air) = (num(&si["airgroupId"], "key airgroupId")?, num(&si["airId"], "key airId")?);
+            ensure!(airs.get(ag as usize).is_some_and(|&n| air < n), "air ({ag}, {air}) is not in globalInfo");
+            (ag, air)
+        }
+        Vadcop::Airgroup { airgroup, .. } => (*airgroup, 0),
+        _ => (0, 0),
+    };
+    want.push(("airgroupId", None, int(airgroup)));
+    want.push(("airId", None, int(air)));
+    if let Vadcop::Final { recursive1, recursive2 } = role {
+        ensure!(
+            recursive1.len() == airs.len() && recursive2.len() == airs.len(),
+            "{} airgroups, {} recursive1 key sets and {} recursive2 keys",
+            airs.len(),
+            recursive1.len(),
+            recursive2.len()
+        );
+    }
+    let key = |k: &[u64; 4]| ints(&k[..]);
+    for (i, &n_airs) in airs.iter().enumerate() {
+        let basics: &[[u64; 4]] = match role {
+            Vadcop::Airgroup { airgroup, recursive1 } if *airgroup == i as u64 => recursive1,
+            Vadcop::Final { recursive1, .. } => &recursive1[i],
+            _ => &[],
+        };
+        ensure!(
+            basics.is_empty() || basics.len() as u64 == n_airs,
+            "airgroup {i} has {n_airs} airs and {} recursive1 keys",
+            basics.len()
+        );
+        let listed = match basics {
+            [] => Val::List(vec![Val::ints(&[0; 4])]),
+            b => Val::List(b.iter().map(key).collect()),
+        };
+        let agg = match role {
+            Vadcop::Final { recursive2, .. } => key(&recursive2[i]),
+            _ => Val::ints(&[0; 4]),
+        };
+        want.push(("nBasics", Some(i as u64), int(basics.len())));
+        want.push(("basics", Some(i as u64), listed));
+        want.push(("rootCAgg", Some(i as u64), agg));
+    }
+    if matches!(role, Vadcop::Final { .. }) {
         let n = gi["numChallenges"].get(1).and_then(Value::as_u64).unwrap_or(0);
         want.push(("nGlobalChallenges", None, int(n)));
     }
     Ok(want)
+}
+
+/// The final main's `vadcop_DEFS()` and its `FinalSnark(nPublics, nDefs, vkPos)` against `publics_info` (Null:
+/// no publics): one `[initialPos, nValues, nChunks, bitsPerChunk, avoidAlias, verificationKey]` per definition,
+/// each within the publics.
+pub fn check_publics_defs(fns: &BTreeMap<String, DataFn>, main: &str, publics_info: &Value) -> Result<()> {
+    let n_publics = publics_info["nPublics"].as_u64().unwrap_or(0);
+    let (mut flat, mut vk_pos) = (Vec::new(), -1i128);
+    let defs = publics_info["definitions"].as_array().map_or(&[][..], Vec::as_slice);
+    for d in defs {
+        let num = |k: &str| d[k].as_u64().with_context(|| format!("publics definition {d}: {k}"));
+        let (pos, n) = (num("initialPos")?, num("nValues")?);
+        let chunks = match d["chunks"].as_array() {
+            Some(c) => c.iter().map(|x| x.as_u64().context("publics definition chunks")).collect::<Result<Vec<_>>>()?,
+            None => vec![1, 64],
+        };
+        ensure!(chunks.len() == 2, "publics definition {d}: chunks");
+        ensure!(pos + n * chunks[0] <= n_publics, "publics definition {d} past the {n_publics} publics");
+        let flag = |k: &str| u64::from(d[k].as_bool().unwrap_or(false));
+        if flag("verificationKey") == 1 {
+            vk_pos = pos as i128;
+        }
+        flat.extend([pos, n, chunks[0], chunks[1], flag("avoidAlias"), flag("verificationKey")]);
+    }
+    let got = fns.get("DEFS").context("the main has no vadcop_DEFS")?.value(0);
+    let want = ints(&flat);
+    ensure!(got == &want, "vadcop_DEFS() is {got:?}, publics_info gives {want:?}");
+    let call = format!("FinalSnark({n_publics}, {}, {vk_pos})", defs.len());
+    ensure!(main.contains(&call), "the final main does not instantiate {call}");
+    Ok(())
+}
+
+/// The publics in no definition of `publics_info`: the final SNARK's publics hash does not bind them.
+pub fn unhashed_publics(publics_info: &Value) -> Vec<u64> {
+    let n_publics = publics_info["nPublics"].as_u64().unwrap_or(0);
+    let mut hashed = vec![false; n_publics as usize];
+    for d in publics_info["definitions"].as_array().into_iter().flatten() {
+        let pos = d["initialPos"].as_u64().unwrap_or(0);
+        let chunks = d["chunks"].get(0).and_then(Value::as_u64).unwrap_or(1);
+        let end = pos + d["nValues"].as_u64().unwrap_or(0) * chunks;
+        for i in pos..end.min(n_publics) {
+            hashed[i as usize] = true;
+        }
+    }
+    (0..n_publics).filter(|&i| !hashed[i as usize]).collect()
 }
 
 pub fn check_vadcop_data(fns: &BTreeMap<String, DataFn>, want: &[(&str, Option<u64>, Val)]) -> Result<()> {

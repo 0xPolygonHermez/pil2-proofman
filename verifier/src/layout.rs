@@ -67,7 +67,8 @@ impl StirVerifierInfo {
     }
 }
 
-pub(crate) enum Segment {
+/// A run of the flat proof, in the order the verifiers read it.
+pub enum Segment {
     Data(usize),
     /// `n_queries` leaves of `width` words out of `2^leaf_bits`, then their paths of `n_levels`
     /// levels.
@@ -80,7 +81,7 @@ pub(crate) enum Segment {
 }
 
 impl Segment {
-    fn words(&self, arity: u64) -> usize {
+    pub fn words(&self, arity: u64) -> usize {
         match *self {
             Segment::Data(n) => n,
             Segment::Tree { width, n_queries, n_levels, .. } => n_queries * (width + n_levels * sibling_words(arity)),
@@ -138,7 +139,7 @@ pub fn stir_section_size_words(params: &StirParams) -> usize {
 
 impl ProofLayout {
     /// The flat proof's segments; the first holds the public count and the publics.
-    pub(crate) fn segments(&self, n_publics: usize) -> Vec<Segment> {
+    pub fn segments(&self, n_publics: usize) -> Vec<Segment> {
         let last_level = last_level_words(self.arity, self.last_level_verification);
         let tree = |width: u64, n_queries: u64, n_bits: u64| Segment::Tree {
             width: width as usize,

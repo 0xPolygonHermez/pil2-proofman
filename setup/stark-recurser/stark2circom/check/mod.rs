@@ -11,12 +11,21 @@
 //!   outputs: compiled at `--O0`, the constraints a random input breaks must be exactly one zero check per
 //!   non-zero limb of each root.
 //!
-//! Trusted: circom, the static library, the wasm and C++ witness generators, `constraint-dag`.
+//! Per key, its data copies starkinfo ([`data`]), its proof offsets are the native verifier's layout ([`proof`])
+//! and its DEEP tables bind exactly the native grouping's evaluations ([`deep`]); the `vadcop_` data names the
+//! air, the children's keys on disk and the publics definitions ([`Vadcop`]).
+//!
+//! Trusted: circom, the static library, the wasm and C++ witness generators, `constraint-dag`, the native
+//! verifier's `ProofLayout` and STIR parser, `proofman_common::deep::fri_ev_groups`.
 
 pub mod data;
+pub mod deep;
+pub mod proof;
 pub mod syntax;
 pub mod values;
 pub mod witness;
+#[cfg(test)]
+mod data_tests;
 #[cfg(test)]
 mod tests;
 
@@ -59,14 +68,28 @@ pub struct Key<'a> {
     pub input_challenges: bool,
 }
 
+/// What a main's `vadcop_` data names: the air or airgroup it verifies and the keys of its children, read from
+/// the files the setup wrote for them.
+pub enum Vadcop<'a> {
+    /// No vadcop data to check.
+    None,
+    /// A compressor or recursive1: the air of its key's starkinfo.
+    Air,
+    /// A recursive2: its airgroup and the airgroup's recursive1 keys, in globalInfo's air order.
+    Airgroup { airgroup: u64, recursive1: Vec<[u64; 4]> },
+    /// vadcop_final, which also checks the global constraints: per airgroup its recursive1 keys and recursive2 key.
+    Final { recursive1: Vec<Vec<[u64; 4]>>, recursive2: Vec<[u64; 4]> },
+    /// The final SNARK: the publics definitions it hashes (`Null`: no publics).
+    Snark { publics_info: &'a Value },
+}
+
 /// A generated circuit: its main's text, its keys in the main's order, its globalInfo (`Null` if none).
 pub struct Circuit<'a> {
     pub field: Field,
     pub main: &'a str,
     pub keys: Vec<Key<'a>>,
     pub global_info: &'a Value,
-    /// It checks the global constraints (vadcop_final).
-    pub global_constraints: bool,
+    pub vadcop: Vadcop<'a>,
 }
 
 /// Checks `circuit`, compiling in `work_dir`; how long each part took.
@@ -84,11 +107,16 @@ pub fn check_circuit(circom: &Circom, work_dir: &Path, circuit: &Circuit) -> Res
             .with_context(|| format!("key {k} ({name})"))?;
         times.push((name, t.elapsed()));
     }
-    if !circuit.global_info.is_null() {
-        let fns = syntax::data_functions(circuit.main, "vadcop_")?;
-        data::check_vadcop_data(&fns, &data::expected_vadcop_data(circuit.global_info, circuit.global_constraints)?)?;
+    let fns = syntax::data_functions(circuit.main, "vadcop_")?;
+    match &circuit.vadcop {
+        Vadcop::None => {}
+        Vadcop::Snark { publics_info } => data::check_publics_defs(&fns, circuit.main, publics_info)?,
+        role => {
+            let first_key = circuit.keys.first().map(|k| k.stark_info);
+            data::check_vadcop_data(&fns, &data::expected_vadcop_data(circuit.global_info, role, first_key)?)?;
+        }
     }
-    if circuit.global_constraints {
+    if matches!(circuit.vadcop, Vadcop::Final { .. }) {
         let t = Instant::now();
         check_global(circom, &work_dir.join("global"), circuit.main, circuit.global_info)
             .context("GlobalConstraints")?;
@@ -144,6 +172,9 @@ fn check_key(
         roots,
     };
     data::check_key_data(key_fns, k, &data::expected_key_data(&si, &u)?)?;
+    data::check_key_data(key_fns, k, &proof::expected_offsets(&si)?)?;
+    deep::check_deep(&si, key_fns, k).context("DEEP tables")?;
+    data::check_batch_size(key_fns, k)?;
 
     let src = fs::read_to_string(key.verifier_file).with_context(|| key.verifier_file.display().to_string())?;
     let mut rng = Rng::new()?;

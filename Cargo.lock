@@ -1107,6 +1107,7 @@ dependencies = [
  "proofman-common",
  "proofman-fields",
  "proofman-pilfflonk",
+ "proofman-verifier",
  "rand",
  "serde",
  "serde_json",

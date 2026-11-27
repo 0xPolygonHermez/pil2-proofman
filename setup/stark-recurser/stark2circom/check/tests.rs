@@ -10,7 +10,7 @@ use constraint_dag::{ColType, ConstraintDag, DagBoundary, DagNode, DagRoot};
 use serde_json::{json, Value};
 
 use super::witness::Circom;
-use super::{check_circuit, check_global, Circuit, Field, Key};
+use super::{check_circuit, check_global, Circuit, Field, Key, Vadcop};
 use crate::stark2circom::circom_verifier::constraint_roots::global_constraints;
 use crate::stark2circom::circom_verifier::{
     gen_stark_verifier_bn128, gen_stark_verifier_gl, key_dispatch, KeyVerifier, Pil2CircomOptions,
@@ -156,13 +156,8 @@ fn check_gl(name: &str, si: &Value, vi: &Value, circom: &str, main: &str) -> Opt
         enable_input: false,
         input_challenges: false,
     };
-    let circuit = Circuit {
-        field: Field::Goldilocks,
-        main,
-        keys: vec![key],
-        global_info: &Value::Null,
-        global_constraints: false,
-    };
+    let circuit =
+        Circuit { field: Field::Goldilocks, main, keys: vec![key], global_info: &Value::Null, vadcop: Vadcop::None };
     let libs = gl_libs();
     Some(check_circuit(&Circom { exec: &exec, libs: &libs }, &dir.0.join("work"), &circuit).map(|_| ()))
 }
@@ -364,7 +359,7 @@ fn check_bn128(name: &str, si: &Value, vi: &Value, circom: &str, main: &str) -> 
         input_challenges: false,
     };
     let circuit =
-        Circuit { field: Field::Bn128, main, keys: vec![key], global_info: &Value::Null, global_constraints: false };
+        Circuit { field: Field::Bn128, main, keys: vec![key], global_info: &Value::Null, vadcop: Vadcop::None };
     let libs: Vec<String> = ["helper_circuits", "circuits.bn128"]
         .map(|l| library().join(l).to_string_lossy().into_owned())
         .into_iter()
