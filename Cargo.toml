@@ -23,6 +23,7 @@ members = [
   "witness",
   "util",
   "verifier",
+  "constraint-dag",
   "soundness",
   "setup/stark-recurser",
   "setup/pil2-stark",
@@ -75,6 +76,7 @@ default-members = [
   "witness",
   "util",
   "verifier",
+  "constraint-dag",
   "soundness",
   "setup/stark-recurser",
   "setup/pil2-stark",
@@ -94,6 +96,7 @@ proofman-starks-src = { path = "pil2-stark", version = "1.5.0-alpha" }
 proofman-hints = { path = "hints", version = "1.5.0-alpha" }
 proofman-soundness = { path = "soundness", version = "1.5.0-alpha" }
 proofman-verifier = { path = "verifier", version = "1.5.0-alpha" }
+constraint-dag = { path = "constraint-dag", version = "1.5.0-alpha", default-features = false }
 proofman-util = { path = "util", version = "1.5.0-alpha" }
 proofman-cli = { path = "cli", version = "1.5.0-alpha" }
 pil2-std-lib = { path = "pil2-components/lib/std/rs", version = "1.5.0-alpha" }

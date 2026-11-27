@@ -28,10 +28,11 @@ use proofman_fields::{
     TranscriptLike,
 };
 
+use crate::constraints::AirConstraints;
 use crate::layout::{merkle_proof_levels, sibling_words};
 use crate::multiproof::{expand_stir_checked, Proven};
 use crate::replay::{prefix_transcript, stir_transcript, StirTranscript};
-use crate::verifier::{deep_denominators_inv, Boundary, DeepQueryConsts, FriEvalGroup};
+use crate::verifier::{deep_denominators_inv, DeepQueryConsts, FriEvalGroup};
 
 type E3 = CubicExtensionField<Goldilocks>;
 
@@ -126,10 +127,13 @@ pub struct StirVerifierInfo {
     pub n_bits: u64,
     pub n_bits_ext: u64,
     pub n_challenges: u64,
+    /// `challengesMap` positions of xi (the DEEP point) and of vf1, vf2 (the DEEP batching challenges).
+    pub xi_idx: u64,
+    pub vf1_idx: u64,
+    pub vf2_idx: u64,
     pub n_challenges_total: u64,
     pub num_vals: Vec<u64>,
     pub opening_points: Vec<i64>,
-    pub boundaries: Vec<Boundary>,
     pub q_deg: u64,
     pub q_index: u64,
     /// The DEEP polynomial's evaluation table, the same one FRI's `VerifierInfo` carries.
@@ -785,13 +789,13 @@ where
 
 /// The STIR counterpart of `stark_verify`, for proofs of circuits whose low-degree test is STIR.
 /// Same contract: `proof` is [n_publics, publics…, flat proof], `vk` the 4-limb constant root,
-/// `q_verify` the generated quotient evaluator; f_0 is recomputed from `fri_ev_groups`.
+/// `constraints` the air's constraint DAG; f_0 is recomputed from `fri_ev_groups`.
 #[allow(clippy::type_complexity)]
 pub fn stark_verify_stir<LeafHash, CompressionHash, TranscriptT, GrindingHash>(
     proof: &[u64],
     vk: &[u64],
     verifier_info: &StirVerifierInfo,
-    q_verify: QVerify,
+    constraints: &AirConstraints,
 ) -> bool
 where
     LeafHash: Hash<Goldilocks>,
@@ -803,7 +807,7 @@ where
         proof,
         vk,
         verifier_info,
-        q_verify,
+        constraints,
         None,
     )
 }
@@ -815,7 +819,7 @@ pub fn verify_multiproof_stir<LeafHash, CompressionHash, TranscriptT, GrindingHa
     wire: &[u64],
     vk: &[u64],
     verifier_info: &StirVerifierInfo,
-    q_verify: QVerify,
+    constraints: &AirConstraints,
 ) -> bool
 where
     LeafHash: Hash<Goldilocks>,
@@ -832,17 +836,10 @@ where
         &flat,
         vk,
         verifier_info,
-        q_verify,
+        constraints,
         Some(&proven),
     )
 }
-
-type QVerify = fn(
-    &[CubicExtensionField<Goldilocks>],
-    &[CubicExtensionField<Goldilocks>],
-    &[Goldilocks],
-    &[CubicExtensionField<Goldilocks>],
-) -> CubicExtensionField<Goldilocks>;
 
 /// `proven`: what the multiproof check already did — each tree's leaves checked against its root,
 /// and the transcript replayed from the same words this parses.
@@ -850,7 +847,7 @@ fn stark_verify_stir_impl<LeafHash, CompressionHash, TranscriptT, GrindingHash>(
     proof: &[u64],
     vk: &[u64],
     verifier_info: &StirVerifierInfo,
-    q_verify: QVerify,
+    constraints: &AirConstraints,
     proven: Option<&Proven>,
 ) -> bool
 where
@@ -1069,7 +1066,7 @@ where
     }
 
     // ---- Shared machinery at the round-1 query set: kept in sync with `stark_verify` ----------
-    let xi_challenge = challenges[verifier_info.n_challenges as usize - 3];
+    let xi_challenge = challenges[verifier_info.xi_idx as usize];
 
     let Some(xdivxsub) = deep_denominators_inv(
         &queries_l0,
@@ -1086,21 +1083,17 @@ where
 
     let z_n = x_n - Goldilocks::ONE;
     let z_n_inv = z_n.inverse();
-    let mut zi = Vec::with_capacity(verifier_info.boundaries.len() + 1);
-    zi.push(z_n_inv);
-    for boundary in &verifier_info.boundaries {
-        if boundary.name == "everyRow" {
-            continue;
-        }
-
-        // Handling for boundaries other than "everyRow" is intentionally deferred.
-        // If support for additional boundary types is required, implement logic here.
-    }
+    // the only STARK zerofier is everyRow
+    let zi = z_n_inv;
 
     v_debug!("Verifying proof");
 
-    let deep_consts =
-        DeepQueryConsts::new(&verifier_info.fri_ev_groups, verifier_info.n_challenges, &challenges, &evals);
+    let deep_consts = DeepQueryConsts::new(
+        &verifier_info.fri_ev_groups,
+        (verifier_info.vf1_idx, verifier_info.vf2_idx),
+        &challenges,
+        &evals,
+    );
 
     // The multiproof check opened the stage trees at its own round-1 indices: pin them to ours.
     if let Some(l) = leaves {
@@ -1203,7 +1196,10 @@ where
         x_acc *= x_n;
     }
 
-    let q_val = q_verify(&challenges, &evals, &publics, &zi);
+    let Some(q_val) = constraints.eval(&challenges, &evals, &publics, zi) else {
+        v_error!("the constraints read past the proof's evaluations, challenges or publics");
+        return false;
+    };
     if q_val != q {
         v_error!("Quotient polynomial verification failed");
         return false;

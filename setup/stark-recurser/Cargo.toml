@@ -15,12 +15,15 @@ path = "lib.rs"
 [dependencies]
 proofman-fields = { workspace = true }
 proofman-common = { workspace = true }
+proofman-verifier = { workspace = true }
+pil-info = { workspace = true }
+constraint-dag = { workspace = true }
+pil2-pilout = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true, features = ["preserve_order"] }
 anyhow = { workspace = true }
 tracing = { workspace = true }
 num-bigint = { workspace = true }
-tera = "1"
 
 [dev-dependencies]
 rand = { workspace = true }
@@ -30,3 +33,4 @@ serde_json = { workspace = true }
 # Internal dev-deps are path only: cargo drops them on publish.
 pilfflonk-setup = { path = "../pilfflonk" }
 proofman-pilfflonk = { path = "../../pilfflonk" }
+sha2 = { workspace = true }

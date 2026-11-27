@@ -285,21 +285,15 @@ fn the_index_is_the_position_among_the_columns_of_that_name() {
 }
 
 /// A pilout whose fixed symbols do not fit its columns is refused, not merged: a symbol of a
-/// column the AIR does not have, and two symbols of one column.
+/// column the AIR does not have, and two symbols of one column (the core's symbol checks).
 #[test]
 fn fixed_symbols_that_do_not_fit_the_columns_are_refused() {
-    let (mut pilout, external) = pilout_with_external_fixed();
-    pilout.symbols.push(symbol("Sample.X", SymbolType::FixedCol, 4, Some(0), true));
-    let err = with_external(&pilout, external.clone()).unwrap_err();
-    assert!(matches!(&err, SetupError::InvalidPilout(m) if m.contains("Sample.X")), "{err}");
-
-    let (mut pilout, external) = pilout_with_external_fixed();
-    pilout.symbols.push(symbol("Sample.X", SymbolType::FixedCol, 3, Some(0), true));
-    let err = with_external(&pilout, external).unwrap_err();
-    assert!(
-        matches!(&err, SetupError::InvalidPilout(m) if m == "fixed column 3 has two symbols, Sample.U and Sample.X"),
-        "{err}"
-    );
+    for id in [4, 3] {
+        let (mut pilout, external) = pilout_with_external_fixed();
+        pilout.symbols.push(symbol("Sample.X", SymbolType::FixedCol, id, Some(0), true));
+        let err = with_external(&pilout, external).unwrap_err().to_string();
+        assert!(err.contains("invalid pilout") && err.contains("fixed columns"), "{id}: {err}");
+    }
 }
 
 /// `<air>.fixed`, which `compile-pil --fixed-to-file` writes, has the layout of `<air>.const`: its

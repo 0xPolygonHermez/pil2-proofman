@@ -3,7 +3,7 @@
 //! (pilfflonk/docs/protocol.md#prover), the prover hints that compute the columns of stage 2 and
 //! above (pilfflonk/docs/protocol.md#hint-columns), and the code `pilfflonk check` runs to say
 //! which constraint fails on which row. [`write_air_bin`] writes it from what
-//! `pil_info::run(…, &PilInfoCfg::bn128(), …)` returns, and [`Bytecode::read`] reads it back.
+//! `pil_info::shplonk_info(…, &PilInfoCfg::bn128(), …)` returns, and [`Bytecode::read`] reads it back.
 //!
 //! # Format, revision 3
 //!
@@ -158,7 +158,7 @@
 //!
 //! Some values of the STARK's are never written here:
 //! - `bs + 1`, the tmp3 buffer (dimension 3);
-//! - `nStages + 3`, `xDivXSubXi` (the DEEP opening's);
+//! - `nStages + 3`, unused but kept so `bs` stays the STARK's `bufferCommitSize` index;
 //! - the custom commits;
 //! - `x`, `nStages + 2` with arg1 0 (PIL1).
 //!
@@ -199,7 +199,7 @@
 //!   code first uses it.
 //! - **Refusals.** Every operand has `dim` 1, or the encoder refuses the code, so a
 //!   `PilInfoCfg::goldilocks` result does not fit.
-//! - **Determinism.** The same `PilInfoResult` gives the same bytes.
+//! - **Determinism.** The same `ShplonkResult` gives the same bytes.
 //!
 //! # Reading it
 //!
@@ -227,7 +227,7 @@ use pil_info::io::temporaries::get_id_maps;
 use pil_info::pil::gen_code::{ConstraintCodeEntry, ExpressionCodeEntry, ProcessedHint, ProcessedHintField};
 use pil_info::types::code::{CodeOperation, CodeType, OpType};
 use pil_info::types::output::{CodeEntry, CodeRef};
-use pil_info::{FieldCfg, PilInfoResult};
+use pil_info::{FieldCfg, ShplonkResult};
 use proofman_pilfflonk::field::{FrBytes, FIELD_BYTES};
 
 use crate::validate::{SUPPORTED_PROVER_HINTS, WITNESS_AND_DEBUG_HINTS};
@@ -510,7 +510,7 @@ impl Types {
         self.n_stages + 2
     }
 
-    /// `bs`: the tmp buffer, after the stages, the zerofiers, `xDivXSubXi` and no custom commit.
+    /// `bs`: the tmp buffer, after the stages, the zerofiers, the reserved slot and no custom commit.
     fn tmp(self) -> u32 {
         self.n_stages + 4
     }
@@ -570,8 +570,8 @@ impl Types {
 // From pil-info's code
 // ---------------------------------------------------------------------------------------------
 
-/// Write `<air>.bin` at `path` for the result of `pil_info::run` with `PilInfoCfg::bn128()`.
-pub fn write_air_bin(result: &PilInfoResult, path: &Path) -> BytecodeResult<()> {
+/// Write `<air>.bin` at `path` for the result of `pil_info::shplonk_info` with `PilInfoCfg::bn128()`.
+pub fn write_air_bin(result: &ShplonkResult, path: &Path) -> BytecodeResult<()> {
     Bytecode::from_pil_info(result)?.write(path)
 }
 
@@ -586,7 +586,7 @@ pub struct CodeContext {
 }
 
 impl CodeContext {
-    pub fn from_pil_info(result: &PilInfoResult) -> BytecodeResult<Self> {
+    pub fn from_pil_info(result: &ShplonkResult) -> BytecodeResult<Self> {
         let setup = &result.setup;
         let cm_pols = setup
             .cm_pols_map
@@ -604,16 +604,13 @@ impl CodeContext {
 }
 
 impl Bytecode {
-    /// The bytecode of the result of `pil_info::run` with `PilInfoCfg::bn128()`.
+    /// The bytecode of the result of `pil_info::shplonk_info` with `PilInfoCfg::bn128()`.
     ///
     /// Of the hints the passes collected, section 3 has the prover hints the setup supports; the
     /// witness and debug hints are not the prover's, and the setup ignores them
     /// (pilfflonk/docs/README.md#what-the-setup-refuses). Any other hint is refused: it is none the
     /// prover computes.
-    pub fn from_pil_info(result: &PilInfoResult) -> BytecodeResult<Self> {
-        if result.deep_exp_id.is_some() {
-            return encode_error("a result with a DEEP polynomial: pilfflonk opens with SHPLONK (PilInfoCfg::bn128())");
-        }
+    pub fn from_pil_info(result: &ShplonkResult) -> BytecodeResult<Self> {
         let context = CodeContext::from_pil_info(result)?;
         let info = &result.pil_code.expressions_info;
         let expressions =
@@ -646,7 +643,7 @@ impl Bytecode {
 }
 
 /// A prover hint of the passes, `pil-info`'s `addHintsInfo` of it, as section 3 holds it.
-fn hint_bin(hint: &ProcessedHint, result: &PilInfoResult, context: &CodeContext) -> BytecodeResult<HintBin> {
+fn hint_bin(hint: &ProcessedHint, result: &ShplonkResult, context: &CodeContext) -> BytecodeResult<HintBin> {
     let fields = hint
         .fields
         .iter()
@@ -670,7 +667,7 @@ fn hint_bin(hint: &ProcessedHint, result: &PilInfoResult, context: &CodeContext)
 /// of its offset in `openingPoints`, an expression by its `expId`, a number canonical.
 fn hint_operand(
     v: &ProcessedHintField,
-    result: &PilInfoResult,
+    result: &ShplonkResult,
     context: &CodeContext,
     what: &str,
 ) -> BytecodeResult<HintOperand> {
@@ -727,7 +724,7 @@ fn hint_operand(
 
 fn expression_bin(
     entry: &ExpressionCodeEntry,
-    result: &PilInfoResult,
+    result: &ShplonkResult,
     context: &CodeContext,
 ) -> BytecodeResult<ExpressionBin> {
     let what = format!("expression {}", entry.exp_id);
@@ -747,7 +744,7 @@ fn expression_bin(
 fn constraint_bin(
     index: usize,
     entry: &ConstraintCodeEntry,
-    result: &PilInfoResult,
+    result: &ShplonkResult,
     n: u64,
     context: &CodeContext,
 ) -> BytecodeResult<ConstraintBin> {
@@ -790,7 +787,7 @@ fn constraint_bin(
 /// expression the search promotes, because its `Zi` adds 1 to its degree
 /// (pilfflonk/docs/protocol.md#degree-search): `x·x − p` on `firstRow` with
 /// `--max-constraint-degree 2` (the `FirstRow` pilout of `pilfflonk/tests/data/domains.rs`).
-fn im_pol_copy(index: usize, result: &PilInfoResult, what: &str) -> BytecodeResult<Vec<CodeEntry>> {
+fn im_pol_copy(index: usize, result: &ShplonkResult, what: &str) -> BytecodeResult<Vec<CodeEntry>> {
     let setup = &result.setup;
     let e = match setup.constraints.get(index) {
         Some(c) => c.e,
@@ -808,7 +805,6 @@ fn im_pol_copy(index: usize, result: &PilInfoResult, what: &str) -> BytecodeResu
         stage: None,
         stage_id: None,
         commit_id: None,
-        opening: None,
         boundary_id: None,
         airgroup_id: None,
         exp_id: None,
@@ -984,7 +980,7 @@ fn operand(r: &CodeRef, context: &CodeContext, what: &str) -> BytecodeResult<Ope
             None => return encode_error(format!("{what}: a Zi without a boundary")),
         },
         OpType::Eval => Operand::Eval(id()?),
-        OpType::StringVal | OpType::Custom | OpType::X | OpType::XDivXSubXi | OpType::Q | OpType::F => {
+        OpType::StringVal | OpType::Custom | OpType::X | OpType::Q => {
             return encode_error(format!("{what}: a {} is not an operand of the pilfflonk bytecode", r.ref_type))
         }
     })
@@ -1713,7 +1709,7 @@ mod tests {
             assert_eq!(types.words(&t, 0), Some(words), "{t:?}");
             assert_eq!(types.operand(words, &[wide], "").unwrap(), t);
         }
-        // x, xDivXSubXi, tmp3 and beyond evals are not operands here.
+        // x, the reserved slot, tmp3 and beyond evals are not operands here.
         for words in [[4, 0, 0], [5, 0, 0], [7, 0, 0], [15, 0, 0]] {
             assert!(types.operand(words, &[wide], "").is_err(), "{words:?}");
         }

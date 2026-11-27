@@ -81,6 +81,7 @@ extern "C" {
     void *stark_info_new(char* filename, bool recursive_final, bool recursive, bool verify_constraints, bool verify, bool gpu);
     uint64_t get_proof_size(void *pStarkInfo);
     uint64_t get_n_publics(void *pStarkInfo);
+    uint64_t get_proof_values_size(void *pStarkInfo);
     uint64_t get_proof_pinned_size(void *pStarkInfo);
     uint32_t register_host_memory(void *ptr, uint64_t size);
     void unregister_host_memory(void *ptr);
@@ -88,7 +89,6 @@ extern "C" {
     void set_memory_expressions(void *pStarkInfo, uint64_t nTmp1, uint64_t nTmp3);
     uint64_t get_map_total_n(void *pStarkInfo);
     uint64_t get_map_total_n_custom_commits_fixed(void *pStarkInfo);
-    uint64_t get_tree_size(void *pStarkInfo);
     void stark_info_free(void *pStarkInfo);
 
     // Const Pols
@@ -100,7 +100,6 @@ extern "C" {
     bool load_const_tree(void *pStarkInfo, void *pConstTree, char *treeFilename, uint64_t constTreeSize, char *verkeyFilename);
     void load_const_pols(void *pConstPols, char *constFilename, uint64_t constSize);
     uint64_t get_const_tree_size(void *pStarkInfo);
-    uint64_t get_const_size(void *pStarkInfo);
     uint64_t calculate_words_per_row(void *pStarkinfo, char *constPolsPath);
     void calculate_const_tree(void *pStarkInfo, void *pConstPolsAddress, void *pConstTree, void *unified_buffer_gpu);
     void calculate_const_tree_bn128(void *pStarkInfo, void *pConstPolsAddress, void *pConstTree);
@@ -110,11 +109,11 @@ extern "C" {
 
     // Expressions Bin
     // ========================================================================================
-    void *expressions_bin_new(char *filename, bool global, bool verifier);
+    void *expressions_bin_new(char *filename, bool global);
+    void *constraint_dag_new(char *filename, void *pStarkInfo);
+    void constraint_dag_free(void *pConstraintDag);
     uint64_t get_max_n_tmp1(void *pExpressionsBin);
     uint64_t get_max_n_tmp3(void *pExpressionsBin);
-    uint64_t get_max_args(void *pExpressionsBin);
-    uint64_t get_max_ops(void *pExpressionsBin);
     uint64_t get_operations_quotient(void *pExpressionsBin, void *pStarkInfo);
     void expressions_bin_free(void *pExpressionsBin);
 
@@ -135,7 +134,6 @@ extern "C" {
     void calculate_impols_expressions(void *pSetupCtx, uint64_t step, void* stepsParams);
     void calculate_witness_expr(void *pSetupCtx, void * stepsParams);
     
-    uint64_t custom_commit_size(void *pSetup, uint64_t commitId);
     void load_custom_commit(void *pSetup, uint64_t commitId, void *buffer, char *customCommitFile, uint64_t wordsPerRow);
     void write_custom_commit(void *root,  uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, void *d_buffers_, void *buffer, char *bufferFile);
 
@@ -152,10 +150,7 @@ extern "C" {
 
     // Global constraints
     // =================================================================================
-    uint64_t get_n_global_constraints(void *p_globalinfo_bin);
-    void get_global_constraints_lines_sizes(void *p_globalinfo_bin, uint64_t *constraintsLinesSizes);
-    void get_global_constraints_lines(void *p_globalinfo_bin, uint8_t **constraintsLines);
-    void verify_global_constraints(char *globalInfoFile, void *globalBin, void *publics, void *challenges, void *proofValues, void **airgroupValues, void *globalConstraintsInfo);
+    void verify_global_constraints(char *globalInfoFile, uint64_t nGlobalConstraints, void *publics, void *challenges, void *proofValues, void **airgroupValues, void *globalConstraintsInfo);
     uint64_t get_hint_field_global_constraints_values(void *p_globalinfo_bin, uint64_t hintId, char *hintFieldName);
     void get_hint_field_global_constraints_sizes(char *globalInfoFile, void *p_globalinfo_bin, void *hintFieldValues, uint64_t hintId, char *hintFieldName, bool print_expression);
     void get_hint_field_global_constraints(char *globalInfoFile, void *p_globalinfo_bin, void *hintFieldValues, void *publics, void *challenges, void *proofValues, void **airgroupValues, uint64_t hintId, char *hintFieldName, bool print_expression);
@@ -207,9 +202,8 @@ extern "C" {
 
     // Stark Verify
     // =================================================================================
-    bool stark_verify(uint64_t *jProof, void *pStarkInfo, void *pExpressionsBin, char *verkey, void *pPublics, void *pProofValues, void *challenges);
-    bool stark_verify_bn128(void *jProof, void *pStarkInfo, void *pExpressionsBin, char *verkey, void *pPublics);
-    bool stark_verify_from_file(char *proof, void *pStarkInfo, void *pExpressionsBin, char *verkey, void *pPublics, void *pProofValues, void *challenges);
+    bool stark_verify(uint64_t *jProof, void *pStarkInfo, void *pConstraintDag, char *verkey, void *pPublics, void *pProofValues, void *challenges);
+    bool stark_verify_bn128(void *jProof, void *pStarkInfo, void *pConstraintDag, char *verkey, void *pPublics);
 
     // Fixed cols
     // =================================================================================
@@ -217,8 +211,6 @@ extern "C" {
 
     // OMP
     // =================================================================================
-    uint64_t get_omp_max_threads();
-    void set_omp_num_threads(uint64_t num_threads);
 
     // Goldilocks calls
     // =================================================================================
@@ -259,7 +251,6 @@ extern "C" {
     uint64_t get_unified_buffer_gpu_size(void *d_buffers_);
     void acquire_first_gpu_buffer(void *d_buffers_);
     void release_first_gpu_buffer(void *d_buffers_);
-    uint32_t is_first_gpu_buffer_borrowed(void *d_buffers_);
     uint32_t get_first_gpu_id(void *d_buffers_);
     void *get_first_gpu_buffer(void *d_buffers_);
     uint64_t get_layout_offset(void *d_buffers_, uint32_t which);

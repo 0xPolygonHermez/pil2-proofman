@@ -68,7 +68,6 @@ struct StarksBackend {
     uint64_t (*get_unified_buffer_gpu_size)(void *d_buffers_);
     void (*acquire_first_gpu_buffer)(void *d_buffers_);
     void (*release_first_gpu_buffer)(void *d_buffers_);
-    uint32_t (*is_first_gpu_buffer_borrowed)(void *d_buffers_);
     uint32_t (*get_first_gpu_id)(void *d_buffers_);
     void *(*get_first_gpu_buffer)(void *d_buffers_);
     uint64_t (*get_layout_offset)(void *d_buffers_, uint32_t which);

@@ -51,12 +51,29 @@ proofman-setup setup \
 
 Without `--recursive`, only the per-AIR artifacts are produced
 (`<airgroup>/airs/<air>/air/<air>.{starkinfo,verifierinfo,expressionsinfo,verkey}.json`,
-plus `.const`, `.consttree`, `.bin`, `.verifier.bin`, `.verifier.rs`).
+plus `.const`, `.verkey.bin` and `.bin`).
 
 With `--recursive`, the recursive layers are added under
 `<airgroup>/airs/<air>/{compressor,recursive1}/`,
 `<airgroup>/recursive2/`, `vadcop_final/`, and `vadcop_final_compressed/` —
 each with its own const tree, witness `.so`/`.dylib`, and verifier artifacts.
+
+### Where each AIR's info comes from
+
+Every STARK circuit (basic AIRs, compressor, recursive1/2, final, recursivef, the recursive test)
+goes through one entry, `pil::stark_setup::stark_setup`, over the thin core in `pil-info`:
+
+| Module | Rule |
+|---|---|
+| `core/from_pilout` | strict pilout -> typed `ConstraintSystem` |
+| `search/im` (untrusted) -> `core/im` | picks the im columns; `check_im` derives `qDeg` |
+| `core/dag` | the constraint DAG (`constraintDag`) and its code lowering |
+| `core/layout`, `core/openings`, `core/project` | columns, evMap, the starkinfo projection |
+| `emit/prover` | today's arena and generator: expressionsinfo, hints (pilfflonk's `qVerifier` from the DAG) |
+| `output/stark_info` | starkinfo JSON from the projection and the solved low-degree test |
+| `output/dag_eval` | the DAG's resolver context (`lower_ctx`) and a Goldilocks evaluator for tests |
+
+pilfflonk runs the same core (`pil_info::shplonk_info`, SHPLONK).
 
 ## `stats`
 
@@ -172,51 +189,16 @@ Linux-built proving key).
 | Flag | Purpose |
 |---|---|
 | `-p, --proving-key` | Path to the `provingKey/` directory |
-| `-b, --build-dir` | Optional directory for intermediate `.circom`/`.cpp` files. Defaults to a tempdir that is removed when the command finishes |
-| `-j, --jobs` | Number of circom compiles to run in parallel (env: `REBUILD_JOBS`, default 1 = serial). Each circom invocation is single-threaded but RAM-hungry — size by available memory rather than CPU count. ~10–20 GB peak per large circuit |
+| `-s, --proving-key-snark` | Optional `provingKeySnark/` directory; its `recursivef` and `final` libraries are rebuilt too |
+| `-j, --jobs` | Libraries to build at once (env: `REBUILD_JOBS`, default: the CPU count). Each `make` is g++-bound, ~1–2 GB RAM |
 
 ### What it does
 
-For every circuit in `provingKey/<global_name>/...` that already has a witness
-library (`compressor`, `recursive1`, `recursive2`, `vadcop_final`,
-`vadcop_final_compressed`):
-
-1. Loads the persisted `*.starkinfo.json` / `*.verifierinfo.json` /
-   `*.verkey.json` from the proving key.
-2. Regenerates the verifier circom via `pil2circom` and the wrapper circom
-   via `gen_circom`.
-3. Runs `circom <name>.circom --c -O2 --prime goldilocks` to emit C++.
-4. Compiles the C++ into a shared library via the same `make witness` recipe
-   the original setup uses.
-
-No `.dat`, `.const`, `.consttree`, `.exec`, `.bin`, `.verifier.rs` files are
-touched.
-
-### Progress logging
-
-The command prints a discovery summary, then `[i/N]` progress lines for each
-circuit. Sample output for fibonacci-square (with `--jobs 1`):
-
-```
-Discovered 6 witness library(ies) to rebuild:
-  [1/6] compressor / FiboCPU.FibonacciSquare
-  [2/6] recursive1 / FiboCPU.FibonacciSquare (with compressor)
-  [3/6] recursive1 / FiboCPU.Module
-  [4/6] recursive1 / FiboCPU.SpecifiedRanges
-  [5/6] recursive2 / FiboCPU
-  [6/6] vadcop_final
-Running circom compiles with 1 job(s) in parallel
-[1/6] compressor / FiboCPU.FibonacciSquare: loading starkinfo / verifierinfo / verkey
-[1/6] compressor / FiboCPU.FibonacciSquare: generating circom sources (pil2circom + gen_circom)
-[1/6] compressor / FiboCPU.FibonacciSquare: invoking circom (this is the slow step)
-[1/6] compressor / FiboCPU.FibonacciSquare: circom done in 28.4s
-[1/6] compressor / FiboCPU.FibonacciSquare: spawning witness library build (.so/.dylib)
-...
-All circom compiles complete; 6 witness library build(s) running in background
-```
-
-With `--jobs > 1`, lines from different circuits will be interleaved — the
-`[i/N]` prefix lets you trace which one each log belongs to.
+For every circuit under `provingKey/` (and `provingKeySnark/`) whose setup stored the circom C++
+(`<circuit>.cpp`), it rebuilds the witness library with the same `make` recipe the setup uses; no
+circom runs, and no other file is touched. A library without its `.cpp` is an error (the key
+predates stored C++: rerun the setup). `-j` builds that many libraries at once, with
+`[i/N]`-prefixed logs.
 
 ### Output extension is host-OS controlled
 
@@ -238,6 +220,26 @@ alone). Running it on Linux when a `.so` is already present overwrites that
   proving key, and you get `.dylib`s in place.
 - You're iterating on circom templates and want to rebuild `.so`s without
   rerunning the full setup.
+
+## Proving-key pipeline (module map)
+
+Every proving-key circuit is a list of steps run by one executor
+(`src/proving_key/pipeline/`): `mod.rs` holds `PipelineCtx` and `run`, `steps.rs` the shared
+steps, `kinds.rs` one pure builder per kind. The `gen_*` entry points fill the context and run
+their kind's list.
+
+| Kind (entry) | Steps |
+|---|---|
+| basic (`commands/setup.rs`) | WriteFixed{UserFixed\|Pilout} -> StarkTail -> ConstTree{optional} |
+| recursive test (`recursive_test.rs`) | CircomPrologue{raw circom, O2} -> WitnessLib -> Plonk2Pil -> WriteFixed{Plonk} -> CompilePil -> StarkTail -> ConstTree -> *witness_wait* -> *global_info* |
+| compressor / recursive1 / recursive2 (`recursive.rs`) | [*batch_fit* (r1) \| *arity_fit* (r2)] -> CircomPrologue{O1} -> Plonk2Pil -> [*batch_retry* (r1)] -> *compressor_check* -> WitnessLib -> WriteFixed -> CompilePil -> StarkTail{reuse; r1: starkinfo only} -> ConstTree -> [*drop_starkinfo* (r1) \| *vks_json* + WriteVerifierRs (r2)] |
+| vadcop_final (`final_setup.rs`) | CircomPrologue{O1} -> WitnessLib -> Plonk2Pil -> *final_pin* -> WriteFixed -> CompilePil -> StarkTail -> ConstTree -> WriteVerifierRs -> *witness_wait* |
+| compressed final (`compressed_final.rs`) | CircomPrologue{O2} -> WitnessLib -> Plonk2Pil -> WriteFixed -> CompilePil -> *compressed_settings* -> StarkTail -> ConstTree -> WriteVerifierRs -> *witness_wait* |
+| recursivef (`snark_setup.rs::gen_recursivef_setup`) | CircomPrologue{O2} -> WitnessLib -> Plonk2Pil -> WriteFixed -> CompilePil -> StarkTail -> ConstTree |
+
+*Italic* steps are `Custom` (kind-specific control flow, named in the list). The final SNARK
+back-end (`snark_setup.rs`: rapidsnark / pilfflonk keys, BN128 final circuit) is not a pipeline
+kind; `gen_snark_setup` calls it after the recursivef.
 
 ## Environment variables
 

@@ -88,7 +88,7 @@ inline bool expsCheckScratchLayout(SetupCtx& sc) {
     };
     if (tmp1 < 0 || end < 0 || q < 0) return fail("tmp1/mem_exps_end/q missing from the map");
     if (end < tmp1 || (uint64_t)end > si.mapTotalN) return fail("scratch not within tmp1 .. mapTotalN");
-    const uint64_t qZoneEnd = zi >= 0 ? (uint64_t)zi + si.boundaries.size() * NExt : (uint64_t)q + 3 * NExt;
+    const uint64_t qZoneEnd = zi >= 0 ? (uint64_t)zi + NExt : (uint64_t)q + 3 * NExt;
     if (qZoneEnd > (uint64_t)tmp1) return fail("q/zi zone reaches into the scratch");
     if ((uint64_t)q + 3 * N > (uint64_t)tmp1) return fail("hint temporaries at q reach into the scratch");
     for (uint64_t stage = 1; stage <= si.nStages; ++stage) {
@@ -130,6 +130,12 @@ inline ExpsKernel expsOpenForAir(SetupCtx& sc) {
     if (::stat(path.c_str(), &st) != 0) return r;
     void* h = dlopen(path.c_str(), RTLD_NOW | RTLD_LOCAL);
     if (!h) { fprintf(stderr, "[EXPS] dlopen failed: %s\n", dlerror()); return r; }
+    auto abi = (unsigned long long (*)())dlsym(h, "exps_abi");
+    if (!abi || abi() != EXPS_ABI) {
+        fprintf(stderr, "[EXPS] %s was built for another prover ABI; using the interpreter (regenerate it with gen-exps)\n", path.c_str());
+        dlclose(h);
+        return r;
+    }
     auto qLaunch = (ExpsQLaunchFn)dlsym(h, "exps_launch");
     auto minf = (unsigned long long (*)())dlsym(h, "exps_min_scratch");
     if (!qLaunch || !minf) { fprintf(stderr, "[EXPS] missing symbols in %s\n", path.c_str()); dlclose(h); return r; }
@@ -178,7 +184,6 @@ inline bool expsWarmup(SetupCtx& sc, const ExpsKernel& ek) {
     warm.airgroupValues = (Goldilocks::Element *)dummy;
     warm.airValues = (Goldilocks::Element *)dummy;
     warm.evals = (Goldilocks::Element *)dummy;
-    warm.xDivXSub = (Goldilocks::Element *)dummy;
     warm.pConstPolsAddress = (Goldilocks::Element *)dummy;
     warm.pConstPolsExtendedTreeAddress = (Goldilocks::Element *)dummy;
     warm.pCustomCommitsFixed = (Goldilocks::Element *)dummy;

@@ -1,8 +1,7 @@
 pragma circom 2.1.0;
 
+// Both field families' FFT: the includer brings its family's gl_family.circom (GLRangeBits, FFTFold).
 include "gl.circom";
-include "bitifyT.circom";
-include "lessthangl.circom";
 
 
 function roots(i) {
@@ -127,10 +126,11 @@ template FFT(nBits, inv) {
 
             k[i][e]*p + out[i][e] === sum[i][e];
 
-            _ <== Num2BitsT(64+nBits+1)(k[i][e]);
+            GLRangeBits(64+nBits+1)(k[i][e]);
         }
     }
 }
+
 // FFT without reducing its outputs: each is the linear combination Σ_j ws·in[j] itself, bounded by
 // the tag. For outputs that only feed Horner (EvalPol) or a subtraction, whose own reduction absorbs it.
 template FFTLazy(nBits, inv) {

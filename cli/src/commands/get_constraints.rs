@@ -5,7 +5,7 @@ use proofman_common::initialize_logger;
 use std::path::PathBuf;
 use colored::Colorize;
 
-use proofman_common::{get_global_constraints_lines_str, get_constraints_lines_str, GlobalInfo, SetupCtx, ProofType};
+use proofman_common::{get_constraints_lines_str, GlobalInfo, SetupCtx, ProofType};
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
@@ -44,7 +44,7 @@ impl GetConstraintsCmd {
             }
         }
 
-        let global_constraints_lines = get_global_constraints_lines_str(&sctx);
+        let global_constraints_lines = global_info.global_constraint_labels();
 
         tracing::info!("{}", "    ► Global Constraints".bright_white().bold());
         for (idx, line) in global_constraints_lines.iter().enumerate() {

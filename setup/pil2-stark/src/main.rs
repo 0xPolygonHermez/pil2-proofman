@@ -95,8 +95,8 @@ struct SetupArgs {
     #[arg(short = 'o', long)]
     output: Option<String>,
 
-    #[arg(long, default_value = proofman_common::hash_family::DEFAULT_HASH_ID)]
-    hash: String,
+    #[arg(long, default_value = proofman_common::hash_family::HashFamily::DEFAULT.as_str())]
+    hash: proofman_common::hash_family::HashFamily,
 
     /// Proofs each recursive2 circuit aggregates: 2, 3 or 4. Defaults per hash family --
     /// 2 for blake3, 3 for poseidon -- see hash_family::default_aggregation_arity.
@@ -111,9 +111,8 @@ struct SetupArgs {
     #[arg(long, env = "RECURSIVE_N_BITS")]
     recursive_n_bits: Option<usize>,
 
-    /// Build the `vadcop_final_compressed` stage. Defaults per hash family: on for poseidon, off
-    /// for blake3, where it measured a 2% smaller proof for a whole extra recursion layer. A key
-    /// built without it can gain it later with `setup-compressed-final`.
+    /// Build the `vadcop_final_compressed` stage (default true). A key built without it can gain it
+    /// later with `setup-compressed-final`.
     #[arg(long)]
     compressed_final: Option<bool>,
 
@@ -166,8 +165,8 @@ struct StatsArgs {
     aggregation: bool,
 
     /// Hash family the setup will use; determines tree/transcript geometry.
-    #[arg(long, default_value = proofman_common::hash_family::DEFAULT_HASH_ID)]
-    hash: String,
+    #[arg(long, default_value = proofman_common::hash_family::HashFamily::DEFAULT.as_str())]
+    hash: proofman_common::hash_family::HashFamily,
 
     /// Output file for detailed stats (default: tmp/stats.txt)
     #[arg(short = 'o', long)]
@@ -360,8 +359,8 @@ struct SetupRecursiveTestArgs {
     #[arg(short = 't', long, default_value = "aggregation")]
     r#type: String,
 
-    #[arg(long, default_value = proofman_common::hash_family::DEFAULT_HASH_ID)]
-    hash: String,
+    #[arg(long, default_value = proofman_common::hash_family::HashFamily::DEFAULT.as_str())]
+    hash: proofman_common::hash_family::HashFamily,
 
     #[arg(long)]
     blake3_lanes: Option<usize>,
@@ -498,15 +497,9 @@ fn main() -> anyhow::Result<()> {
                 recursive_jobs
             );
 
-            if !proofman_common::hash_family::is_known_family(&args.hash) {
-                anyhow::bail!("unknown --hash {:?}; known: {:?}", args.hash, proofman_common::hash_family::FAMILIES);
-            }
-
             let agg_arity =
-                args.agg_arity.unwrap_or_else(|| proofman_common::hash_family::default_aggregation_arity(&args.hash));
-            let compressed_final = args
-                .compressed_final
-                .unwrap_or_else(|| proofman_common::hash_family::compressed_final_by_default(&args.hash));
+                args.agg_arity.unwrap_or_else(|| proofman_common::hash_family::default_aggregation_arity(args.hash));
+            let compressed_final = args.compressed_final.unwrap_or(true);
             if !proofman_common::global_info::is_valid_aggregation_arity(agg_arity) {
                 anyhow::bail!(
                     "unsupported --agg-arity {}; valid values: {:?}",
@@ -558,9 +551,6 @@ fn main() -> anyhow::Result<()> {
 
         Commands::Stats(args) => {
             tracing::info!("proofman-setup stats: starting");
-            if !proofman_common::hash_family::is_known_family(&args.hash) {
-                anyhow::bail!("unknown --hash {:?}; known: {:?}", args.hash, proofman_common::hash_family::FAMILIES);
-            }
             let opts = StatsOptions {
                 proving_key_path: args.proving_key,
                 aggregation: args.aggregation,
@@ -571,9 +561,7 @@ fn main() -> anyhow::Result<()> {
                 airgroups: args.airgroups,
                 airs: args.airs,
                 im_pols_stages: args.impols,
-                blake3_lanes: args
-                    .blake3_lanes
-                    .unwrap_or(pil2_stark_recurser::plonk2pil::setups::blake3::DEFAULT_LANES),
+                blake3_lanes: args.blake3_lanes.unwrap_or(pil2_stark_recurser::plonk2pil::gen::blocks::DEFAULT_LANES),
             };
             // Expression trees in large AIRs (e.g. ZisK) can be thousands of levels deep,
             // which overflows the default 8 MB main-thread stack. Run on a thread with the
@@ -686,9 +674,6 @@ fn main() -> anyhow::Result<()> {
             tracing::info!("  circom: {}", args.circom_path);
             tracing::info!("  name: {}", args.circom_name);
             tracing::info!("  type: {}", args.r#type);
-            if !proofman_common::hash_family::is_known_family(&args.hash) {
-                anyhow::bail!("unknown --hash {:?}; known: {:?}", args.hash, proofman_common::hash_family::FAMILIES);
-            }
             let build_dir = args.build_dir.clone();
             if let Some(b) = args.blowup {
                 if !(1..=3).contains(&b) {

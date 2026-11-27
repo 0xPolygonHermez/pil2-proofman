@@ -53,7 +53,6 @@ template Merkle(keyBits, arity) {
 
         var nextNBits = keyBits - nBits;
         if (nextNBits<0) nextNBits = 0;
-        var nNext = (n - 1)\arity + 1;
 
         mNext = Merkle(nextNBits, arity);
         mNext.value <== hash.out[0];

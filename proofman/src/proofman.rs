@@ -144,6 +144,7 @@ use proofman_common::{ProofmanResult, ProofmanError, Setup};
 pub use proofman_common::{CancellationInfo, CancellationInfoExt};
 use proofman_verifier::VadcopFinalProof;
 use crate::{expand_compressed_proof, prune_compressed_proof};
+use proofman_common::hash_family::HashFamily;
 use crate::{
     check_const_paths, check_const_paths_vadcop, needs_regeneration_fixed, needs_regeneration_vadcop_fixed,
     schedule_key,
@@ -562,17 +563,16 @@ fn hash_words(h: &mut blake3::Hasher, words: &[u64]) {
     }
 }
 
-fn stream_commit_eligible<F: PrimeField64>(hash: &str, setup: &Setup<F>) -> bool {
+fn stream_commit_eligible<F: PrimeField64>(hash: HashFamily, setup: &Setup<F>) -> bool {
     // witness_calc hints do not disqualify an air: the slot evaluates them (witness_hints_slot.hpp)
     // and refuses, with a reason, only hints it cannot express.
-    proofman_common::hash_family::supports_stream_commit(hash)
-        && setup.stark_info.stark_struct.merkle_tree_arity == proofman_common::hash_family::merkle_tree_arity(hash)
+    setup.stark_info.stark_struct.merkle_tree_arity == proofman_common::hash_family::merkle_tree_arity(hash)
 }
 
 /// This air's slot bytes (the commit lays it out with the same C++ function), or None when no slot
 /// can take it. `input_bytes` is the air's declared GPU-witness input bound, 0 for a host-filled air.
 fn slot_commit_bytes<F: PrimeField64>(
-    hash: &str,
+    hash: HashFamily,
     setup: &Setup<F>,
     ag: usize,
     ai: usize,
@@ -618,7 +618,7 @@ fn slot_commit_airs<F: PrimeField64>(
             let Ok(setup) = sctx.get_setup(ag, ai) else { continue };
             let pi = packed_info.get(&(ag, ai)).unwrap_or(&identity);
             let input_bytes = pctx.gpu_witness_airs.get(ag, ai).map_or(0, |d| d.input_bytes_per_instance);
-            match slot_commit_bytes(&pctx.global_info.hash, setup, ag, ai, pi, input_bytes) {
+            match slot_commit_bytes(pctx.global_info.hash, setup, ag, ai, pi, input_bytes) {
                 Some(b) => {
                     slot_bytes = slot_bytes.max(b);
                     airs.insert((ag, ai));
@@ -1155,7 +1155,7 @@ where
 
         let sctx: SetupCtx<F> = SetupCtx::new(&pctx.global_info, &ProofType::Basic, false, gpu)?;
 
-        proofman_common::init_gpu_setup(&pctx.global_info.hash, gpu)?;
+        proofman_common::init_gpu_setup(pctx.global_info.hash, gpu)?;
 
         for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
             for (air_id, _) in air_group.iter().enumerate() {
@@ -1656,7 +1656,7 @@ where
 
         self.exec()?;
 
-        let mut transcript = new_transcript::<F>(&self.pctx.global_info.hash);
+        let mut transcript = new_transcript::<F>(self.pctx.global_info.hash.as_str());
         let dummy_element = [F::ZERO, F::ONE, F::TWO, F::NEG_ONE];
         transcript.put(&dummy_element);
 
@@ -1810,7 +1810,7 @@ where
 
         let _ = self.exec()?;
 
-        let mut transcript = new_transcript::<F>(&self.pctx.global_info.hash);
+        let mut transcript = new_transcript::<F>(self.pctx.global_info.hash.as_str());
         let dummy_element = [F::ZERO, F::ONE, F::TWO, F::NEG_ONE];
         transcript.put(&dummy_element);
 
@@ -2253,9 +2253,7 @@ where
                 // the self-contained prover transcript.
                 let valid = verify_proof::<F>(
                     &proof.proof,
-                    setup_path.display().to_string() + ".starkinfo.json",
-                    setup_path.display().to_string() + ".verifier.bin",
-                    setup_path.display().to_string() + ".verkey.json",
+                    &setup_path.display().to_string(),
                     Some(self.pctx.get_publics().clone()),
                     Some(self.pctx.get_proof_values().clone()),
                     None,
@@ -2474,7 +2472,7 @@ where
             ));
         }
 
-        if proof_a.hash != self.pctx.global_info.hash || proof_b.hash != self.pctx.global_info.hash {
+        if [&proof_a.hash, &proof_b.hash].iter().any(|h| h.as_str() != self.pctx.global_info.hash.as_str()) {
             return Err(ProofmanError::InvalidConfiguration(format!(
                 "prove_recurser_aggregator: hash family mismatch: proofs are ({}, {}) but this \
                  prover's proving key uses {}",
@@ -2548,7 +2546,7 @@ where
             recurser_id,
         )?;
 
-        VadcopFinalProof::new_from_proof(&raw_proof, false, self.pctx.global_info.hash.clone()).map_err(|e| {
+        VadcopFinalProof::new_from_proof(&raw_proof, false, self.pctx.global_info.hash.to_string()).map_err(|e| {
             ProofmanError::InvalidConfiguration(format!("Failed to wrap recurser output as VadcopFinalProof: {e}"))
         })
     }
@@ -2620,7 +2618,7 @@ where
         )?;
 
         let wire = self.compressed_proof_wire(&vadcop_final_proof_compressed.proof)?;
-        VadcopFinalProof::new_from_proof(&wire, true, self.pctx.global_info.hash.clone())
+        VadcopFinalProof::new_from_proof(&wire, true, self.pctx.global_info.hash.to_string())
             .map_err(|e| ProofmanError::InvalidConfiguration(format!("Failed to create VadcopFinalProof: {}", e)))
     }
 
@@ -2629,7 +2627,7 @@ where
         let setup = self.setups.setup_vadcop_final_compressed.as_ref().ok_or_else(|| {
             ProofmanError::InvalidConfiguration("the proving key has no vadcop_final_compressed".to_string())
         })?;
-        prune_compressed_proof(proof, &setup.stark_info, &setup.get_vk(), &self.pctx.global_info.hash)
+        prune_compressed_proof(proof, &setup.stark_info, &setup.get_vk(), self.pctx.global_info.hash)
     }
 
     /// The final SNARK of `vadcop_final_proof`, the wrap of `snark_wrapper`, as the proving key's hash
@@ -2647,7 +2645,7 @@ where
     ) -> ProofmanResult<SnarkProof> {
         // `computing` and PROVING across both steps: the SNARK writes this run's buffers too.
         let (_computing, _proving) = self.acquire_computing("generate_final_snark_proof");
-        if self.setups.setup_recursivef.is_none() && self.pctx.global_info.hash == "blake3" {
+        if self.setups.setup_recursivef.is_none() && self.pctx.global_info.hash.is_blake3() {
             return Err(ProofmanError::InvalidConfiguration(
                 "a blake3 key's final SNARK needs its recursivef: a ProofMan made with options.final_snark, of a \
                  provingKeySnark/ with setup-recursivef"
@@ -2717,7 +2715,7 @@ where
             &self.const_tree,
             verkey_override,
         )?;
-        VadcopFinalProof::new_from_proof(&recursivef_proof.proof, false, self.pctx.global_info.hash.clone())
+        VadcopFinalProof::new_from_proof(&recursivef_proof.proof, false, self.pctx.global_info.hash.to_string())
             .map_err(|e| ProofmanError::InvalidConfiguration(format!("Failed to create the recursivef proof: {}", e)))
     }
 
@@ -4784,10 +4782,14 @@ where
                 let proof = vadcop_final.unwrap().into_iter().next().unwrap().proof;
 
                 vadcop_final_proof = Some(
-                    VadcopFinalProof::new_from_proof(&proof, options.compressed, self.pctx.global_info.hash.clone())
-                        .map_err(|e| {
-                            ProofmanError::InvalidConfiguration(format!("Failed to create VadcopFinalProof: {}", e))
-                        })?,
+                    VadcopFinalProof::new_from_proof(
+                        &proof,
+                        options.compressed,
+                        self.pctx.global_info.hash.to_string(),
+                    )
+                    .map_err(|e| {
+                        ProofmanError::InvalidConfiguration(format!("Failed to create VadcopFinalProof: {}", e))
+                    })?,
                 );
 
                 proof_id = Some(
@@ -4805,7 +4807,7 @@ where
 
                     // Verified from the proving key, not from a committed Rust
                     // verifier: the aggregator binds the application's publics
-                    // into q_verify, so a verifier generated for one application
+                    // into the constraints, so a verifier generated for one application
                     // rejects proofs another's correct prover produced.
                     let setup = match options.compressed {
                         true => self.setups.setup_vadcop_final_compressed.as_ref().unwrap(),
@@ -4821,21 +4823,13 @@ where
                             &proof.proof_with_publics(),
                             &setup.stark_info,
                             &setup.get_vk(),
-                            &self.pctx.global_info.hash,
+                            self.pctx.global_info.hash,
                         )?;
                         &expanded[1 + proof.public_values.len()..]
                     } else {
                         &proof.proof
                     };
-                    let valid_proofs = verify_proof::<F>(
-                        body,
-                        base.clone() + ".starkinfo.json",
-                        base.clone() + ".verifier.bin",
-                        base + ".verkey.json",
-                        Some(publics),
-                        None,
-                        None,
-                    );
+                    let valid_proofs = verify_proof::<F>(body, &base, Some(publics), None, None);
                     timer_stop_and_log_info!(VERIFYING_VADCOP_FINAL_PROOF);
                     if !valid_proofs {
                         tracing::info!("··· {}", "\u{2717} Vadcop Final proof was not verified".bright_red().bold());

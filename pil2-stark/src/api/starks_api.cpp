@@ -297,6 +297,10 @@ uint64_t get_n_publics(void *pStarkInfo) {
     return ((StarkInfo *)pStarkInfo)->nPublics;
 }
 
+uint64_t get_proof_values_size(void *pStarkInfo) {
+    return ((StarkInfo *)pStarkInfo)->proofValuesSize;
+}
+
 uint64_t get_proof_pinned_size(void *pStarkInfo) {
     return ((StarkInfo *)pStarkInfo)->getPinnedProofSize();
 }
@@ -308,13 +312,6 @@ void set_memory_expressions(void *pStarkInfo, uint64_t nTmp1, uint64_t nTmp3) {
 uint64_t get_map_total_n(void *pStarkInfo)
 {
     return ((StarkInfo *)pStarkInfo)->mapTotalN;
-}
-
-uint64_t get_tree_size(void *pStarkInfo)
-{
-    uint64_t tree_size = MerkleTreeGL::getTreeNumElements((1 << ((StarkInfo *)pStarkInfo)->starkStruct.nBitsExt), 3);
-    return tree_size;
-
 }
 
 uint64_t get_map_total_n_custom_commits_fixed(void *pStarkInfo)
@@ -348,11 +345,6 @@ uint64_t get_const_tree_size(void *pStarkInfo) {
         return constTree.getConstTreeSizeBN128(*(StarkInfo *)pStarkInfo);
     }
 };
-
-uint64_t get_const_size(void *pStarkInfo) {
-    uint64_t N = 1 << (*(StarkInfo *)pStarkInfo).starkStruct.nBits;
-    return N * (*(StarkInfo *)pStarkInfo).nConstants;
-}
 
 uint64_t calculate_words_per_row(void *pStarkinfo, char *constPolsPath) {
     StarkInfo &starkInfo = *(StarkInfo *)pStarkinfo;
@@ -461,12 +453,37 @@ bool verify_root_bn128_from_tree(char *treeFilename, char *expectedRoot) {
 
 // Expressions Bin
 // ========================================================================================
-void *expressions_bin_new(char* filename, bool global, bool verifier)
+void *expressions_bin_new(char* filename, bool global)
 {
-    auto expressionsBin = new ExpressionsBin(filename, global, verifier);
+    auto expressionsBin = new ExpressionsBin(filename, global);
 
     return expressionsBin;
 };
+
+// <air>.verifierinfo.json's constraintDag, read and checked against the starkinfo once, for stark_verify*; null on error.
+void *constraint_dag_new(char *filename, void *pStarkInfo)
+{
+    json j;
+    std::string err = "no constraintDag key";
+    auto dag = new ConstraintDag();
+    bool ok = false;
+    if(!fileExists(filename)) err = "missing";
+    else try {
+        file2json(filename, j);
+        ok = j.contains("constraintDag") && readConstraintDag(j["constraintDag"], *dag, err) && checkConstraintDag(*dag, *(StarkInfo *)pStarkInfo, err);
+    } catch (const std::exception &e) { err = e.what(); } // a json type error must not cross extern "C"
+    if(!ok) {
+        zklog.error(std::string(filename) + ": " + err + "; regenerate the setup");
+        delete dag;
+        return nullptr;
+    }
+    return dag;
+}
+
+void constraint_dag_free(void *pConstraintDag)
+{
+    delete (ConstraintDag *)pConstraintDag;
+}
 
 uint64_t get_max_n_tmp1(void *pExpressionsBin) {
     auto expressionsBin = (ExpressionsBin *)pExpressionsBin;
@@ -476,16 +493,6 @@ uint64_t get_max_n_tmp1(void *pExpressionsBin) {
 uint64_t get_max_n_tmp3(void *pExpressionsBin){
     auto expressionsBin = (ExpressionsBin *)pExpressionsBin;
     return expressionsBin->maxTmp3;
-};
-
-uint64_t get_max_args(void *pExpressionsBin){
-    auto expressionsBin = (ExpressionsBin *)pExpressionsBin;
-    return expressionsBin->maxArgs;
-};
-
-uint64_t get_max_ops(void *pExpressionsBin){
-    auto expressionsBin = (ExpressionsBin *)pExpressionsBin;
-    return expressionsBin->maxOps;
 };
 
 uint64_t get_operations_quotient(void *pExpressionsBin, void *pStarkInfo){
@@ -606,18 +613,6 @@ void calculate_impols_expressions(void *pSetupCtx, uint64_t step, void* stepsPar
             expressionsCtx.calculateExpressions(params, destStruct, uint64_t(1 << setupCtx.starkInfo.starkStruct.nBits), false, false);
         }
     }
-}
-
-uint64_t custom_commit_size(void *pSetup, uint64_t commitId) {
-    auto setupCtx = *(SetupCtx *)pSetup;
-
-    uint64_t N = 1 << setupCtx.starkInfo.starkStruct.nBits;
-    uint64_t NExtended = 1 << setupCtx.starkInfo.starkStruct.nBitsExt;
-
-    std::string section = setupCtx.starkInfo.customCommits[commitId].name + "0";
-    uint64_t nCols = setupCtx.starkInfo.mapSectionsN[section];
-
-    return (N + NExtended) * nCols + setupCtx.starkInfo.getNumNodesMT(NExtended);
 }
 
 void load_custom_commit(void *pSetup, uint64_t commitId, void *buffer, char *bufferFile, uint64_t wordsPerRow)
@@ -796,26 +791,11 @@ void verify_constraints_cpu(void *pSetupCtx, uint64_t airgroupId, uint64_t airId
 
 // Global Constraints
 // =================================================================================
-uint64_t get_n_global_constraints(void* p_globalinfo_bin)
-{
-    return getNumberGlobalConstraints(*(ExpressionsBin*)p_globalinfo_bin);
-}
-
-void get_global_constraints_lines_sizes(void* p_globalinfo_bin, uint64_t *constraintsLinesSizes)
-{
-    return getGlobalConstraintsLinesSizes(*(ExpressionsBin*)p_globalinfo_bin, constraintsLinesSizes);
-}
-
-void get_global_constraints_lines(void* p_globalinfo_bin, uint8_t **constraintsLines)
-{
-    return getGlobalConstraintsLines(*(ExpressionsBin*)p_globalinfo_bin, constraintsLines);
-}
-
-void verify_global_constraints(char* globalInfoFile, void* p_globalinfo_bin, void *publics, void *challenges, void *proofValues, void **airgroupValues, void *globalConstraintsInfo) {
+void verify_global_constraints(char* globalInfoFile, uint64_t nGlobalConstraints, void *publics, void *challenges, void *proofValues, void **airgroupValues, void *globalConstraintsInfo) {
     json globalInfo;
     file2json(globalInfoFile, globalInfo);
 
-    verifyGlobalConstraints(globalInfo, *(ExpressionsBin*)p_globalinfo_bin, (Goldilocks::Element *)publics, (Goldilocks::Element *)challenges, (Goldilocks::Element *)proofValues, (Goldilocks::Element **)airgroupValues, (GlobalConstraintInfo *)globalConstraintsInfo);
+    verifyGlobalConstraints(globalInfo, nGlobalConstraints, (Goldilocks::Element *)publics, (Goldilocks::Element *)challenges, (Goldilocks::Element *)proofValues, (Goldilocks::Element **)airgroupValues, (GlobalConstraintInfo *)globalConstraintsInfo);
 }
  
 uint64_t get_hint_field_global_constraints_values(void* p_globalinfo_bin, uint64_t hintId, char* hintFieldName) {
@@ -948,7 +928,6 @@ uint64_t gen_recursive_proof_cpu(void *pSetupCtx, uint64_t airgroupId, uint64_t 
         .challenges = challenges,
         .airgroupValues = airgroupValues,
         .evals = evals,
-        .xDivXSub = nullptr,
         .pConstPolsAddress = (Goldilocks::Element *)pConstPols,
         .pConstPolsExtendedTreeAddress = (Goldilocks::Element *)pConstTree,
         .pCustomCommitsFixed = nullptr,
@@ -1146,45 +1125,23 @@ void setLogLevel(uint64_t level) {
 
 // Stark Verify
 // =================================================================================
-bool stark_verify(uint64_t* proof, void *pStarkInfo, void *pExpressionsBin, char *verkeyFile, void *pPublics, void *pProofValues, void *pChallenges) {
+bool stark_verify(uint64_t* proof, void *pStarkInfo, void *pConstraintDag, char *verkeyFile, void *pPublics, void *pProofValues, void *pChallenges) {
     Goldilocks::Element *challenges = (Goldilocks::Element *)pChallenges;
     bool vadcop = challenges == nullptr ? false : true;
-    StarkInfo starkInfo = *(StarkInfo *)pStarkInfo;
+    StarkInfo &starkInfo = *(StarkInfo *)pStarkInfo;
     json jProof = pointer2json(proof, starkInfo);
-    return starkVerify<Goldilocks::Element>(jProof, *(StarkInfo *)pStarkInfo, *(ExpressionsBin *)pExpressionsBin, string(verkeyFile), (Goldilocks::Element *)pPublics, (Goldilocks::Element *)pProofValues, vadcop, (Goldilocks::Element *)pChallenges);
+    return starkVerify<Goldilocks::Element>(jProof, starkInfo, *(ConstraintDag *)pConstraintDag, string(verkeyFile), (Goldilocks::Element *)pPublics, (Goldilocks::Element *)pProofValues, vadcop, (Goldilocks::Element *)pChallenges);
 }
 
-bool stark_verify_bn128(void* jProof, void *pStarkInfo, void *pExpressionsBin, char *verkeyFile, void *pPublics) {
-    return starkVerify<RawFr::Element>(*(nlohmann::json*) jProof, *(StarkInfo *)pStarkInfo, *(ExpressionsBin *)pExpressionsBin, string(verkeyFile), (Goldilocks::Element *)pPublics, nullptr, false, nullptr);
+bool stark_verify_bn128(void* jProof, void *pStarkInfo, void *pConstraintDag, char *verkeyFile, void *pPublics) {
+    return starkVerify<RawFr::Element>(*(nlohmann::json*) jProof, *(StarkInfo *)pStarkInfo, *(ConstraintDag *)pConstraintDag, string(verkeyFile), (Goldilocks::Element *)pPublics, nullptr, false, nullptr);
 
 }
-
-bool stark_verify_from_file(char* proofFile, void *pStarkInfo, void *pExpressionsBin, char *verkeyFile, void *pPublics, void *pProofValues, void *pChallenges) {
-    Goldilocks::Element *challenges = (Goldilocks::Element *)pChallenges;
-    bool vadcop = challenges == nullptr ? false : true;
-    StarkInfo starkInfo = *((StarkInfo *)pStarkInfo);
-    json jProof;
-    file2json(proofFile, jProof);
-    if (starkInfo.starkStruct.verificationHashType == "GL") {
-        return starkVerify<Goldilocks::Element>(jProof, *(StarkInfo *)pStarkInfo, *(ExpressionsBin *)pExpressionsBin, string(verkeyFile), (Goldilocks::Element *)pPublics, (Goldilocks::Element *)pProofValues, vadcop, (Goldilocks::Element *)pChallenges);
-    } else {
-        return starkVerify<RawFr::Element>(jProof, *(StarkInfo *)pStarkInfo, *(ExpressionsBin *)pExpressionsBin, string(verkeyFile), (Goldilocks::Element *)pPublics, (Goldilocks::Element *)pProofValues, vadcop, (Goldilocks::Element *)pChallenges);
-    }
-}
-
 
 // Fixed cols
 // =================================================================================
 void write_fixed_cols_bin(char* binFile, char* airgroupName, char* airName, uint64_t N, uint64_t nFixedPols, void* fixedPolsInfo) {
     writeFixedColsBin(string(binFile), string(airgroupName), string(airName), N, nFixedPols, (FixedPolsInfo *)fixedPolsInfo);
-}
-
-uint64_t get_omp_max_threads(){
-    return omp_get_max_threads();
-}
-
-void set_omp_num_threads(uint64_t num_threads){
-    omp_set_num_threads(num_threads);
 }
 
 uint64_t goldilocks_add_ffi(const uint64_t *in1, const uint64_t *in2)

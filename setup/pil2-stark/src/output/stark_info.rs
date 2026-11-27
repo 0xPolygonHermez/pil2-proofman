@@ -1,66 +1,60 @@
-//! Build the starkinfo JSON output structure (expressionsinfo and verifierinfo are built by
-//! `pil_info::output::expressions_info`).
-//!
-//! per-AIR child-process pipeline in `setup_cmd.rs` and from the recursive/final
-//! setup modules.
+//! The starkinfo output: the core's verifier view with the solved stark struct and security.
 
-use serde_json::json;
+use anyhow::{bail, Result};
+use pil_info::core::ir::{Boundary, ColType, CustomCommit, Lengths, NamedValue};
+use pil_info::core::layout::{ChallengeEntry, PolMap};
+use pil_info::core::openings::EvEntry;
+use pil_info::core::project::VerifierView;
+use proofman_util::KEY_VERSION;
+use serde::{Serialize, Serializer};
 
-use crate::pil::gen_code::PilCodeResult;
-use crate::types::pilout_info::SetupResult;
-use crate::types::FIELD_EXTENSION;
+use crate::types::output::{SecurityInfo, StarkStructOutput};
 use crate::types::security;
 use crate::types::security::pcs::{Batching, LowDegreeTest, Pcs};
 use crate::types::security::regimes::DecodingRegime;
 use crate::types::stark_struct::{FriStruct, StarkStruct, StirStruct};
-use crate::types::output::{
-    BoundaryOutput, ChallengeMapEntryOutput, EvMapEntry, NameStageEntry, PolMapEntry, PublicMapEntry, SecurityInfo,
-    StarkInfoOutput, StarkStructOutput,
-};
 
-/// Build the StarkInfoOutput for JSON serialization from internal types.
-#[allow(clippy::too_many_arguments)]
+/// The starkinfo output: the core's projection plus the solved low-degree test, as key (`airgroup`, `air`).
 pub fn build_starkinfo_output(
-    setup: &SetupResult,
+    v: &VerifierView,
     stark_struct: &StarkStruct,
-    pil_code: &PilCodeResult,
-    opening_points: &[i64],
     ldt: &LowDegreeTest,
-    airgroup_id: usize,
-    air_id: usize,
-    circuit_type: Option<u64>,
+    ids: (usize, usize),
     air_name: &str,
-    c_exp_id: usize,
-    deep_exp_id: usize,
-    q_deg: i64,
-) -> StarkInfoOutput {
-    // The query counts and grinding bits are the solved values, not the settings.
+) -> Result<StarkInfoOutput> {
+    let security = SecurityInfo {
+        proximity_gap: ldt.proximity_gap(),
+        proximity_parameter: ldt.proximity_parameter(),
+        regime: ldt.regime_identifier().to_string(),
+    };
+    Ok(starkinfo_output(v, air_name, ids, stark_struct_output(stark_struct, ldt)?, security))
+}
+
+/// The stark struct with the solved query counts and grinding bits.
+fn stark_struct_output(stark_struct: &StarkStruct, ldt: &LowDegreeTest) -> Result<StarkStructOutput> {
+    use crate::types::stark_struct::LowDegreeTest as Schedule;
     let low_degree_test = match (ldt, &stark_struct.low_degree_test) {
-        (LowDegreeTest::Fri(fri), crate::types::stark_struct::LowDegreeTest::Fri(schedule)) => {
+        (LowDegreeTest::Fri(fri), Schedule::Fri(schedule)) => {
             let sec = fri.security_params();
-            let solved = FriStruct {
+            Schedule::Fri(FriStruct {
                 num_queries: sec.n_queries as usize,
                 grinding_bits_queries: sec.grinding_bits_query as usize,
                 ..schedule.clone()
-            };
-            crate::types::stark_struct::LowDegreeTest::Fri(solved)
+            })
         }
-        (LowDegreeTest::Stir(stir), crate::types::stark_struct::LowDegreeTest::Stir(schedule)) => {
+        (LowDegreeTest::Stir(stir), Schedule::Stir(schedule)) => {
             let sec = stir.security_params();
-            let solved = StirStruct {
+            Schedule::Stir(StirStruct {
                 num_queries: sec.num_queries.iter().map(|&t| t as usize).collect(),
                 grinding_bits_queries: sec.grinding_bits_queries.iter().map(|&g| g as usize).collect(),
                 ..schedule.clone()
-            };
-            crate::types::stark_struct::LowDegreeTest::Stir(solved)
+            })
         }
-        (ldt, schedule) => panic!(
-            "solved low-degree test {} does not match the stark struct's {:?}",
-            ldt.identifier(),
-            schedule.kind()
-        ),
+        (ldt, schedule) => {
+            bail!("solved low-degree test {} does not match the stark struct's {:?}", ldt.identifier(), schedule.kind())
+        }
     };
-    let stark_struct_out = StarkStructOutput {
+    Ok(StarkStructOutput {
         n_bits: stark_struct.n_bits,
         merkle_tree_arity: stark_struct.merkle_tree_arity,
         transcript_arity: stark_struct.transcript_arity,
@@ -70,271 +64,28 @@ pub fn build_starkinfo_output(
         n_bits_ext: stark_struct.n_bits_ext,
         verification_hash_type: stark_struct.verification_hash_type.clone(),
         low_degree_test,
-    };
-
-    let boundaries: Vec<BoundaryOutput> = {
-        let mut seen = Vec::new();
-        let mut result = Vec::new();
-        for c in &setup.constraints {
-            if !seen.contains(&c.boundary) {
-                seen.push(c.boundary.clone());
-                let b = BoundaryOutput {
-                    name: c.boundary.clone(),
-                    offset_min: c.offset_min.map(|v| v as i64),
-                    offset_max: c.offset_max.map(|v| v as i64),
-                };
-                result.push(b);
-            }
-        }
-        if result.is_empty() {
-            result.push(BoundaryOutput { name: "everyRow".to_string(), offset_min: None, offset_max: None });
-        }
-        result
-    };
-
-    // Build evMap from verifier code context
-    let ev_map: Vec<EvMapEntry> = pil_code
-        .ev_map
-        .iter()
-        .map(|e| EvMapEntry {
-            entry_type: e.entry_type.clone(),
-            id: e.id,
-            prime: e.prime,
-            opening_pos: e.opening_pos,
-            commit_id: e.commit_id,
-        })
-        .collect();
-
-    let n_stages = setup.n_stages;
-
-    // Build cmPolsMap as flat array matching golden schema.
-    // Field order differs between Q-stage entries and regular entries.
-    // JS map.js builds objects in this order:
-    //   setSymbolSections: {stage, name, dim, polsMapId, [stageId], [lengths], [imPol, expId]}
-    //   setStageInfoSymbols: adds stagePos, then stageId if not already set
-    // Result for regular entries: stage, name, dim, polsMapId, stageId, [lengths], stagePos, [imPol, expId]
-    // Result for Q-stage entries: stage, name, dim, polsMapId, stagePos, stageId
-    let q_stage = n_stages + 1;
-    let cm_pols_map: Vec<serde_json::Value> = setup
-        .cm_pols_map
-        .iter()
-        .enumerate()
-        .map(|(i, p)| {
-            let stage = p.stage.unwrap_or(0);
-            let mut obj = serde_json::Map::new();
-            obj.insert("stage".to_string(), json!(stage));
-            obj.insert("name".to_string(), json!(p.name));
-            obj.insert("dim".to_string(), json!(p.dim));
-            obj.insert("polsMapId".to_string(), json!(i));
-            if stage == q_stage {
-                // Q-stage: stagePos before stageId
-                obj.insert("stagePos".to_string(), json!(p.stage_pos.unwrap_or(0)));
-                obj.insert("stageId".to_string(), json!(p.stage_id.unwrap_or(0)));
-            } else {
-                // Regular: stageId first
-                obj.insert("stageId".to_string(), json!(p.stage_id.unwrap_or(0)));
-                // Then lengths (if present)
-                if let Some(ref lengths) = p.lengths {
-                    obj.insert("lengths".to_string(), json!(lengths));
-                }
-                // imPol and expId come before stagePos (matches JS insertion
-                // order: addPol sets imPol/expId, then setStageInfoSymbols
-                // appends stagePos)
-                if p.im_pol {
-                    obj.insert("imPol".to_string(), json!(true));
-                    if let Some(eid) = p.exp_id {
-                        obj.insert("expId".to_string(), json!(eid));
-                    }
-                }
-                obj.insert("stagePos".to_string(), json!(p.stage_pos.unwrap_or(0)));
-            }
-            serde_json::Value::Object(obj)
-        })
-        .collect();
-
-    let const_pols_map: Vec<PolMapEntry> = setup
-        .const_pols_map
-        .iter()
-        .enumerate()
-        .map(|(i, p)| PolMapEntry {
-            stage: 0,
-            name: p.name.clone(),
-            dim: p.dim,
-            pols_map_id: i,
-            stage_id: p.stage_id.unwrap_or(0),
-            lengths: p.lengths.clone(),
-            stage_pos: None,
-            im_pol: None,
-            exp_id: None,
-        })
-        .collect();
-
-    // Build mapSectionsN as a serde_json::Map to preserve order
-    let mut map_sections_n = serde_json::Map::new();
-    for (key, &val) in &setup.map_sections_n {
-        map_sections_n.insert(key.clone(), json!(val));
-    }
-
-    // Build custom commits JSON
-    let custom_commits_json: Vec<serde_json::Value> = setup
-        .custom_commits
-        .iter()
-        .map(|cc| {
-            let public_values: Vec<serde_json::Value> =
-                cc.public_values.iter().map(|&idx| json!({"idx": idx})).collect();
-            json!({
-                "name": cc.name,
-                "publicValues": public_values,
-                "stageWidths": cc.stage_widths,
-            })
-        })
-        .collect();
-
-    // Build custom commits map (array of arrays, one per custom commit)
-    let custom_commits_map: Vec<serde_json::Value> = setup
-        .custom_commits_map
-        .iter()
-        .map(|cc_entries| {
-            let entries: Vec<serde_json::Value> = cc_entries
-                .iter()
-                .enumerate()
-                .map(|(i, p)| {
-                    let mut obj = serde_json::Map::new();
-                    obj.insert("stage".to_string(), json!(p.stage.unwrap_or(0)));
-                    // Strip namespace prefix (e.g. "Rom.line" -> "line")
-                    let short_name = p.name.rsplit('.').next().unwrap_or(&p.name);
-                    obj.insert("name".to_string(), json!(short_name));
-                    obj.insert("dim".to_string(), json!(p.dim));
-                    obj.insert("polsMapId".to_string(), json!(i));
-                    obj.insert("stageId".to_string(), json!(p.stage_id.unwrap_or(0)));
-                    obj.insert("stagePos".to_string(), json!(p.stage_pos.unwrap_or(0)));
-                    serde_json::Value::Object(obj)
-                })
-                .collect();
-            json!(entries)
-        })
-        .collect();
-
-    // Build challengesMap from setup + FRI challenges.
-    let mut challenges_map: Vec<ChallengeMapEntryOutput> = setup
-        .challenges_map
-        .iter()
-        .map(|s| ChallengeMapEntryOutput {
-            name: s.name.clone(),
-            stage: s.stage.unwrap_or(0),
-            dim: s.dim,
-            stage_id: s.stage_id.unwrap_or(0),
-        })
-        .collect();
-    // Merge FRI challenges (std_vf1, std_vf2) by index position.
-    for (i, ch) in pil_code.challenges_map.iter().enumerate() {
-        if ch.name.is_empty() {
-            continue;
-        }
-        let entry =
-            ChallengeMapEntryOutput { name: ch.name.clone(), stage: ch.stage, dim: ch.dim, stage_id: ch.stage_id };
-        while challenges_map.len() <= i {
-            challenges_map.push(ChallengeMapEntryOutput::default());
-        }
-        challenges_map[i] = entry;
-    }
-    while challenges_map.last().is_some_and(|e| e.name.is_empty()) {
-        challenges_map.pop();
-    }
-    challenges_map.retain(|e| !e.name.is_empty());
-
-    // Build publicsMap
-    let publics_map: Vec<PublicMapEntry> = setup
-        .publics_map
-        .iter()
-        .map(|s| PublicMapEntry { name: s.name.clone(), stage: s.stage.unwrap_or(0), lengths: s.lengths.clone() })
-        .collect();
-
-    // Build proofValuesMap
-    let proof_values_map: Vec<NameStageEntry> = setup
-        .proof_values_map
-        .iter()
-        .map(|s| NameStageEntry { name: s.name.clone(), stage: s.stage.unwrap_or(0), lengths: s.lengths.clone() })
-        .collect();
-
-    // Build airgroupValuesMap
-    let airgroup_values_map: Vec<NameStageEntry> = setup
-        .airgroup_values_map
-        .iter()
-        .map(|s| NameStageEntry { name: s.name.clone(), stage: s.stage.unwrap_or(0), lengths: s.lengths.clone() })
-        .collect();
-
-    // Build airValuesMap
-    let air_values_map: Vec<NameStageEntry> = setup
-        .air_values_map
-        .iter()
-        .map(|s| NameStageEntry { name: s.name.clone(), stage: s.stage.unwrap_or(0), lengths: s.lengths.clone() })
-        .collect();
-
-    // Build airGroupValues
-    let air_group_values: Vec<serde_json::Value> =
-        setup.air_group_values.iter().map(|v| json!({"aggType": v.agg_type, "stage": v.stage})).collect();
-
-    // nCommitmentsStage1: in JS this compares stage === "cm1" (number vs string),
-    // which always evaluates to 0. Golden confirms nCommitmentsStage1=0.
-    let n_commitments_stage1 = 0;
-
-    StarkInfoOutput {
-        name: air_name.to_string(),
-        cm_pols_map,
-        const_pols_map,
-        challenges_map,
-        publics_map,
-        proof_values_map,
-        airgroup_values_map,
-        air_values_map,
-        map_sections_n,
-        air_id,
-        airgroup_id,
-        circuit_type,
-        n_constants: setup.n_constants,
-        n_publics: setup.n_publics,
-        air_group_values,
-        n_stages,
-        custom_commits: custom_commits_json,
-        custom_commits_map,
-        stark_struct: stark_struct_out,
-        boundaries,
-        opening_points: opening_points.to_vec(),
-        c_exp_id,
-        q_dim: FIELD_EXTENSION,
-        q_deg: q_deg.max(1) as usize,
-        n_constraints: setup.constraints.len(),
-        n_commitments_stage1,
-        ev_map,
-        deep_exp_id,
-        fri_batch_size: pil_code.fri_batch_size,
-        security: Some(SecurityInfo {
-            proximity_gap: ldt.proximity_gap(),
-            proximity_parameter: ldt.proximity_parameter(),
-            regime: ldt.regime_identifier().to_string(),
-        }),
-        multiproof: false,
-    }
-}
-
-pub fn collect_opening_points(setup: &SetupResult) -> Vec<i64> {
-    setup.opening_points.clone()
-}
-
-pub fn compute_log_folding_factors(stark_struct: &StarkStruct) -> Vec<u32> {
-    stark_struct.low_degree_test.log_folding_factors()
+    })
 }
 
 /// Solve the security parameters (query counts, grinding) of the low-degree
 /// test the stark struct selects, for a DEEP polynomial batching `batch_size`
 /// openings. The 128-bit JBR target and the geometry (rate, tree arity, pow
 /// bits) come from the stark struct, as the FRI-only callers always did.
-pub fn solve_low_degree_test(stark_struct: &StarkStruct, batch_size: u64) -> LowDegreeTest {
+/// The gate covers the low-degree test only: the DEEP-ALI terms (~qDeg, nConstraints over |GL³| ≈ 2^192) are negligible.
+pub fn solve_low_degree_test(stark_struct: &StarkStruct, batch_size: u64) -> Result<LowDegreeTest> {
+    let ldt = solve_low_degree_test_unchecked(stark_struct, batch_size)?;
+    match security::check::check_low_degree_test(stark_struct, &ldt, batch_size) {
+        Ok(report) => tracing::info!("{} (2^{} domain, {})", report.summary(), stark_struct.n_bits_ext, report.config),
+        Err(e) => bail!("low-degree test fails the exact security check: {e}"),
+    }
+    Ok(ldt)
+}
+
+fn solve_low_degree_test_unchecked(stark_struct: &StarkStruct, batch_size: u64) -> Result<LowDegreeTest> {
     let field_size = security::goldilocks_safe_extension_field_size();
     let rate = 1.0 / (1u64 << (stark_struct.n_bits_ext - stark_struct.n_bits)) as f64;
-    let log_folding_factors = compute_log_folding_factors(stark_struct);
-    match &stark_struct.low_degree_test {
+    let log_folding_factors = stark_struct.low_degree_test.log_folding_factors();
+    Ok(match &stark_struct.low_degree_test {
         crate::types::stark_struct::LowDegreeTest::Fri(fri) => {
             LowDegreeTest::Fri(security::pcs::Fri::new(security::pcs::FriConfig {
                 field_size,
@@ -374,15 +125,212 @@ pub fn solve_low_degree_test(stark_struct: &StarkStruct, batch_size: u64) -> Low
             // The GPU prover sizes every query buffer for round 1's count.
             let t = &solved.security_params().num_queries;
             if let Some(i) = t.iter().position(|&ti| ti > t[0]) {
-                panic!(
+                bail!(
                     "STIR schedule needs {} queries in round {i} but {} in round 0 (queries {t:?}, grinding {:?}); \
                      every round must need at most round 0's queries: raise the later rounds' grindingBitsQueries",
-                    t[i], t[0], stir.grinding_bits_queries
+                    t[i],
+                    t[0],
+                    stir.grinding_bits_queries
                 );
             }
             LowDegreeTest::Stir(solved)
         }
+    })
+}
+
+/// The starkinfo file in its golden key order.
+#[derive(Clone, Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StarkInfoOutput {
+    /// Always `KEY_VERSION`; the provers refuse any other.
+    #[serde(serialize_with = "key_version")]
+    pub key_version: (),
+    pub name: String,
+    pub cm_pols_map: Vec<PolEntry>,
+    pub const_pols_map: Vec<PolEntry>,
+    pub challenges_map: Vec<ChallengeEntry>,
+    pub publics_map: Vec<NamedValue>,
+    pub proof_values_map: Vec<NamedValue>,
+    pub airgroup_values_map: Vec<NamedValue>,
+    pub air_values_map: Vec<NamedValue>,
+    #[serde(serialize_with = "as_map")]
+    pub map_sections_n: Vec<(String, u32)>,
+    pub air_id: usize,
+    pub airgroup_id: usize,
+    /// Basic airs only: what their transcript and stage-1 contribution absorb.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub circuit_type: Option<u64>,
+    pub n_constants: u32,
+    pub n_publics: u32,
+    pub air_group_values: Vec<AirGroupValueEntry>,
+    pub n_stages: u32,
+    pub custom_commits: Vec<CustomCommit>,
+    pub custom_commits_map: Vec<Vec<PolEntry>>,
+    pub stark_struct: StarkStructOutput,
+    pub boundaries: Vec<BoundaryEntry>,
+    pub opening_points: Vec<i64>,
+    pub c_exp_id: u32,
+    pub q_dim: u32,
+    pub q_deg: u32,
+    pub n_constraints: u32,
+    pub n_commitments_stage1: u32,
+    pub ev_map: Vec<EvMapEntry>,
+    pub fri_batch_size: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub security: Option<SecurityInfo>,
+    /// The proof travels as a Merkle multiproof; absent on flat keys.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub multiproof: bool,
+}
+
+/// A cmPolsMap/constPolsMap/customCommitsMap entry; a Q piece writes stagePos before stageId (golden order).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PolEntry {
+    pub stage: u32,
+    pub name: String,
+    pub dim: u32,
+    pub pols_map_id: usize,
+    #[serde(rename = "stagePos", skip_serializing_if = "Option::is_none")]
+    pub q_stage_pos: Option<u32>,
+    pub stage_id: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lengths: Lengths,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub im_pol: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exp_id: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stage_pos: Option<u32>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AirGroupValueEntry {
+    pub agg_type: i32,
+    pub stage: u32,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+pub struct BoundaryEntry {
+    pub name: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub offset_min: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub offset_max: Option<u32>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EvMapEntry {
+    #[serde(rename = "type")]
+    pub kind: &'static str,
+    pub id: u32,
+    pub prime: i64,
+    pub opening_pos: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub commit_id: Option<u32>,
+}
+
+fn key_version<S: Serializer>(_: &(), s: S) -> Result<S::Ok, S::Error> {
+    s.serialize_u32(KEY_VERSION)
+}
+
+/// `mapSectionsN` keeps its insertion order.
+fn as_map<S: Serializer>(v: &[(String, u32)], s: S) -> Result<S::Ok, S::Error> {
+    s.collect_map(v.iter().map(|(k, n)| (k, n)))
+}
+
+/// The starkinfo of `v` with its `stark_struct` and `security`.
+fn starkinfo_output(
+    v: &VerifierView,
+    air_name: &str,
+    (airgroup_id, air_id): (usize, usize),
+    stark_struct: StarkStructOutput,
+    security: SecurityInfo,
+) -> StarkInfoOutput {
+    let boundary = |b: &Boundary| {
+        let (offset_min, offset_max) = match b {
+            Boundary::EveryFrame { min, max } => (Some(*min), Some(*max)),
+            _ => (None, None),
+        };
+        BoundaryEntry { name: b.name(), offset_min, offset_max }
+    };
+    let ev = |e: &EvEntry| EvMapEntry {
+        kind: match e.pol.col {
+            ColType::Witness => "cm",
+            ColType::Fixed => "const",
+            ColType::Custom => "custom",
+        },
+        id: e.pol.id,
+        prime: e.pol.offset,
+        opening_pos: e.opening_pos,
+        commit_id: e.pol.commit_id,
+    };
+    let entry = |i: usize, p: &PolMap| PolEntry {
+        stage: p.stage,
+        name: p.name.clone(),
+        dim: p.dim,
+        pols_map_id: i,
+        stage_id: p.stage_id,
+        ..Default::default()
+    };
+    let const_pols =
+        v.const_pols_map.iter().enumerate().map(|(i, p)| PolEntry { lengths: p.lengths.clone(), ..entry(i, p) });
+    // a custom entry is named by the column's own name (after the last `.`)
+    let custom_pol = |(i, p): (usize, &PolMap)| PolEntry {
+        name: p.name.rsplit_once('.').map_or(p.name.as_str(), |(_, n)| n).into(),
+        stage_pos: Some(p.stage_pos),
+        ..entry(i, p)
+    };
+    StarkInfoOutput {
+        key_version: (),
+        name: air_name.into(),
+        cm_pols_map: cm_pols(v, entry),
+        const_pols_map: const_pols.collect(),
+        challenges_map: v.challenges_map.clone(),
+        publics_map: v.publics_map.clone(),
+        proof_values_map: v.proof_values_map.clone(),
+        airgroup_values_map: v.airgroup_values_map.clone(),
+        air_values_map: v.air_values_map.clone(),
+        map_sections_n: v.map_sections_n.clone(),
+        air_id,
+        airgroup_id,
+        circuit_type: v.circuit_type,
+        n_constants: v.n_constants,
+        n_publics: v.n_publics,
+        air_group_values: (v.airgroup_values_map.iter())
+            .map(|a| AirGroupValueEntry { agg_type: a.agg_type as i32, stage: a.stage })
+            .collect(),
+        n_stages: v.n_stages,
+        custom_commits: v.custom_commits.clone(),
+        custom_commits_map: v.custom_pols_map.iter().map(|m| m.iter().enumerate().map(custom_pol).collect()).collect(),
+        stark_struct,
+        boundaries: v.boundaries.iter().map(boundary).collect(),
+        opening_points: v.opening_points.clone(),
+        c_exp_id: v.c_exp_id,
+        q_dim: v.q_dim,
+        q_deg: v.q_deg,
+        n_constraints: v.n_constraints,
+        n_commitments_stage1: 0,
+        ev_map: v.ev_map.iter().map(ev).collect(),
+        fri_batch_size: v.fri_batch_size,
+        security: Some(security),
+        multiproof: v.multiproof,
     }
+}
+
+/// cmPolsMap: a Q piece carries its stagePos first; the others lengths, imPol/expId, then stagePos.
+fn cm_pols(v: &VerifierView, entry: impl Fn(usize, &PolMap) -> PolEntry) -> Vec<PolEntry> {
+    let q_stage = v.n_stages + 1;
+    let pol = |(i, p): (usize, &PolMap)| {
+        if p.stage == q_stage {
+            return PolEntry { q_stage_pos: Some(p.stage_pos), ..entry(i, p) };
+        }
+        let im_pol = p.exp_id.map(|_| true);
+        PolEntry { lengths: p.lengths.clone(), im_pol, exp_id: p.exp_id, stage_pos: Some(p.stage_pos), ..entry(i, p) }
+    };
+    v.cm_pols_map.iter().enumerate().map(pol).collect()
 }
 
 #[cfg(test)]
@@ -397,7 +345,7 @@ mod tests {
             initial_folding_factor: Some(fold),
             ..Default::default()
         };
-        let mut ss = generate_stark_struct(&settings, n_bits, "blake3");
+        let mut ss = generate_stark_struct(&settings, n_bits, proofman_common::hash_family::HashFamily::Blake3);
         if let Ldt::Stir(s) = &mut ss.low_degree_test {
             s.grinding_bits_queries =
                 grinding.iter().copied().chain(std::iter::repeat(0)).take(s.folding_factors.len()).collect();
@@ -407,7 +355,7 @@ mod tests {
 
     #[test]
     fn basic_air_schedule_needs_no_more_queries_after_round_0() {
-        solve_low_degree_test(&stir(22, 1, 4, &[24]), 200);
+        solve_low_degree_test(&stir(22, 1, 4, &[24]), 200).unwrap();
     }
 
     /// The setup writes a basic air's circuitType and proofman reads the same value back.
@@ -418,17 +366,17 @@ mod tests {
         let with = StarkInfoOutput { circuit_type: Some(4), security: security.clone(), ..Default::default() };
         let json = crate::output::json::to_json_string(&with).unwrap();
         assert!(json.contains("\"circuitType\": 4") || json.contains("\"circuitType\":4"), "{json}");
-        assert_eq!(proofman_common::StarkInfo::from_json(&json).circuit_type, Some(4));
+        assert_eq!(proofman_common::StarkInfo::try_from_json(&json).unwrap().circuit_type, Some(4));
 
         let without = crate::output::json::to_json_string(&StarkInfoOutput { security, ..Default::default() }).unwrap();
         assert!(!without.contains("circuitType"), "{without}");
-        assert_eq!(proofman_common::StarkInfo::from_json(&without).circuit_type, None);
+        assert_eq!(proofman_common::StarkInfo::try_from_json(&without).unwrap().circuit_type, None);
     }
 
     /// The GPU sizes its query buffers for round 0; a schedule that needs more later fails at setup.
     #[test]
-    #[should_panic(expected = "every round must need at most round 0's queries")]
     fn later_round_needing_more_queries_is_refused() {
-        solve_low_degree_test(&stir(20, 4, 2, &[30]), 200);
+        let err = solve_low_degree_test(&stir(20, 4, 2, &[30]), 200).unwrap_err().to_string();
+        assert!(err.contains("every round must need at most round 0's queries"), "{err}");
     }
 }

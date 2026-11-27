@@ -96,53 +96,17 @@ public:
             }
         } else if (type == setupCtx.starkInfo.nStages + 2) {
             uint64_t boundary = args[i_args + 1];
-            if(setupCtx.starkInfo.verify) {
-                if(boundary == 0) {
-                    for(uint64_t j = 0; j < nrowsPack; ++j) {
-                        for(uint64_t e = 0; e < FIELD_EXTENSION; ++e) {
-                            value[j + e*nrowsPack] = proverHelpers->x_n[e];
-                        }
-                    }
-                } else {
-                    for(uint64_t j = 0; j < nrowsPack; ++j) {
-                        for(uint64_t e = 0; e < FIELD_EXTENSION; ++e) {
-                            value[j + e*nrowsPack] = proverHelpers->zi[(boundary - 1)*FIELD_EXTENSION + e];
-                        }
-                    }
-                }
-                return value;
+            if(boundary == 0) {
+#if DEBUG
+            if(print) printf("Expression debug x or x_n\n");
+#endif
+                Goldilocks::Element *x = domainExtended ? &proverHelpers->x[row] : &proverHelpers->x_n[row];
+                return x;
             } else {
-                if(boundary == 0) {
 #if DEBUG
-                if(print) printf("Expression debug x or x_n\n");
+                if(print) printf("Expression debug zi\n");
 #endif
-                    Goldilocks::Element *x = domainExtended ? &proverHelpers->x[row] : &proverHelpers->x_n[row];
-                    return x;
-                } else {
-#if DEBUG
-                    if(print) printf("Expression debug zi\n");
-#endif
-                    return &proverHelpers->zi[(boundary - 1)*domainSize  + row];
-                }
-            }
-        } else if (type == setupCtx.starkInfo.nStages + 3) {
-#if DEBUG
-            if(print) printf("Expression debug xi\n");
-#endif
-            if(dim == 1) { exit(-1); }
-            uint64_t o = args[i_args + 1];
-            if(setupCtx.starkInfo.verify) {
-                    for(uint64_t k = 0; k < nrowsPack; ++k) {
-                    for(uint64_t e = 0; e < FIELD_EXTENSION; ++e) {
-                        value[k + e*nrowsPack] = params.xDivXSub[((row + k)*setupCtx.starkInfo.openingPoints.size() + o)*FIELD_EXTENSION + e];
-                    }
-                }
-                return value;
-            } else {
-                Goldilocks::Element *xdivxsub = &params.aux_trace[mapOffsetFriPol + row*FIELD_EXTENSION];
-                Goldilocks3::op_31_pack(nrowsPack, 3, xdivxsub, &xis[o * FIELD_EXTENSION], true, &proverHelpers->x[row], false);
-                getInversePolinomial(nrowsPack, xdivxsub, value, true, 3);
-                return xdivxsub;
+                return &proverHelpers->zi[(boundary - 1)*domainSize  + row];
             }
         } else if (type >= setupCtx.starkInfo.nStages + 4 && type < setupCtx.starkInfo.customCommits.size() + setupCtx.starkInfo.nStages + 4) {
             uint64_t index = type - (nStages + 4);

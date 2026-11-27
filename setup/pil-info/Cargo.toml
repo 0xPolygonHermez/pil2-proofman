@@ -10,6 +10,7 @@ repository = { workspace = true }
 categories = { workspace = true }
 
 [dependencies]
+constraint-dag = { workspace = true }
 thiserror = { workspace = true }
 num-bigint = { workspace = true }
 pil2-pilout = { workspace = true }

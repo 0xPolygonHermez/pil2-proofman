@@ -48,6 +48,29 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
       - name: Set up Rust Toolchain
         run: curl https://sh.rustup.rs -sSf | sh -s -- -y
+  test-stark-cpp:
+    # pil2-stark's CPU gtests: DEEP, the constraint-DAG verifier, the starkinfo loader, STIR and the polynomials.
+    name: Test pil2-stark (C++ gtests)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt install -y build-essential libgmp-dev nlohmann-json3-dev nasm libsodium-dev libgtest-dev
+          sudo apt-get install -y openmpi-bin openmpi-common libopenmpi-dev
+      - name: Build
+        run: make -C pil2-stark -j"$(nproc)" deep_test constraint_dag_test stark_info_test stir_test polynomial_test
+      - name: Run
+        run: |
+          pil2-stark/build/deepTests
+          pil2-stark/build/constraintDagTests
+          pil2-stark/build/starkInfoTests
+          pil2-stark/build/stirTests
+          pil2-stark/build/polynomialTests
   cargo-fmt:
     name: cargo fmt
     runs-on: ubuntu-latest
@@ -837,6 +860,16 @@ jobs:
         run: |
           cargo run  --bin proofman-cli pil-helpers --pilout ./pil2-components/test/simple/build/build.pilout --path ./pil2-components/test/simple/rs/src -o
 
+      # Same airs/columns as simple.pil (reuses libsimple.so), plus a challenge that shifts xi/vf1/vf2.
+      - name: Compile PIL simple-challenge
+        run: |
+          mkdir -p ./pil2-components/test/simple/build_challenge/
+          cargo run --bin proofman-setup -- compile-pil --pil ./pil2-components/test/simple/simple_challenge.pil -I ./pil2-components/lib/std/pil -o ./pil2-components/test/simple/build_challenge/build.pilout
+
+      - name: Generate setup simple-challenge
+        run: |
+          cargo run --bin proofman-setup -- setup -a ./pil2-components/test/simple/build_challenge/build.pilout -b ./pil2-components/test/simple/build_challenge
+
       - name: Cargo build
         run: RUST_BACKTRACE=1 cargo build -v --workspace
 
@@ -903,6 +936,14 @@ jobs:
       - name: Generate proof simple
         run: |
           cargo run  --bin proofman-cli prove --witness-lib ./target/debug/libsimple.so --proving-key ./pil2-components/test/simple/build/provingKey --output-dir ./pil2-components/test/simple/build
+
+      - name: Verify constraints simple-challenge
+        run: |
+          cargo run  --bin proofman-cli verify-constraints --witness-lib ./target/debug/libsimple.so --proving-key ./pil2-components/test/simple/build_challenge/provingKey
+
+      - name: Generate proof simple-challenge
+        run: |
+          cargo run  --bin proofman-cli prove --witness-lib ./target/debug/libsimple.so --proving-key ./pil2-components/test/simple/build_challenge/provingKey --output-dir ./pil2-components/test/simple/build_challenge -y
        
       # - name: Verify constraints diff_buses
       #   run: |

@@ -1,12 +1,12 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 
-//! STARK verification primitives: `stark_verify`, the `VerifierInfo` it reads,
+//! STARK verification primitives: `stark_verify`, the `VerifierInfo` it reads, the `AirConstraints` it evaluates,
 //! and the proof types.
 //!
 //! No per-family verifier is committed here. The recursion aggregator binds the
-//! application's publics into the q_verify expression, so a verifier generated
+//! application's publics into the constraints, so a verifier generated
 //! for one application rejects proofs another's correct prover produced. proofman
-//! verifies from the proving key (`<base>.starkinfo.json` + `<base>.verifier.bin` +
+//! verifies from the proving key (`<base>.starkinfo.json` + `<base>.verifierinfo.json` +
 //! `<base>.verkey.json`, see `proofman::verify_proof`); consumers that need a
 //! compiled `no_std` verifier commit their own, generated from their own key by
 //! `proofman-setup setup -r`, against the items this crate exports.
@@ -16,6 +16,7 @@ extern crate alloc;
 #[macro_use]
 mod log;
 
+mod constraints;
 mod layout;
 mod multiproof;
 mod proof;
@@ -23,6 +24,8 @@ mod replay;
 mod stir;
 mod verifier;
 
+pub use constraint_dag::{ColRef, ColType, DagError, LowerTables};
+pub use constraints::*;
 pub use layout::*;
 pub use multiproof::*;
 pub use proof::*;

@@ -1,37 +1,26 @@
 //! plonk2pil: Convert R1CS constraint systems to PIL (Polynomial Identity Language).
 //!
-//! This module is the Rust port of the `recurser-js` pipeline.
-//! It reads R1CS binary files, converts constraints to PLONK format, and runs
-//! one of several setup routines to produce PIL source and fixed polynomials.
+//! It reads an r1cs, converts its constraints to PLONK, and lays them out with [`gen`], the one
+//! generator, into a PIL source, fixed columns and an exec.
 //!
 //! The reader, the PLONK conversion and the `.exec` writer are generic over the r1cs's field
-//! ([`field::PlonkField`]: Goldilocks or BN128). The setup families are over one field each: the
-//! STARK recursion's (Poseidon1, Poseidon2, blake3) over Goldilocks, and the final SNARK wrap's
-//! (PoseidonBN128, [`proofman_common::hash_family::BN128_WRAP_FAMILY`]) over BN128.
-//!
-//! The main entry point is [`plonk2pil`], which dispatches to the appropriate
-//! setup variant based on the `setup_type` argument.
+//! ([`field::PlonkField`]: Goldilocks or BN128). The STARK recursion's airs (compressor,
+//! aggregation) are over Goldilocks, the final SNARK wraps over BN128.
 
-pub mod estimate;
+pub mod check;
+pub mod consts;
 pub mod field;
+pub mod gen;
 pub mod merge_copies;
-pub mod packers;
 pub mod r1cs;
-pub mod setups;
 pub mod utils;
-
-// Re-export old flat module names as aliases for backward compatibility
-pub use r1cs::to_plonk as r1cs2plonk;
-pub use r1cs::types as r1cs_types;
-pub use setups::poseidon1::aggregation as aggregation_setup;
-pub use setups::poseidon1::compressor as compressor_setup;
 
 use anyhow::{bail, Result};
 use proofman_common::exec_format::{ExecLayout, GATE_BAND_FORMAT_VERSION, GATE_BAND_HEADER_WORDS, GATE_BAND_WORDS};
-use proofman_common::hash_family::BN128_WRAP_FAMILY;
 use proofman_fields::Bn128;
 
-use field::{PlonkField, R1csPrime};
+use field::PlonkField;
+pub use gen::SetupKind;
 use r1cs::types::{r1cs_prime, read_r1cs_from_bytes, read_r1cs_header, PlonkOptions};
 pub use r1cs::types::{FixedPol, SetupResult};
 
@@ -65,85 +54,61 @@ pub struct PlonkResult<V = u64> {
 }
 
 /// How a [`PlonkResult`] holds a fixed value, which names the field of the r1cs it is the result
-/// of, and so the families that set it up: `u64` and [`Bn128`] (sealed).
+/// of, and so the kinds set up over it: `u64` and [`Bn128`] (sealed).
 pub trait FixedValue: sealed::FieldSetups {}
 
 impl FixedValue for u64 {}
 impl FixedValue for Bn128 {}
 
-mod sealed {
-    use anyhow::{bail, ensure, Result};
-    use proofman_common::hash_family::BN128_WRAP_FAMILY;
-    use proofman_fields::{Bn128, Goldilocks, PrimeField64};
+pub(crate) mod sealed {
+    use proofman_fields::{Bn128, Goldilocks, PrimeField64, QuotientMap};
 
     use super::field::PlonkField;
-    use super::packers;
-    use super::r1cs::types::{PlonkOptions, R1csFile, SetupResult};
+    use super::SetupKind;
 
-    /// The families over a field, behind [`super::FixedValue`].
+    /// The kinds over a field, behind [`super::FixedValue`].
     pub trait FieldSetups: Sized {
         /// The field of the r1cs.
-        type Field: PlonkField;
+        type Field: PlonkField + QuotientMap<u64>;
 
-        /// The setup types of the families over [`Self::Field`].
-        const SETUP_TYPES: &'static [&'static str];
-
-        /// Runs the setup `setup_type` of the family `options.hash_id` on `r1cs`.
-        fn setup(
-            r1cs: &R1csFile<Self::Field>,
-            setup_type: &str,
-            options: &PlonkOptions,
-        ) -> Result<SetupResult<Self::Field>>;
+        /// The kinds set up over [`Self::Field`].
+        const SETUP_KINDS: &'static [SetupKind];
 
         /// A value of a fixed column, as the result holds it.
         fn from_field(value: Self::Field) -> Self;
+
+        /// The field element a held value is.
+        fn to_field(&self) -> Self::Field;
     }
 
-    /// The STARK recursion's families, over Goldilocks. Each value is its canonical word, as the
-    /// STARK setup takes plonk2pil's columns and a `.const` file stores them.
+    /// The STARK recursion's airs, over Goldilocks. Each value is its canonical word, as the STARK
+    /// setup takes plonk2pil's columns and a `.const` file stores them.
     impl FieldSetups for u64 {
         type Field = Goldilocks;
 
-        const SETUP_TYPES: &'static [&'static str] = &["compressor", "aggregation"];
-
-        fn setup(
-            r1cs: &R1csFile<Goldilocks>,
-            setup_type: &str,
-            options: &PlonkOptions,
-        ) -> Result<SetupResult<Goldilocks>> {
-            ensure!(
-                options.hash_id != BN128_WRAP_FAMILY,
-                "plonk2pil: the {BN128_WRAP_FAMILY} family sets up an r1cs over BN128, and this one is over Goldilocks"
-            );
-            packers::refuse_bn128_gates(r1cs)?;
-            Ok(match setup_type {
-                "compressor" => packers::pack_compressor(r1cs, options),
-                "aggregation" => packers::pack_aggregation(r1cs, options),
-                other => bail!("Invalid setup type: '{other}'. Must be one of: {}", Self::SETUP_TYPES.join(", ")),
-            })
-        }
+        const SETUP_KINDS: &'static [SetupKind] = &[SetupKind::Compressor, SetupKind::Aggregation];
 
         fn from_field(value: Goldilocks) -> u64 {
             value.as_canonical_u64()
         }
+
+        fn to_field(&self) -> Goldilocks {
+            Goldilocks::new(*self)
+        }
     }
 
-    /// The final SNARK wrap's family, over BN128, whose fixed columns go to the pilfflonk setup as
-    /// they are.
+    /// The final SNARK wraps, over BN128, whose fixed columns go to the pilfflonk setup as they are.
     impl FieldSetups for Bn128 {
         type Field = Bn128;
 
-        const SETUP_TYPES: &'static [&'static str] = &["wrap"];
-
-        fn setup(r1cs: &R1csFile<Bn128>, setup_type: &str, options: &PlonkOptions) -> Result<SetupResult<Bn128>> {
-            match setup_type {
-                "wrap" => packers::pack_wrap(r1cs, options),
-                other => bail!("Invalid setup type: '{other}'. Must be one of: {}", Self::SETUP_TYPES.join(", ")),
-            }
-        }
+        const SETUP_KINDS: &'static [SetupKind] = &[SetupKind::Wrap];
 
         fn from_field(value: Bn128) -> Bn128 {
             value
+        }
+
+        fn to_field(&self) -> Bn128 {
+            *self
         }
     }
 }
@@ -233,39 +198,22 @@ pub fn write_exec_file<F: PlonkField>(
     buff
 }
 
-/// Read an R1CS file and run the specified setup to produce PIL and fixed polynomials.
+/// Reads an r1cs and sets it up as a `kind` of `options.hash` (see [`gen::setup`]).
 ///
-/// # Arguments
-/// * `r1cs_data` - Raw bytes of the R1CS binary file.
-/// * `setup_type` - One of `"compressor"`, `"aggregation"` over Goldilocks, `"wrap"` over BN128.
-/// * `options` - Optional configuration (airgroup name, max constraint degree, the family).
-///
-/// # Returns
-/// A [`PlonkResult`] containing the exec buffer, PIL source, and fixed polynomials.
-///
-/// The result's type says the field: a [`PlonkResult`] (`u64` values) is the STARK recursion's,
-/// over Goldilocks, and a `PlonkResult<Bn128>` the final SNARK wrap's, over BN128, as
-/// [`read_r1cs_from_bytes`] reads an r1cs into the field it is asked for. An r1cs over the other
-/// field is refused, saying which families set it up, and one over any other prime as unknown; so
-/// is a family that is not over the field.
-pub fn plonk2pil<V: FixedValue>(r1cs_data: &[u8], setup_type: &str, options: &PlonkOptions) -> Result<PlonkResult<V>> {
-    if !V::SETUP_TYPES.contains(&setup_type) {
-        bail!("Invalid setup type: '{}'. Must be one of: {}", setup_type, V::SETUP_TYPES.join(", "));
+/// The result's type says the field: a [`PlonkResult`] (`u64` values) is a STARK recursion air's,
+/// over Goldilocks, and a `PlonkResult<Bn128>` a SNARK wrap's, over BN128. A kind not over that
+/// field, or an r1cs over another, is refused naming both.
+pub fn plonk2pil<V: FixedValue>(r1cs_data: &[u8], kind: SetupKind, options: &PlonkOptions) -> Result<PlonkResult<V>> {
+    let field = V::Field::PRIME;
+    if !V::SETUP_KINDS.contains(&kind) {
+        bail!("plonk2pil: a {kind} is not set up over {field:?}; over {field:?}: {:?}", V::SETUP_KINDS);
     }
-
-    match r1cs_prime(&read_r1cs_header(r1cs_data)?)? {
-        prime if prime == V::Field::PRIME => {}
-        R1csPrime::Bn128 => bail!(
-            "plonk2pil: an r1cs over BN128 is set up by the {BN128_WRAP_FAMILY} family, into a PlonkResult<Bn128>, \
-             and not by the STARK recursion's families, which are over Goldilocks"
-        ),
-        R1csPrime::Goldilocks => bail!(
-            "plonk2pil: an r1cs over Goldilocks is set up by the STARK recursion's families, into a PlonkResult, \
-             and not by the {BN128_WRAP_FAMILY} family, which is over BN128"
-        ),
+    let prime = r1cs_prime(&read_r1cs_header(r1cs_data)?)?;
+    if prime != field {
+        bail!("plonk2pil: the r1cs is over {prime:?}, and a {kind} is set up over {field:?}");
     }
     let r1cs = read_r1cs_from_bytes::<V::Field>(r1cs_data)?;
-    let res = V::setup(&r1cs, setup_type, options)?;
+    let res = gen::setup(&r1cs, kind, options)?;
 
     let exec = write_exec_file(r1cs.header.n_vars, &res.plonk_additions, &res.s_map, &res.gate_bands, res.band_aux);
 
@@ -291,48 +239,18 @@ fn fixed_values<V: FixedValue>(pol: FixedPol<V::Field>) -> FixedPol<V> {
 #[cfg(test)]
 mod tests {
     use super::r1cs::to_plonk::*;
+    use super::field::R1csPrime;
     use super::r1cs::types::read_r1cs_from_bytes;
     use super::*;
     use proofman_common::exec_format::{
-        ExecFile, ExecGateBand, EXEC_FORMAT_VERSION, EXEC_FORMAT_VERSION_WIDE, EXEC_HEADER_WORDS, EXEC_MAGIC,
-        EXEC_WIDE_HEADER_WORDS,
+        ExecFile, ExecGateBand, EXEC_FORMAT_VERSION_WIDE, EXEC_HEADER_WORDS, EXEC_MAGIC, EXEC_WIDE_HEADER_WORDS,
     };
+    use proofman_common::hash_family::HashFamily;
     use proofman_fields::{Field, Goldilocks, PrimeField, QuotientMap};
 
     /// The r1cs's wire count the writer's tests give it: version 3 records it, and version 2 does
     /// not. The writer does not check the wires against it; the reader of a witness does.
     const N_VARS: u32 = 100;
-
-    /// Run the real compressor packer end-to-end on an r1cs (exercises the row-count
-    /// assert + verify_merge_soundness). ESTIMATE_HASH picks the family; it defaults to
-    /// `hash_family::DEFAULT_HASH_ID`.
-    ///   ESTIMATE_R1CS=/path/x.r1cs [ESTIMATE_HASH=Poseidon2] \
-    ///     cargo test -p pil2-stark-recurser run_compressor --release -- --ignored --nocapture
-    #[test]
-    #[ignore]
-    fn run_compressor() {
-        use proofman_common::hash_family::GateRole;
-        let Ok(f) = std::env::var("ESTIMATE_R1CS") else {
-            eprintln!("set ESTIMATE_R1CS=/path/to/file.r1cs");
-            return;
-        };
-        let bytes = std::fs::read(&f).unwrap_or_else(|e| panic!("read {f}: {e}"));
-        let hash_id =
-            std::env::var("ESTIMATE_HASH").unwrap_or_else(|_| proofman_common::hash_family::DEFAULT_HASH_ID.into());
-        let opts = PlonkOptions {
-            airgroup_name: Some("Compressor".into()),
-            max_constraint_degree: Some(5),
-            hash_id,
-            merge_copies: true,
-            blake3_lanes: None,
-            min_n_bits: None,
-        };
-        let res: PlonkResult = plonk2pil(&bytes, "compressor", &opts).expect("compressor packing failed");
-        let r1cs = read_r1cs_from_bytes::<Goldilocks>(&bytes).unwrap();
-        let cgi = get_custom_gates_info(&r1cs);
-        let n_pos = cgi.n(GateRole::PoseidonCompression) + cgi.n(GateRole::PoseidonSponge);
-        eprintln!("\n=== {f}  compressor OK: nBits={} nUsed={} n_pos={}", res.n_bits, res.n_used, n_pos);
-    }
 
     /// Build a minimal Goldilocks R1CS with a single multiplication constraint and no custom gates.
     fn build_simple_r1cs_bytes() -> Vec<u8> {
@@ -438,7 +356,8 @@ mod tests {
         let seven = 7u64.to_le_bytes();
         let err = read_r1cs_header(&r1cs_bytes(&seven, &one(8))).and_then(|h| r1cs_prime(&h)).unwrap_err().to_string();
         assert!(err.contains("prime 7 (n8 = 8)"), "{err}");
-        let err = plonk2pil::<u64>(&r1cs_bytes(&seven, &one(8)), "compressor", &PlonkOptions::default()).unwrap_err();
+        let err = plonk2pil::<u64>(&r1cs_bytes(&seven, &one(8)), SetupKind::Compressor, &PlonkOptions::default())
+            .unwrap_err();
         assert!(err.to_string().contains("prime 7"), "{err}");
     }
 
@@ -450,175 +369,102 @@ mod tests {
         assert!(err.contains("18446744069414584321 is not an element of Goldilocks"), "{err}");
     }
 
-    /// A truncated file is an error at the read that runs out, whatever length it claims.
+    /// Malformed files are refused where the read runs out or the structure breaks, never misread.
     #[test]
-    fn a_truncated_r1cs_is_an_error() {
+    fn a_malformed_r1cs_is_refused() {
+        // The constraints section is the file's last: three one-term linear combinations of a
+        // 4-byte term count, a 4-byte wire and an 8-byte coefficient.
+        const CONSTRAINTS_BYTES: usize = 3 * (4 + 4 + 8);
         let data = build_simple_r1cs_bytes();
-        for len in [0, 3, 12, 30, data.len() - 1] {
-            assert!(read_r1cs_from_bytes::<Goldilocks>(&data[..len]).is_err(), "{len} bytes");
-        }
-    }
-
-    /// A section whose size runs past the end of the file is an error, however large the size: one
-    /// above i64::MAX included, which a seek by it would have wrapped backwards.
-    #[test]
-    fn a_section_past_the_end_is_an_error() {
-        let data = build_simple_r1cs_bytes();
-        // The header section's size: past the magic, the version, the section count and its type.
-        let at = 4 + 4 + 4 + 4;
-        for size in [u64::MAX, i64::MAX as u64 + 1, data.len() as u64] {
+        let constraints_at = data.len() - CONSTRAINTS_BYTES;
+        let put = |at: usize, bytes: &[u8]| {
             let mut bad = data.clone();
-            bad[at..at + 8].copy_from_slice(&size.to_le_bytes());
+            bad[at..at + bytes.len()].copy_from_slice(bytes);
+            bad
+        };
+        // (what is broken, the file, a fragment of the error if it is a named one)
+        let mut cases = vec![
+            ("a section size past the end", put(16, &u64::MAX.to_le_bytes()), "run past the end of the file"),
+            // above i64::MAX, which a seek by it would have wrapped backwards
+            ("a section size above i64::MAX", put(16, &(i64::MAX as u64 + 1).to_le_bytes()), "run past the end"),
+            (
+                "a section declared too short",
+                put(constraints_at - 8, &(CONSTRAINTS_BYTES as u64 - 1).to_le_bytes()),
+                "",
+            ),
+            ("a section type twice", put(constraints_at - 12, &1u32.to_le_bytes()), "section 1 appears twice"),
+            (
+                "a wire past the header's",
+                put(constraints_at + 4, &4u32.to_le_bytes()),
+                "wire 4 is not one of the header's 4 wires",
+            ),
+            // nConstraints, the header's last word: sizes no allocation
+            ("a count beyond the data", put(4 + 4 + 4 + 4 + 8 + 4 + 8 + 4 * 4 + 8, &u32::MAX.to_le_bytes()), ""),
+        ];
+        for len in [0, 3, 12, 30, data.len() - 1] {
+            cases.push(("a truncated file", data[..len].to_vec(), ""));
+        }
+        for (what, bad, fragment) in cases {
             let err = read_r1cs_from_bytes::<Goldilocks>(&bad).unwrap_err().to_string();
-            assert!(err.contains("run past the end of the file"), "size {size}: {err}");
+            assert!(err.contains(fragment), "{what}: {err}");
         }
     }
 
-    /// The bytes of the constraints section of `build_simple_r1cs_bytes`, its last: three linear
-    /// combinations of one term each, a 4-byte term count, a 4-byte wire and an 8-byte coefficient.
-    const CONSTRAINTS_BYTES: usize = 3 * (4 + 4 + 8);
-
-    /// Each section is read within its own bytes: one that declares fewer bytes than its reads take
-    /// is an error, not a read of the bytes after it.
+    /// The STARK recursion's airs are over Goldilocks: asked for a `PlonkResult` of words,
+    /// plonk2pil refuses a BN128 r1cs up front, for both kinds and whichever family.
     #[test]
-    fn a_read_past_its_section_is_an_error() {
-        let mut data = build_simple_r1cs_bytes();
-        let size_at = data.len() - CONSTRAINTS_BYTES - 8;
-        data[size_at..size_at + 8].copy_from_slice(&(CONSTRAINTS_BYTES as u64 - 1).to_le_bytes());
-        assert!(read_r1cs_from_bytes::<Goldilocks>(&data).is_err());
-    }
-
-    /// A section type that appears twice is an error, not one of the two read as the other.
-    #[test]
-    fn a_section_twice_is_an_error() {
-        let mut data = build_simple_r1cs_bytes();
-        // The constraints section's type, before its size, made the header's.
-        let type_at = data.len() - CONSTRAINTS_BYTES - 8 - 4;
-        data[type_at..type_at + 4].copy_from_slice(&1u32.to_le_bytes());
-        let err = read_r1cs_from_bytes::<Goldilocks>(&data).unwrap_err().to_string();
-        assert!(err.contains("section 1 appears twice"), "{err}");
-    }
-
-    /// A wire is one of the header's: a constraint on wire `n_vars` is an error.
-    #[test]
-    fn a_wire_beyond_the_headers_is_an_error() {
-        let mut data = build_simple_r1cs_bytes();
-        // The first linear combination's wire, after its term count.
-        let wire_at = data.len() - CONSTRAINTS_BYTES + 4;
-        data[wire_at..wire_at + 4].copy_from_slice(&4u32.to_le_bytes());
-        let err = read_r1cs_from_bytes::<Goldilocks>(&data).unwrap_err().to_string();
-        assert!(err.contains("wire 4 is not one of the header's 4 wires"), "{err}");
-    }
-
-    /// A count beyond what the file holds sizes no allocation: it is an error at the read that runs
-    /// out, as for any truncated file.
-    #[test]
-    fn a_count_beyond_the_data_is_an_error() {
-        let mut data = build_simple_r1cs_bytes();
-        // nConstraints, the header's last word: past the magic, the version, the section count, the
-        // header's type and size, n8, the 8-byte prime, four u32 counts and nLabels.
-        let at = 4 + 4 + 4 + 4 + 8 + 4 + 8 + 4 * 4 + 8;
-        data[at..at + 4].copy_from_slice(&u32::MAX.to_le_bytes());
-        assert!(read_r1cs_from_bytes::<Goldilocks>(&data).is_err());
-    }
-
-    /// The STARK recursion's families are over Goldilocks: asked for a `PlonkResult` of words,
-    /// plonk2pil refuses a BN128 r1cs up front, naming the family that sets it up, for both setup
-    /// types and whichever Goldilocks family.
-    #[test]
-    fn the_goldilocks_families_refuse_a_bn128_r1cs() {
+    fn the_goldilocks_kinds_refuse_a_bn128_r1cs() {
         let bn128 = r1cs_bytes(&R1csPrime::Bn128.modulus_le(), &one(32));
-        for setup_type in ["compressor", "aggregation"] {
-            for hash_id in proofman_common::hash_family::FAMILIES {
-                let opts = PlonkOptions { hash_id: hash_id.to_string(), ..Default::default() };
-                let err = plonk2pil::<u64>(&bn128, setup_type, &opts).unwrap_err().to_string();
-                assert!(err.contains("an r1cs over BN128 is set up by the PoseidonBN128 family"), "{err}");
+        for kind in [SetupKind::Compressor, SetupKind::Aggregation] {
+            for hash in HashFamily::ALL {
+                let opts = PlonkOptions { hash, ..Default::default() };
+                let err = plonk2pil::<u64>(&bn128, kind, &opts).unwrap_err().to_string();
+                assert!(
+                    err.contains(&format!("the r1cs is over Bn128, and a {kind} is set up over Goldilocks")),
+                    "{err}"
+                );
             }
         }
     }
 
-    /// The wrap's family is over BN128: it refuses a Goldilocks r1cs, and the other families refuse
-    /// to set up a BN128 one into a `PlonkResult<Bn128>`.
+    /// A kind is refused on the field it is not over, naming both; the wraps are Poseidon1's and
+    /// blake3's over BN128.
     #[test]
-    fn the_wrap_family_and_the_bn128_field_go_together() {
+    fn setup_kind_is_refused_on_the_wrong_field() {
         let goldilocks = build_simple_r1cs_bytes();
-        let wrap = PlonkOptions { hash_id: BN128_WRAP_FAMILY.to_string(), ..Default::default() };
-        let err = plonk2pil::<Bn128>(&goldilocks, "wrap", &wrap).unwrap_err().to_string();
-        assert!(err.contains("an r1cs over Goldilocks is set up by the STARK recursion's families"), "{err}");
-        let err = plonk2pil::<u64>(&goldilocks, "compressor", &wrap).unwrap_err().to_string();
-        assert!(err.contains("the PoseidonBN128 family sets up an r1cs over BN128"), "{err}");
-
         let bn128 = r1cs_bytes(&R1csPrime::Bn128.modulus_le(), &one(32));
-        for hash_id in proofman_common::hash_family::FAMILIES {
-            let opts = PlonkOptions { hash_id: hash_id.to_string(), ..Default::default() };
-            let err = plonk2pil::<Bn128>(&bn128, "wrap", &opts).unwrap_err().to_string();
-            assert!(err.contains(&format!("the {hash_id} family is over Goldilocks")), "{err}");
-        }
-        let err = plonk2pil::<Bn128>(&bn128, "compressor", &wrap).unwrap_err().to_string();
-        assert!(err.contains("Must be one of: wrap"), "{err}");
-        let err = plonk2pil::<u64>(&goldilocks, "wrap", &PlonkOptions::default()).unwrap_err().to_string();
-        assert!(err.contains("Must be one of: compressor, aggregation"), "{err}");
+        let p1 = PlonkOptions { hash: HashFamily::Poseidon1, ..Default::default() };
+        let err = plonk2pil::<Bn128>(&goldilocks, SetupKind::Wrap, &p1).unwrap_err().to_string();
+        assert!(err.contains("the r1cs is over Goldilocks, and a wrap is set up over Bn128"), "{err}");
+        let err = plonk2pil::<Bn128>(&bn128, SetupKind::Compressor, &p1).unwrap_err().to_string();
+        assert!(err.contains("a compressor is not set up over Bn128"), "{err}");
+        let err = plonk2pil::<u64>(&goldilocks, SetupKind::Wrap, &p1).unwrap_err().to_string();
+        assert!(err.contains("a wrap is not set up over Goldilocks"), "{err}");
+        let p2 = PlonkOptions { hash: HashFamily::Poseidon2, ..Default::default() };
+        let err = plonk2pil::<Bn128>(&bn128, SetupKind::Wrap, &p2).unwrap_err().to_string();
+        assert!(err.contains("there is no BN128 wrap of Poseidon2"), "{err}");
 
-        let res = plonk2pil::<Bn128>(&bn128, "wrap", &wrap).unwrap();
+        let res = plonk2pil::<Bn128>(&bn128, SetupKind::Wrap, &p1).unwrap();
         let exec = ExecFile::<Bn128>::from_words(&res.exec).unwrap_or_else(|e| panic!("{e}"));
         assert_eq!(exec.layout.version(), EXEC_FORMAT_VERSION_WIDE, "a BN128 exec is version 3");
         assert_eq!(exec.layout.n_vars(), Some(4), "the r1cs's nVars, which the additions are numbered from");
         assert!(res.pil_str.contains("require \"poseidon_bn128/wrap.pil\";"), "{}", res.pil_str);
     }
 
-    /// A Goldilocks r1cs with a gate of the BN128 wrap is refused: the STARK families would leave
+    /// A Goldilocks r1cs with a gate of the BN128 wraps is refused: the STARK layouts would leave
     /// it unplaced.
     #[test]
     fn a_goldilocks_r1cs_with_a_wrap_gate_is_refused() {
         let mut r1cs = read_r1cs_from_bytes::<Goldilocks>(&build_simple_r1cs_bytes()).unwrap();
         r1cs.custom_gates.push(r1cs::types::CustomGate { template_name: "PoseidonT".into(), parameters: vec![] });
-        let err = packers::refuse_bn128_gates(&r1cs).unwrap_err().to_string();
-        assert!(err.contains("uses PoseidonT, a gate of the PoseidonBN128 family"), "{err}");
+        let err = gen::refuse_bn128_gates(&r1cs).unwrap_err().to_string();
+        assert!(err.contains("uses PoseidonT, a gate of the BN128 wraps"), "{err}");
     }
 
     /// One map entry, by row and column, out of the packed u32 pairs.
     fn map_entry(exec: &[u64], map_at: usize, map_cols: usize, row: usize, col: usize) -> u32 {
         let entry = row * map_cols + col;
         (exec[map_at + entry / 2] >> (32 * (entry % 2))) as u32
-    }
-
-    #[test]
-    fn test_write_exec_file_roundtrip() {
-        let adds: Vec<PlonkAddition<Goldilocks>> = vec![
-            PlonkAddition { wires: [10, 20], coeffs: [Goldilocks::new(30), Goldilocks::new(40)] },
-            PlonkAddition { wires: [50, 60], coeffs: [Goldilocks::new(70), Goldilocks::new(80)] },
-        ];
-        let s_map: Vec<Vec<u32>> = vec![vec![1, 2, 3, 4], vec![5, 6, 7, 8]];
-
-        let exec = write_exec_file(N_VARS, &adds, &s_map, &[], 0);
-
-        assert_eq!(exec[0], EXEC_MAGIC | EXEC_FORMAT_VERSION, "magic and version lead");
-        assert_eq!(exec[1], 2, "2 additions");
-        assert_eq!(exec[2], 4, "4 mapped rows");
-        assert_eq!(exec[3], 2, "2 mapped columns");
-
-        // First addition
-        assert_eq!(exec[4], 10);
-        assert_eq!(exec[5], 20);
-        assert_eq!(exec[6], 30);
-        assert_eq!(exec[7], 40);
-
-        // Second addition
-        assert_eq!(exec[8], 50);
-        assert_eq!(exec[9], 60);
-        assert_eq!(exec[10], 70);
-        assert_eq!(exec[11], 80);
-
-        // The map is row-major over (row, col), transposing the column-major s_map.
-        let map_at = EXEC_HEADER_WORDS + adds.len() * 4;
-        for (col, column) in s_map.iter().enumerate() {
-            for (row, &signal) in column.iter().enumerate() {
-                assert_eq!(map_entry(&exec, map_at, 2, row, col), signal, "row {row} col {col}");
-            }
-        }
-
-        // Version 2 does not record the r1cs's wire count: its words are the same for any.
-        assert_eq!(write_exec_file(N_VARS + 1, &adds, &s_map, &[], 0), exec);
     }
 
     /// The map is stored at its live extent: the trailing rows the power-of-two padding leaves
@@ -671,42 +517,6 @@ mod tests {
             assert_eq!((exec[2], exec[3]), (0, 0));
             assert_eq!(exec.len(), EXEC_HEADER_WORDS + 3, "header plus an empty band section");
         }
-    }
-
-    /// The band section lands after the map, so a reader that stops at the map's end does not
-    /// see it and one that knows about it finds it at the offset the header implies.
-    #[test]
-    fn write_exec_file_appends_bands_past_the_map() {
-        use r1cs::types::{GateBand, GateBandKind};
-        let adds = vec![PlonkAddition { wires: [10, 20], coeffs: [Goldilocks::ONE; 2] }];
-        // Tall enough to contain both bands: a band's boundary is always inside the live extent.
-        let s_map = vec![(1..=12).collect::<Vec<u32>>(), (13..=24).collect::<Vec<u32>>()];
-        let bands = vec![
-            GateBand { row: 0, kind: GateBandKind::Poseidon1CompressorCompression, payload: 0 },
-            // A non-zero payload, so the triple stride is actually exercised: this is where BLAKE3
-            // puts a block's `flags`, which the expander cannot read off the witness trace.
-            GateBand { row: 10, kind: GateBandKind::Poseidon1CompressorSponge, payload: 0xB3 },
-        ];
-
-        let without = write_exec_file(N_VARS, &adds, &s_map, &[], 0);
-        let with = write_exec_file(N_VARS, &adds, &s_map, &bands, 0);
-
-        // 12 rows x 2 cols = 24 entries = 12 words.
-        let prefix = EXEC_HEADER_WORDS + adds.len() * 4 + 12;
-        assert_eq!(with[..prefix], without[..prefix], "the map must not move");
-        assert_eq!(with[prefix], GATE_BAND_FORMAT_VERSION, "section version leads");
-        assert_eq!(with[prefix + 1], 2, "band count");
-        assert_eq!(with[prefix + 2], 0, "the per-air aux word");
-        // three words per band: row, kind, payload
-        assert_eq!(with[prefix + 3], 0);
-        assert_eq!(with[prefix + 4], GateBandKind::Poseidon1CompressorCompression as u64);
-        assert_eq!(with[prefix + 5], 0, "payload of the first band");
-        assert_eq!(with[prefix + 6], 10);
-        assert_eq!(with[prefix + 7], GateBandKind::Poseidon1CompressorSponge as u64);
-        assert_eq!(with[prefix + 8], 0xB3, "payload of the second band");
-        assert_eq!(with.len(), prefix + 3 + bands.len() * 3, "no slack past the last band");
-        assert_eq!(without[prefix], GATE_BAND_FORMAT_VERSION);
-        assert_eq!(without[prefix + 1], 0, "no bands");
     }
 
     /// Trimming must never drop a row a gate band needs: the prover would gather zeros for that
@@ -762,10 +572,17 @@ mod tests {
 
     #[test]
     fn a_goldilocks_exec_reads_back_as_written() {
-        assert_exec_round_trips(&[
+        let adds = [
             PlonkAddition { wires: [10, 20], coeffs: [Goldilocks::new(30), Goldilocks::NEG_ONE] },
             PlonkAddition { wires: [0, u32::MAX], coeffs: [Goldilocks::ZERO, Goldilocks::new(1 << 63)] },
-        ]);
+        ];
+        assert_exec_round_trips(&adds);
+        // version 2 does not record the r1cs's wire count: its words are the same for any
+        let (s_map, bands, aux) = exec_fixture();
+        assert_eq!(
+            write_exec_file(N_VARS + 1, &adds, &s_map, &bands, aux),
+            write_exec_file(N_VARS, &adds, &s_map, &bands, aux)
+        );
     }
 
     /// Coefficients no word holds come back whole.
@@ -815,45 +632,6 @@ mod tests {
         assert_eq!(gl[EXEC_HEADER_WORDS + 4..], bn[EXEC_WIDE_HEADER_WORDS + 10..]);
     }
 
-    /// No prefix of a written exec reads, nor does one with a word too many: the reader never runs
-    /// off a buffer, nor ignores what it does not account for.
-    #[test]
-    fn a_truncated_or_padded_exec_is_refused() {
-        let (s_map, bands, aux) = exec_fixture();
-        let exec = write_exec_file(
-            N_VARS,
-            &[PlonkAddition { wires: [1, 2], coeffs: [Bn128::NEG_ONE; 2] }],
-            &s_map,
-            &bands,
-            aux,
-        );
-        for len in 0..exec.len() {
-            assert!(ExecFile::<Bn128>::from_words(&exec[..len]).is_err(), "{len} of {} words", exec.len());
-        }
-        let mut padded = exec;
-        padded.push(0);
-        assert!(ExecFile::<Bn128>::from_words(&padded).is_err());
-    }
-
-    /// An exec reads only in the field it was written over.
-    #[test]
-    fn an_exec_is_refused_in_a_field_it_is_not_over() {
-        let s_map = [vec![1u32]];
-        let gl =
-            write_exec_file(N_VARS, &[PlonkAddition { wires: [1, 2], coeffs: [Goldilocks::ONE; 2] }], &s_map, &[], 0);
-        let bn = write_exec_file(N_VARS, &[PlonkAddition { wires: [1, 2], coeffs: [Bn128::ONE; 2] }], &s_map, &[], 0);
-        let err = ExecFile::<Bn128>::from_words(&gl).unwrap_err().to_string();
-        assert!(
-            err.contains("version 2 with 1-word coefficients, not version 3 with the 4-word ones of BN128"),
-            "{err}"
-        );
-        let err = ExecFile::<Goldilocks>::from_words(&bn).unwrap_err().to_string();
-        assert!(
-            err.contains("version 3 with 4-word coefficients, not version 2 with the 1-word ones of Goldilocks"),
-            "{err}"
-        );
-    }
-
     /// The STARK prover's loader still takes the Goldilocks exec as it is, and refuses the BN128 one
     /// as what it is rather than as a key from another build. Both read back from disk with
     /// [`ExecFile::read`].
@@ -889,13 +667,5 @@ mod tests {
         );
         assert_eq!(read_gl.unwrap_or_else(|e| panic!("{e}")), ExecFile::from_words(&gl).unwrap());
         assert_eq!(read_bn.unwrap_or_else(|e| panic!("{e}")), ExecFile::from_words(&bn).unwrap());
-    }
-
-    #[test]
-    fn test_invalid_setup_type() {
-        let data = build_simple_r1cs_bytes();
-        let options = PlonkOptions::default();
-        let result = plonk2pil::<u64>(&data, "invalid_type", &options);
-        assert!(result.is_err());
     }
 }

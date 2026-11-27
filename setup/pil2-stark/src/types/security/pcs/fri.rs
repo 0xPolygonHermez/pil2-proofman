@@ -699,7 +699,7 @@ mod tests {
     #[test]
     fn every_generated_geometry_reaches_the_security_target() {
         use crate::types::stark_struct::{generate_stark_struct, StarkSettings};
-        for hash in ["Poseidon1", "Poseidon2", "blake3"] {
+        for hash in proofman_common::hash_family::HashFamily::ALL {
             for n_bits in [10usize, 17, 20, 24] {
                 for blowup in 1usize..=4 {
                     let settings = StarkSettings {
@@ -716,7 +716,7 @@ mod tests {
                         rate: 1.0 / (1u64 << blowup) as f64,
                         batching: Batching::Powers,
                         batch_size: 100,
-                        log_folding_factors: crate::output::stark_info::compute_log_folding_factors(&ss),
+                        log_folding_factors: ss.low_degree_test.log_folding_factors(),
                         max_grinding_bits_query: ss.low_degree_test.expect_fri("test").grinding_bits_queries as u64,
                         use_max_grinding_bits_query: true,
                         max_grinding_bits_non_query: 0,

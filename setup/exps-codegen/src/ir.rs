@@ -51,6 +51,10 @@ pub enum Operand {
         pos: u64,
         dim: u64,
     },
+    Pv {
+        pos: u64,
+        dim: u64,
+    },
     Pub {
         id: u64,
     },
@@ -79,6 +83,7 @@ impl Operand {
             | Operand::Custom { dim, .. }
             | Operand::Av { dim, .. }
             | Operand::Agv { dim, .. }
+            | Operand::Pv { dim, .. }
             | Operand::Tab { dim, .. }
             | Operand::Ch { dim, .. }
             | Operand::Pow { dim, .. } => *dim,
@@ -264,7 +269,7 @@ pub fn build_ir_expr(
             .ok_or_else(|| anyhow::anyhow!("opening point {prime} not in openingPoints"))?;
         Ok(opening[pos] * blowup)
     };
-    // av_pos / agv_pos: position of value `idx` in the flattened air(group)Values
+    // av/agv/pv pos: position of value `idx` in the flattened air(group)/proof values
     // buffer; stage-1 values occupy 1 slot, others 3.
     let pos_of = |idx: u64, map: &[crate::model::ValueMapEntry]| -> u64 {
         (0..idx as usize).map(|j| if map[j].stage.unwrap_or(1) != 1 { 3 } else { 1 }).sum()
@@ -300,6 +305,7 @@ pub fn build_ir_expr(
             "challenge" => Operand::Ch { base: 3 * src.id.unwrap(), dim: 3 },
             "airvalue" => Operand::Av { pos: pos_of(src.id.unwrap(), &stark_info.air_values_map), dim },
             "airgroupvalue" => Operand::Agv { pos: pos_of(src.id.unwrap(), &stark_info.airgroup_values_map), dim },
+            "proofvalue" => Operand::Pv { pos: pos_of(src.id.unwrap(), &stark_info.proof_values_map), dim },
             "public" => Operand::Pub { id: src.id.unwrap() },
             other => return Err(anyhow::Error::new(UnhandledOperand(other.to_string()))),
         })
@@ -557,4 +563,29 @@ pub fn plan_chunks_ops_pinned(
     }
 
     Ok(ChunkPlan { n_chunks, bounds, out_dim, def_idx, dim_of, cut_temps, total_slots, slot_index })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // FibonacciSquare's Q reads proof values: each lands at its packed slot (stage 1 = 1 element, else 3).
+    #[test]
+    fn proofvalue_operands_resolve_to_packed_slots() {
+        let si: StarkInfo = serde_json::from_str(
+            r#"{"openingPoints":[0],"starkStruct":{"nBits":2,"nBitsExt":3,"merkleTreeArity":4},"nConstants":0,
+                "nStages":1,"mapSectionsN":{},"cmPolsMap":[],"airValuesMap":[],
+                "proofValuesMap":[{"stage":2},{"stage":1}],"cExpId":0,"airgroupId":0,"airId":0}"#,
+        )
+        .unwrap();
+        let ei: ExpressionsInfo = serde_json::from_str(
+            r#"{"expressionsCode":[{"expId":0,"code":[{"op":"mul",
+                "src":[{"type":"proofvalue","id":1,"dim":1},{"type":"proofvalue","id":0,"dim":3}],
+                "dest":{"type":"tmp","id":0,"dim":3}}]}]}"#,
+        )
+        .unwrap();
+        let ir = build_ir(&si, &ei).unwrap();
+        assert_eq!(ir.instrs[0].a, Operand::Pv { pos: 3, dim: 1 });
+        assert_eq!(ir.instrs[0].b, Operand::Pv { pos: 0, dim: 3 });
+    }
 }

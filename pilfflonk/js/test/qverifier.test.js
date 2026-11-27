@@ -130,10 +130,6 @@ test("the code it refuses, with the reason", () => {
             () => [entry("copy", 0, ref("airgroupvalue", { id: 0 }))],
             /airgroupvalues do not exist/,
         ],
-        "the DEEP opening's xDivXSubXi": [
-            () => [entry("copy", 0, ref("xDivXSubXi", { id: 0 }))],
-            /"xDivXSubXi" is not one of the qVerifier's/,
-        ],
         "a column, which the verifier reads as an eval": [
             () => [entry("copy", 0, ref("cm", { id: 0 }))],
             /"cm" is not one/,

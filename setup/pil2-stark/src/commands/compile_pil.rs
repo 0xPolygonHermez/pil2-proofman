@@ -8,7 +8,7 @@ use std::path::Path;
 
 use anyhow::{bail, Context, Result};
 
-use crate::proving_key::recursive::ensure_pil2com_exec;
+use crate::proving_key::node_deps::ensure_pil2com_exec;
 
 /// Options for the `compile-pil` subcommand.
 #[derive(Default)]

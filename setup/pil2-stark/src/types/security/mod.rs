@@ -1,3 +1,4 @@
+pub mod check;
 pub mod regimes;
 pub mod pcs;
 

@@ -9,6 +9,40 @@ use std::process::Command;
 
 const MAJOR_ARCHS: &[u32] = &[80, 86, 89, 90, 100, 120];
 
+/// nvcc rejected a generated TU. Never a skip: the run fails with the full log.
+#[derive(Debug)]
+pub struct CompileFailed(pub String);
+
+impl std::fmt::Display for CompileFailed {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for CompileFailed {}
+
+/// The `-I` search path, in order: the work dir (gen_common.cuh), sppark/blst, then every
+/// directory under `src` like the Makefile's `find src -type d`, then the system dirs.
+pub(crate) fn include_path(stark_dir: &Path, work_dir: &Path) -> Vec<PathBuf> {
+    let mut out = vec![work_dir.to_path_buf()];
+    out.extend(
+        ["external/sppark/ff", "external/sppark", "external/sppark/util", "external/sppark/ec", "external/blst/src"]
+            .map(|d| stark_dir.join(d)),
+    );
+    let mut dirs = Vec::new();
+    let mut stack = vec![stark_dir.join("src")];
+    while let Some(dir) = stack.pop() {
+        if let Ok(entries) = std::fs::read_dir(&dir) {
+            stack.extend(entries.flatten().map(|e| e.path()).filter(|p| p.is_dir()));
+        }
+        dirs.push(dir);
+    }
+    dirs.sort();
+    out.extend(dirs);
+    out.extend(["/usr/include", "/usr/local/include", "/usr/lib/x86_64-linux-gnu/openmpi/include"].map(PathBuf::from));
+    out
+}
+
 pub struct Toolchain {
     pub arch_list: Vec<u32>,
     /// `-gencode …` flags (one pair per arch + forward-PTX), used by both compile and link.
@@ -144,46 +178,8 @@ impl Toolchain {
             gencode.push(format!("arch=compute_{p},code=compute_{p}"));
         }
 
-        let src = stark_dir.join("src");
-        let s = |rel: &str| format!("-I{}", src.join(rel).display());
-        let k = |rel: &str| format!("-I{}", stark_dir.join(rel).display());
-        let mut incs: Vec<String> = vec![
-            format!("-I{}", work_dir.display()),
-            k("external/sppark/ff"),
-            k("external/sppark"),
-            k("external/sppark/util"),
-            k("external/sppark/ec"),
-            k("external/blst/src"),
-            format!("-I{}", src.display()),
-            s("utils"),
-            s("goldilocks"),
-            s("goldilocks/utils"),
-            s("goldilocks/src"),
-            s("binfile"),
-            s("XKCP"),
-            s("bctree"),
-            s("config"),
-            s("api"),
-            s("bn128"),
-            s("bn128/src"),
-            s("bn128/src/ffiasm"),
-            s("bn128/src/poseidon"),
-            s("bn128/src/msm"),
-            s("bn128/src/ntt"),
-            s("bn128/src/poseidon2"),
-            s("bn128/src/curve"),
-            s("starkpil"),
-            s("starkpil/expressions"),
-            s("starkpil/transcript"),
-            s("starkpil/merkleTree"),
-            s("starkpil/fri"),
-            s("rapidsnark"),
-            s("rapidsnark/polynomial"),
-            s("fflonk_setup"),
-            "-I/usr/include".into(),
-            "-I/usr/local/include".into(),
-            "-I/usr/lib/x86_64-linux-gnu/openmpi/include".into(),
-        ];
+        let mut incs: Vec<String> =
+            include_path(&stark_dir, work_dir).iter().map(|d| format!("-I{}", d.display())).collect();
 
         let defs: Vec<String> = [
             "-D__USE_CUDA__",
@@ -219,15 +215,24 @@ impl Toolchain {
     }
 
     /// Compile one TU to an object. `extra_inc` (the autotuner probe dir) is
-    /// searched in addition to the standard includes. Returns (ok, stderr).
-    pub fn compile_tu(&self, cuf: &Path, obj: &Path, extra_inc: Option<&Path>) -> Result<(bool, String)> {
+    /// searched in addition to the standard includes. A rejected TU is a
+    /// generator or toolchain bug: `CompileFailed` with nvcc's full log.
+    pub fn compile_tu(&self, cuf: &Path, obj: &Path, extra_inc: Option<&Path>) -> Result<()> {
         let mut cmd = Command::new(cuda_bin("nvcc"));
         cmd.arg("-c").args(&self.compile_flags).arg(cuf).arg("-o").arg(obj);
         if let Some(inc) = extra_inc {
             cmd.arg(format!("-I{}", inc.display()));
         }
         let out = cmd.output().context("failed to spawn nvcc")?;
-        Ok((out.status.success(), String::from_utf8_lossy(&out.stderr).into_owned()))
+        if !out.status.success() {
+            return Err(CompileFailed(format!(
+                "nvcc failed for {}:\n{}",
+                cuf.display(),
+                String::from_utf8_lossy(&out.stderr)
+            ))
+            .into());
+        }
+        Ok(())
     }
 
     /// Link pre-compiled objects into a shared library (uses only gencode).
@@ -270,3 +275,50 @@ impl Toolchain {
 /// the host's CUDA toolkit major, fixing `dlopen failed: libcudart.so.N`
 /// errors. `--strip-all` offsets the ~700KB the static runtime adds.
 const LINK_FLAGS: &[&str] = &["-cudart", "static", "-Xlinker", "--strip-all", "-o"];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::{BTreeSet, HashSet};
+
+    /// Every quoted `#include` reachable from what a generated TU includes resolves against
+    /// `include_path` (all `#if` branches taken): a missing `-I` fails here, without nvcc.
+    #[test]
+    fn generated_tu_includes_resolve() {
+        let stark_dir = proofman_starks_src::source_dir();
+        let work = std::env::temp_dir();
+        let path = include_path(&stark_dir, &work);
+        let quoted = |text: &str| -> Vec<String> {
+            text.lines()
+                .filter_map(|l| l.trim_start().strip_prefix('#'))
+                .filter_map(|l| l.trim_start().strip_prefix("include"))
+                .filter_map(|l| l.trim().strip_prefix('"').and_then(|r| r.split('"').next()).map(str::to_string))
+                .collect()
+        };
+        let mut seen: HashSet<PathBuf> = HashSet::new();
+        let mut missing: BTreeSet<String> = BTreeSet::new();
+        let mut stack: Vec<(Option<PathBuf>, String)> = [crate::emit::COMMON_CUH, crate::bn128::HEADER]
+            .iter()
+            .flat_map(|t| quoted(t))
+            .filter(|inc| inc != "gen_common.cuh")
+            .map(|inc| (None, inc))
+            .collect();
+        while let Some((from, inc)) = stack.pop() {
+            let local = from.as_ref().and_then(|f| f.parent()).map(|d| d.join(&inc));
+            let Some(hit) = local.into_iter().chain(path.iter().map(|d| d.join(&inc))).find(|p| p.is_file()) else {
+                missing.insert(format!(
+                    "{inc} (from {})",
+                    from.map_or("generated TU".into(), |f| f.display().to_string())
+                ));
+                continue;
+            };
+            let hit = hit.canonicalize().unwrap();
+            if seen.insert(hit.clone()) {
+                let text = std::fs::read_to_string(&hit).unwrap();
+                stack.extend(quoted(&text).into_iter().map(|i| (Some(hit.clone()), i)));
+            }
+        }
+        assert!(seen.len() > 20, "closure suspiciously small: {}", seen.len());
+        assert!(missing.is_empty(), "unresolved includes:\n{}", missing.into_iter().collect::<Vec<_>>().join("\n"));
+    }
+}

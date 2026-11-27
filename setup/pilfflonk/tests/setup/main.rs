@@ -14,6 +14,7 @@
 mod ptau;
 
 mod command;
+mod core_path;
 mod common;
 mod digest;
 mod external_fixed;

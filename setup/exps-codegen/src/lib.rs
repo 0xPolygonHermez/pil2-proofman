@@ -33,7 +33,7 @@ mod model;
 mod opt;
 mod toolchain;
 
-pub use toolchain::nvcc_present;
+pub use toolchain::{nvcc_present, CompileFailed};
 
 use anyhow::{Context, Result};
 use ir::{plan_chunks, UnhandledOperand};
@@ -168,13 +168,14 @@ fn make_sym(si: &StarkInfo, phase: &str) -> String {
     format!("{phase}_a{}_{}_b{}_e{}", si.airgroup_id, si.air_id, si.stark_struct.n_bits, si.c_exp_id)
 }
 
+fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> std::result::Result<T, String> {
+    let bytes = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    serde_json::from_slice(&bytes).map_err(|e| format!("{}: {e}", path.display()))
+}
+
 /// Parse one starkinfo + sibling expressionsinfo into a Candidate, or return a
-/// skip reason (string), or `None` if the file pair isn't a codegen target.
-fn load_candidate(
-    stark_info_path: &Path,
-    root: &Path,
-    cap: usize,
-) -> Result<Option<Candidate>, Option<(String, String)>> {
+/// skip reason, or `None` if there is no expressionsinfo (not a codegen target).
+fn load_candidate(stark_info_path: &Path, root: &Path, cap: usize) -> Result<Candidate, Option<(String, String)>> {
     let air_dir = stark_info_path.parent().unwrap();
     let fname = stark_info_path.file_name().unwrap().to_string_lossy();
     let base = fname.strip_suffix(".starkinfo.json").unwrap().to_string();
@@ -184,20 +185,12 @@ fn load_candidate(
     }
     let name = air_dir.strip_prefix(root).unwrap_or(air_dir).to_string_lossy().to_string();
 
-    let stark_info: StarkInfo = match std::fs::read(stark_info_path).ok().and_then(|b| serde_json::from_slice(&b).ok())
-    {
-        Some(si) => si,
-        None => return Err(None), // unparseable / not a full AIR starkinfo
-    };
-    let expr_info: ExpressionsInfo =
-        match std::fs::read(&expr_info_path).ok().and_then(|b| serde_json::from_slice(&b).ok()) {
-            Some(ei) => ei,
-            None => return Err(None),
-        };
+    let stark_info: StarkInfo = read_json(stark_info_path).map_err(|e| Some((name.clone(), e)))?;
+    let expr_info: ExpressionsInfo = read_json(&expr_info_path).map_err(|e| Some((name.clone(), e)))?;
 
     let cexp = stark_info.c_exp_id;
     let Some(code) = expr_info.expressions_code.iter().find(|e| e.exp_id == cexp) else {
-        return Err(None); // cExpId not in expressionsCode
+        return Err(Some((name, format!("cExpId {cexp} not in expressionsCode"))));
     };
     let n_ops = code.code.len();
     let nbits = stark_info.stark_struct.n_bits;
@@ -205,7 +198,7 @@ fn load_candidate(
         return Err(Some((name, format!("{n_ops} ops > CAP"))));
     }
     let sym = make_sym(&stark_info, &proof_phase(air_dir));
-    Ok(Some(Candidate { stark_info, expr_info, sym, nbits, cexp, name, n_ops, base }))
+    Ok(Candidate { stark_info, expr_info, sym, nbits, cexp, name, n_ops, base })
 }
 
 /// Generate every AIR's `.exps.so` under `proving_key`. Returns a summary of
@@ -226,7 +219,7 @@ pub fn generate_all(proving_key: &Path, cfg: &GenConfig) -> Result<GenSummary> {
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
     for si_path in find_starkinfos(proving_key) {
         match load_candidate(&si_path, proving_key, cfg.cap) {
-            Ok(Some(c)) => {
+            Ok(c) => {
                 placements.push(Placement {
                     name: c.name.clone(),
                     base: c.base.clone(),
@@ -237,7 +230,6 @@ pub fn generate_all(proving_key: &Path, cfg: &GenConfig) -> Result<GenSummary> {
                     candidates.push(c);
                 }
             }
-            Ok(None) => {}
             Err(Some(skip)) => skipped.push(skip),
             Err(None) => {}
         }
@@ -249,12 +241,28 @@ pub fn generate_all(proving_key: &Path, cfg: &GenConfig) -> Result<GenSummary> {
         match generate_pilfflonk(&tc, work.path(), &info, cfg) {
             Ok(Some(_)) => summary.placed += 1,
             Ok(None) => {}
+            Err(e) if e.downcast_ref::<CompileFailed>().is_some() => return Err(e),
             Err(e) => skipped.push((name, format!("pilfflonk: {e:#}"))),
         }
     }
     summary.skipped.extend(skipped);
     summary.skipped.sort();
     print_summary(&summary, cfg);
+    Ok(summary)
+}
+
+/// [`generate_all`], logging each skip (the AIR stays on the interpreter) and the totals under `what`.
+pub fn generate_all_logged(proving_key: &Path, cfg: &GenConfig, what: &str) -> Result<GenSummary> {
+    let summary = generate_all(proving_key, cfg)?;
+    for (air, why) in &summary.skipped {
+        tracing::warn!("{what} of {air} skipped (it stays on the interpreter): {why}");
+    }
+    tracing::info!(
+        "{what}: {} generated -> {} .exps.so ({} skipped)",
+        summary.generated.len(),
+        summary.placed,
+        summary.skipped.len()
+    );
     Ok(summary)
 }
 
@@ -273,10 +281,9 @@ pub fn generate_air(air_dir: &Path, cfg: &GenConfig) -> Result<PathBuf> {
 
     let root = air_dir;
     let candidate = match load_candidate(&si_path, root, cfg.cap) {
-        Ok(Some(c)) => c,
-        Ok(None) => anyhow::bail!("{} is not a codegen target", air_dir.display()),
+        Ok(c) => c,
         Err(Some((_, why))) => anyhow::bail!("skipped: {why}"),
-        Err(None) => anyhow::bail!("{} missing/invalid expressionsinfo", air_dir.display()),
+        Err(None) => anyhow::bail!("{} has no expressionsinfo", air_dir.display()),
     };
     let placement = Placement {
         name: candidate.name.clone(),
@@ -341,10 +348,7 @@ fn generate_pilfflonk(tc: &Toolchain, work: &Path, info_path: &Path, cfg: &GenCo
     }
     let obj = cu.with_extension("o");
     let t0 = std::time::Instant::now();
-    let (ok, log) = tc.compile_tu(&cu, &obj, Some(work))?;
-    if !ok {
-        anyhow::bail!("nvcc failed for {}:\n{log}", cu.display());
-    }
+    tc.compile_tu(&cu, &obj, Some(work))?;
     eprintln!(
         "[exps-codegen] {sym}: compiled in {:.1}s, stack {} bytes",
         t0.elapsed().as_secs_f64(),
@@ -480,9 +484,8 @@ fn run_pipeline(
                 }
                 let verdict = match (pow, tuned) {
                     (Err(e), _) | (_, Err(e)) => return Some(Err(e)),
-                    (Ok(Some(why)), _) => Err(why),
-                    (Ok(None), Ok(Some(ck))) => Ok(ck),
-                    (Ok(None), Ok(None)) => {
+                    (Ok(()), Ok(Some(ck))) => Ok(ck),
+                    (Ok(()), Ok(None)) => {
                         Err(format!("{} ops: still spills at chunk {}", c.n_ops, autotune::q_chunk_floor(c.n_ops)))
                     }
                 };
@@ -577,23 +580,15 @@ fn run_pipeline(
         // outer parallel bridges).
         let par = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(8);
         for batch in jobs.chunks(par) {
-            let errs: Vec<String> = std::thread::scope(|scope| {
+            let errs: Vec<anyhow::Error> = std::thread::scope(|scope| {
                 let handles: Vec<_> = batch
                     .iter()
-                    .map(|(cu, obj)| {
-                        scope.spawn(move || -> Option<String> {
-                            match tc.compile_tu(cu, obj, Some(work)) {
-                                Ok((true, _)) => None,
-                                Ok((false, log)) => Some(format!("nvcc failed for {}: {log}", cu.display())),
-                                Err(e) => Some(format!("nvcc spawn failed for {}: {e}", cu.display())),
-                            }
-                        })
-                    })
+                    .map(|(cu, obj)| scope.spawn(move || tc.compile_tu(cu, obj, Some(work)).err()))
                     .collect();
                 handles.into_iter().filter_map(|h| h.join().ok().flatten()).collect()
             });
             if let Some(e) = errs.into_iter().next() {
-                anyhow::bail!(e);
+                return Err(e);
             }
         }
     }
@@ -728,10 +723,11 @@ fn build_exprs_tus(
                 .par_iter()
                 .map(|cu| -> Result<_> {
                     let obj = cu.with_extension("o");
-                    match tc.compile_tu(cu, &obj, Some(work))? {
-                        (true, _) if read_usage => autotune::resource_usage(&obj),
-                        (true, _) => Ok(Default::default()),
-                        (false, log) => anyhow::bail!("nvcc failed for {}: {log}", cu.display()),
+                    tc.compile_tu(cu, &obj, Some(work))?;
+                    if read_usage {
+                        autotune::resource_usage(&obj)
+                    } else {
+                        Ok(Default::default())
                     }
                 })
                 .collect::<Result<Vec<_>>>()?;
@@ -789,25 +785,14 @@ fn build_exprs_tus(
 }
 
 /// Emit the per-launch table TU of one AIR (if it has one) into `work` and compile it.
-/// `Ok(None)` = compiled or not needed; `Ok(Some(why))` = nvcc rejected it (skip the AIR).
-fn build_pow_tu(tc: &Toolchain, work: &Path, sym: &str, ir: &ir::Ir) -> Result<Option<String>> {
-    let files = emit::emit_pow_tu(sym, ir);
-    let mut cus: Vec<PathBuf> = Vec::with_capacity(files.len());
-    for (fname, text) in &files {
+fn build_pow_tu(tc: &Toolchain, work: &Path, sym: &str, ir: &ir::Ir) -> Result<()> {
+    let mut cus: Vec<PathBuf> = Vec::new();
+    for (fname, text) in emit::emit_pow_tu(sym, ir) {
         let cu = work.join(fname);
         std::fs::write(&cu, text)?;
         cus.push(cu);
     }
-    let results: Vec<(bool, String)> =
-        cus.par_iter().map(|cu| tc.compile_tu(cu, &cu.with_extension("o"), Some(work))).collect::<Result<Vec<_>>>()?;
-    match results.iter().find(|(ok, _)| !ok) {
-        None => Ok(None),
-        Some((_, log)) => {
-            let last = log.trim().lines().last().unwrap_or("").to_string();
-            eprintln!("  [pow] {sym} table TU COMPILE FAILED: {last}");
-            Ok(Some(format!("table TU compile failed: {last}")))
-        }
-    }
+    cus.par_iter().try_for_each(|cu| tc.compile_tu(cu, &cu.with_extension("o"), Some(work)))
 }
 
 /// `gen_<sym>.<ext>` + `gen_<sym>_pow*.<ext>` (table kernel and its slices) + `gen_<sym>_c*.<ext>`

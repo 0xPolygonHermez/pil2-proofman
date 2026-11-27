@@ -1,7 +1,7 @@
 pragma circom 2.1.0;
 
 /*
-    Multiplexor used in recursive2
+    A multiplexer of two constant arrays by a binary selector.
 */
 template MultiMux1(n) { 
     signal input c[2][n];  // Constants
@@ -15,10 +15,3 @@ template MultiMux1(n) {
     }
 }
 
-template Mux1() { 
-    signal input c[2];  // Constants
-    signal input s;   // Selector
-    signal output out;
-
-    out <== (c[1] - c[0])*s + c[0];
-}

@@ -512,6 +512,20 @@ public:
         return pointer;
     }
 
+    // A key of no words is no input of the final circuit (proof_inputs): drop it.
+    static bool hasWords(const json &v) {
+        if (!v.is_array()) return true;
+        for (const auto &e : v) if (hasWords(e)) return true;
+        return false;
+    }
+
+    static json dropEmpty(json j) {
+        for (auto it = j.begin(); it != j.end();) {
+            if (hasWords(*it)) ++it; else it = j.erase(it);
+        }
+        return j;
+    }
+
     json proof2json()
     {
         json j = json::object();
@@ -731,7 +745,7 @@ public:
                 }
             }
 
-            return j;
+            return dropEmpty(j);
         }
 
         for(uint64_t step = 1; step < starkInfo.starkStruct.logDomainSizes.size(); ++step) {
@@ -779,7 +793,7 @@ public:
 
         j["nonce"] = std::to_string(nonce);
         
-        return j;
+        return dropEmpty(j);
     }
 };
 

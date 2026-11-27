@@ -47,7 +47,7 @@ enum OpCode : uint32_t { OP_ADD = 0, OP_SUB = 1, OP_MUL = 2, OP_SUB_SWAP = 3 };
 // | tmp() | temporary | its id | 0 |
 // | tmp() + 2 … tmp() + 8 | public, number, air value, proof value, airgroup value, challenge, evaluation | index | 0 |
 //
-// tmp() + 1 (the STARK's tmp3), nStages + 3 (xDivXSubXi) and Zi with arg1 0 (x) are never written.
+// tmp() + 1 (the STARK's tmp3), nStages + 3 (reserved) and Zi with arg1 0 (x) are never written.
 // As in the STARK, a source of type > tmp() + 1 is the same on every point.
 struct OperandTypes {
     uint32_t nStages;

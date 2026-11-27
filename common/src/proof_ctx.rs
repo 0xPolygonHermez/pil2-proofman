@@ -460,7 +460,7 @@ impl<F: PrimeField64> ProofCtx<F> {
         let n_proof_values = global_info
             .proof_values_map
             .as_ref()
-            .map(|map| map.iter().filter(|entry| entry.stage == 1).count())
+            .map(|map| map.iter().map(|entry| if entry.stage == 1 { 1 } else { 3 }).sum())
             .unwrap_or(0);
         let n_challenges = global_info.n_challenges.iter().sum::<usize>();
 
@@ -1242,7 +1242,7 @@ impl<F: PrimeField64> ProofCtx<F> {
         global_challenge_guard[1] = global_challenge[1];
         global_challenge_guard[2] = global_challenge[2];
 
-        let mut transcript = new_transcript::<F>(&self.global_info.hash);
+        let mut transcript = new_transcript::<F>(self.global_info.hash.as_str());
 
         transcript.put(global_challenge);
         let mut challenges_guard = self.challenges.values.write().unwrap();
@@ -1335,7 +1335,6 @@ impl<F: PrimeField64> ProofCtx<F> {
             airgroup_values: air_instance.get_airgroup_values_ptr(),
             airvalues: air_instance.get_airvalues_ptr(),
             evals: air_instance.get_evals_ptr(),
-            xdivxsub: std::ptr::null_mut(),
             p_const_pols: const_pols,
             p_const_tree: std::ptr::null_mut(),
             custom_commits_fixed: air_instance.get_custom_commits_fixed_ptr(),
@@ -1804,7 +1803,7 @@ impl<F: PrimeField64> ProofCtx<F> {
         // Pad the unified buffer up to the snark floor (see GPU_UNIFIED_BUFFER_MIN_SNARK_BYTES),
         // taking only the layout's unused slack. Runs without a wrapper skip it, and so do blake3
         // keys': their final SNARK carves no BN128 recursivef nor rapidsnark prover.
-        let unified_buffer_pad_area: u64 = if gpu && final_snark && self.global_info.hash != "blake3" {
+        let unified_buffer_pad_area: u64 = if gpu && final_snark && !self.global_info.hash.is_blake3() {
             let below_aux_bytes = (total_const_area + prefetch_region_area) * 8 + late_region_bytes;
             let above_aux_elems = aux_trace_sizes.iter().sum::<u64>()
                 + if self.phase_b {

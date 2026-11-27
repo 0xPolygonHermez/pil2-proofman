@@ -4,7 +4,7 @@
 //! Each rule mirrors the verifier piece its test names. The transcript term is the standalone
 //! (`challengesVadcop == false`) sequence, so an aggregated air's is ~1-3% lower.
 
-use proofman_common::hash_family::{sponge_rate, transcript_out_size, transcript_pending_size, DIGEST_SIZE};
+use proofman_common::hash_family::{sponge_rate, transcript_out_size, transcript_pending_size, HashFamily, DIGEST_SIZE};
 
 /// Goldilocks words in one BLAKE3 block: 64 bytes at 8 bytes each. The transcript's absorb
 /// rate, since a streaming BLAKE3 compresses once per filled block.
@@ -91,9 +91,9 @@ pub fn blake3_compressions(bytes: u64) -> u64 {
 
 /// Permutations to hash `width` field elements into one digest. Poseidon absorbs `sponge_rate`
 /// per permutation (`linear_hash_seq`); Blake3 hashes the bytes in one call.
-pub fn leaf_hashes(family: &str, arity: u64, width: u64) -> u64 {
+pub fn leaf_hashes(family: HashFamily, arity: u64, width: u64) -> u64 {
     match family {
-        "blake3" => blake3_compressions(width * 8),
+        HashFamily::Blake3 => blake3_compressions(width * 8),
         // sponge_rate is 0 at arity 1 and underflows at 0; the trees support 2..=4.
         _ if arity < 2 => 0,
         _ => width.div_ceil(sponge_rate(arity)),
@@ -155,11 +155,11 @@ impl TranscriptSim {
     /// `Blake3Transcript::put` streams into a hasher that compresses one 64-byte block,
     /// which is eight Goldilocks words. Squeezing needs no adjustment:
     /// `transcript_out_size(2)` is already 8, the XOF block width.
-    pub fn new(family: &str, arity: u64) -> Self {
+    pub fn new(family: HashFamily, arity: u64) -> Self {
         Self {
             pending: 0,
             out: 0,
-            pending_size: if family == "blake3" { BLAKE3_ABSORB_WORDS } else { transcript_pending_size(arity) },
+            pending_size: if family.is_blake3() { BLAKE3_ABSORB_WORDS } else { transcript_pending_size(arity) },
             out_size: transcript_out_size(arity),
             hashes: 0,
         }
@@ -212,121 +212,8 @@ impl TranscriptSim {
     }
 }
 
-/// Build the geometry from what the stats pipeline already has. Everything family-dependent
-/// reaches it through `stark_struct` (the arity, and through it the FRI query count).
-pub fn geometry_for_family(
-    stark_struct: &crate::types::stark_struct::StarkStruct,
-    setup: &crate::types::pilout_info::SetupResult,
-    n_evals: usize,
-    fri_batch_size: usize,
-) -> VerifierGeometry {
-    use crate::types::security;
-    use crate::types::security::pcs::{Batching, Fri, FriConfig};
-    use crate::types::security::regimes::DecodingRegime;
-
-    use crate::types::stark_struct::LowDegreeTest;
-
-    // The arity the setup actually builds: only blake3 has it forced, so any other family can be
-    // configured away from the family default and the whole geometry moves with it.
-    let arity = stark_struct.merkle_tree_arity as u64;
-    let log_folding_factors = crate::output::stark_info::compute_log_folding_factors(stark_struct);
-
-    // Same configuration `build_starkinfo_output` uses: the query counts and grinding bits come
-    // out of the security analysis, not out of the settings.
-    let (n_queries, pow_bits, step_n_bits, stir_rounds, final_pol_size) = match &stark_struct.low_degree_test {
-        LowDegreeTest::Fri(fri_struct) => {
-            let fri = Fri::new(FriConfig {
-                field_size: security::goldilocks_safe_extension_field_size(),
-                trace_length: 1u32 << stark_struct.n_bits,
-                rate: 1.0 / (1u64 << (stark_struct.n_bits_ext - stark_struct.n_bits)) as f64,
-                batch_size: fri_batch_size.max(1) as u64,
-                batching: Batching::Powers,
-                log_folding_factors,
-                max_grinding_bits_query: fri_struct.grinding_bits_queries as u64,
-                use_max_grinding_bits_query: true,
-                max_grinding_bits_non_query: 0,
-                tree_arity: arity,
-                hash_size_bits: 256,
-                target_security_bits: 128,
-                regime: DecodingRegime::Jbr,
-            });
-            let sec = fri.security_params();
-            (
-                sec.n_queries,
-                sec.grinding_bits_query as u64,
-                fri_struct.log_domain_sizes.iter().map(|&b| b as u64).collect::<Vec<_>>(),
-                vec![],
-                1u64 << fri_struct.log_domain_sizes.last().copied().unwrap_or(0),
-            )
-        }
-        LowDegreeTest::Stir(stir_struct) => {
-            use crate::types::security::pcs::{Stir, StirConfig};
-            let stir = Stir::new(StirConfig {
-                field_size: security::goldilocks_safe_extension_field_size(),
-                trace_length: 1u32 << stark_struct.n_bits,
-                rate: 1.0 / (1u64 << (stark_struct.n_bits_ext - stark_struct.n_bits)) as f64,
-                batch_size: fri_batch_size.max(1) as u64,
-                batching: Batching::Powers,
-                log_folding_factors,
-                max_grinding_bits_queries: stir_struct.grinding_bits_queries.iter().map(|&g| g as u64).collect(),
-                use_max_grinding_bits_query: true,
-                max_grinding_bits_non_query: 0,
-                tree_arity: arity,
-                hash_size_bits: 256,
-                base_field_bits: 64,
-                target_security_bits: 128,
-                regime: DecodingRegime::Jbr,
-            });
-            let sec = stir.security_params().clone();
-            let rounds: Vec<StirRoundGeometry> = (0..stir_struct.num_iterations())
-                .map(|i| StirRoundGeometry {
-                    log_domain_size: stir_struct.log_domain_sizes[i] as u64,
-                    log_folding_factor: stir_struct.folding_factors[i] as u64,
-                    n_queries: sec.num_queries[i],
-                    grinding_bits: sec.grinding_bits_queries[i] as u64,
-                })
-                .collect();
-            (
-                sec.num_queries[0],
-                sec.grinding_bits_queries.iter().copied().max().unwrap_or(0) as u64,
-                vec![],
-                rounds,
-                // p travels as its d_M coefficients.
-                1u64 << stir_struct.log_degrees.last().copied().unwrap_or(0),
-            )
-        }
-    };
-
-    let width = |section: &str| setup.map_sections_n.get(section).copied().unwrap_or(0) as u64;
-
-    VerifierGeometry {
-        n_bits_ext: stark_struct.n_bits_ext as u64,
-        arity,
-        transcript_arity: stark_struct.transcript_arity as u64,
-        last_level_verification: stark_struct.last_level_verification as u64,
-        n_queries,
-        pow_bits,
-        hash_commits: stark_struct.hash_commits,
-        // One committed tree per stage, plus the quotient stage.
-        stage_widths: (1..=setup.n_stages + 1).map(|s| width(&format!("cm{s}"))).collect(),
-        n_constants: setup.n_constants as u64,
-        custom_commit_widths: setup.custom_commits.iter().map(|c| width(&format!("{}0", c.name))).collect(),
-        step_n_bits,
-        stir_rounds,
-        n_publics: setup.n_publics as u64,
-        n_evals: n_evals as u64,
-        stage_challenges: (2..=setup.n_stages + 1)
-            .map(|s| setup.challenges_map.iter().filter(|c| c.stage == Some(s)).count() as u64)
-            .collect(),
-        stage_air_values: (2..=setup.n_stages + 1)
-            .map(|s| setup.air_values_map.iter().filter(|v| v.stage == Some(s)).count() as u64)
-            .collect(),
-        final_pol_size,
-    }
-}
-
 /// Build the geometry from an as-built starkinfo (a proving key's `starkinfo.json`), using the
-/// solved query counts and grinding bits as written — unlike [`geometry_for_family`], nothing is
+/// solved query counts and grinding bits as written — nothing is
 /// re-derived, so post-solve adjustments (A2's query equalization) are reflected.
 pub fn geometry_from_stark_info(si: &proofman_common::StarkInfo) -> VerifierGeometry {
     use proofman_common::LowDegreeTest as Ldt;
@@ -472,7 +359,7 @@ pub fn geometry_from_starkinfo(si: &serde_json::Value) -> anyhow::Result<Verifie
 }
 
 /// Hashes the verifier performs for one air, under `family`.
-pub fn verifier_hashes(geom: &VerifierGeometry, family: &str) -> HashCounts {
+pub fn verifier_hashes(geom: &VerifierGeometry, family: HashFamily) -> HashCounts {
     let mut counts = HashCounts::default();
 
     // ── Query phase: every committed tree is opened at every query ──
@@ -529,7 +416,7 @@ const FIELD_EXTENSION: u64 = crate::types::FIELD_EXTENSION as u64;
 /// that the same calls in another order would not.
 ///
 /// This is the standalone path (`challengesVadcop == false`), which a proof of a single air takes.
-fn transcript_hashes(geom: &VerifierGeometry, family: &str) -> u64 {
+fn transcript_hashes(geom: &VerifierGeometry, family: HashFamily) -> u64 {
     let mut t = TranscriptSim::new(family, geom.transcript_arity);
     // A hashed commit absorbs a digest of the values rather than the values, and computing that
     // digest costs a sponge of its own (`transcriptHash.getState`).
@@ -633,10 +520,10 @@ pub struct Blake3RecursionFit {
 /// `blocks` is a LOWER bound (per-flags bucketing rounds up, and a plonk band can size the air
 /// instead), so `needs_compressor` is sound when set and soft when clear.
 pub fn blake3_recursion_fit(counts: &HashCounts, lanes: usize) -> Blake3RecursionFit {
-    use pil2_stark_recurser::plonk2pil::setups::blake3::blake3_max_blocks;
+    use pil2_stark_recurser::plonk2pil::gen::blocks::blake3_max_blocks;
 
     let blocks = (counts.total() as usize).div_ceil(lanes.max(1));
-    let capacity = blake3_max_blocks(1 << proofman_common::hash_family::recursive_bits_threshold("blake3"));
+    let capacity = blake3_max_blocks(1 << proofman_common::hash_family::recursive_bits_threshold(HashFamily::Blake3));
     Blake3RecursionFit { blocks, capacity, needs_compressor: blocks > capacity }
 }
 
@@ -666,18 +553,18 @@ mod tests {
     #[test]
     fn a_poseidon_leaf_costs_one_permutation_per_rate() {
         assert_eq!(sponge_rate(4), 12);
-        assert_eq!(leaf_hashes("Poseidon1", 4, 0), 0);
-        assert_eq!(leaf_hashes("Poseidon1", 4, 1), 1);
-        assert_eq!(leaf_hashes("Poseidon1", 4, 12), 1);
-        assert_eq!(leaf_hashes("Poseidon1", 4, 13), 2);
-        assert_eq!(leaf_hashes("Poseidon2", 4, 100), 9);
+        assert_eq!(leaf_hashes(HashFamily::Poseidon1, 4, 0), 0);
+        assert_eq!(leaf_hashes(HashFamily::Poseidon1, 4, 1), 1);
+        assert_eq!(leaf_hashes(HashFamily::Poseidon1, 4, 12), 1);
+        assert_eq!(leaf_hashes(HashFamily::Poseidon1, 4, 13), 2);
+        assert_eq!(leaf_hashes(HashFamily::Poseidon2, 4, 100), 9);
     }
 
     /// A Blake3 leaf hashes `width * 8` bytes in one call.
     #[test]
     fn a_blake3_leaf_hashes_the_whole_row() {
-        assert_eq!(leaf_hashes("blake3", 2, 8), 1); // 64 bytes
-        assert_eq!(leaf_hashes("blake3", 2, 128), 16); // 1024 bytes
+        assert_eq!(leaf_hashes(HashFamily::Blake3, 2, 8), 1); // 64 bytes
+        assert_eq!(leaf_hashes(HashFamily::Blake3, 2, 128), 16); // 1024 bytes
     }
 
     /// `ceil(log_arity(height))`, less the levels the verifier reads from the proof instead.
@@ -722,11 +609,11 @@ mod tests {
     /// something is squeezed out of it.
     #[test]
     fn the_transcript_permutes_when_its_buffer_fills() {
-        let mut t = TranscriptSim::new("Poseidon1", 4);
+        let mut t = TranscriptSim::new(HashFamily::Poseidon1, 4);
         t.put(12);
         assert_eq!(t.hashes, 1);
 
-        let mut t = TranscriptSim::new("Poseidon1", 4);
+        let mut t = TranscriptSim::new(HashFamily::Poseidon1, 4);
         t.put(5);
         assert_eq!(t.hashes, 0, "a partial buffer has not permuted yet");
         t.get_state();
@@ -737,13 +624,13 @@ mod tests {
     /// though the previous permutation left a full FIFO.
     #[test]
     fn an_absorb_invalidates_the_squeezed_output() {
-        let mut t = TranscriptSim::new("Poseidon1", 4);
+        let mut t = TranscriptSim::new(HashFamily::Poseidon1, 4);
         t.put(12); // permutes, FIFO now full
         assert_eq!(t.hashes, 1);
         t.get_field(); // 3 of 16 outputs, no new permutation needed
         assert_eq!(t.hashes, 1);
 
-        let mut t = TranscriptSim::new("Poseidon1", 4);
+        let mut t = TranscriptSim::new(HashFamily::Poseidon1, 4);
         t.put(12);
         t.put(1); // invalidates the FIFO
         t.get_field();
@@ -754,7 +641,7 @@ mod tests {
     /// permutations, not one.
     #[test]
     fn squeezing_past_the_fifo_permutes_again() {
-        let mut t = TranscriptSim::new("Poseidon1", 4);
+        let mut t = TranscriptSim::new(HashFamily::Poseidon1, 4);
         t.put(12);
         for _ in 0..5 {
             t.get_field(); // 15 elements
@@ -781,7 +668,7 @@ mod tests {
     /// path. Nothing else is configured, so the rest of the count is transcript only.
     #[test]
     fn the_query_phase_is_leaf_plus_path_per_tree() {
-        let counts = verifier_hashes(&minimal_geometry(), "Poseidon1");
+        let counts = verifier_hashes(&minimal_geometry(), HashFamily::Poseidon1);
         assert_eq!(counts.leaf, 2, "one leaf hash per tree");
         assert_eq!(counts.merkle, 4, "two levels per tree");
         assert_eq!(counts.fri, 0, "a single FRI step has no folding tree");
@@ -790,10 +677,10 @@ mod tests {
     /// Doubling the queries doubles the query phase and leaves the transcript alone.
     #[test]
     fn the_query_phase_scales_with_the_query_count() {
-        let one = verifier_hashes(&minimal_geometry(), "Poseidon1");
+        let one = verifier_hashes(&minimal_geometry(), HashFamily::Poseidon1);
         let mut geom = minimal_geometry();
         geom.n_queries = 8;
-        let eight = verifier_hashes(&geom, "Poseidon1");
+        let eight = verifier_hashes(&geom, HashFamily::Poseidon1);
 
         assert_eq!(eight.leaf, one.leaf * 8);
         assert_eq!(eight.merkle, one.merkle * 8);
@@ -804,7 +691,7 @@ mod tests {
     fn each_fri_step_adds_a_folding_tree() {
         let mut geom = minimal_geometry();
         geom.step_n_bits = vec![4, 2];
-        let counts = verifier_hashes(&geom, "Poseidon1");
+        let counts = verifier_hashes(&geom, HashFamily::Poseidon1);
 
         // The step-1 tree has 2^2 groups of 2^(4-2) = 4 extension elements: width 12, 1 level.
         assert_eq!(counts.fri, 2, "one leaf hash and one path level");
@@ -815,9 +702,9 @@ mod tests {
     #[test]
     fn grinding_costs_one_hash_whatever_the_threshold() {
         let mut geom = minimal_geometry();
-        assert_eq!(verifier_hashes(&geom, "Poseidon1").grinding, 1);
+        assert_eq!(verifier_hashes(&geom, HashFamily::Poseidon1).grinding, 1);
         geom.pow_bits = 20;
-        assert_eq!(verifier_hashes(&geom, "Poseidon1").grinding, 1);
+        assert_eq!(verifier_hashes(&geom, HashFamily::Poseidon1).grinding, 1);
     }
 
     /// Measured against an instrumented native verifier: 24183 for this Blake3 geometry.
@@ -842,7 +729,7 @@ mod tests {
             stage_air_values: vec![0, 0],
             final_pol_size: 1 << 5,
         };
-        let counts = verifier_hashes(&geom, "blake3");
+        let counts = verifier_hashes(&geom, HashFamily::Blake3);
 
         assert_eq!(counts.leaf, 6042, "114 queries x 53 compressions");
         assert_eq!(counts.merkle, 9132, "4 trees x 114 x 20 levels + 4 root reductions");
@@ -883,7 +770,7 @@ mod tests {
             final_pol_size: 1 << 5,
         };
 
-        for family in ["Poseidon1", "Poseidon2"] {
+        for family in [HashFamily::Poseidon1, HashFamily::Poseidon2] {
             let counts = verifier_hashes(&geom, family);
             assert_eq!(counts.leaf, 3990, "{family}");
             assert_eq!(counts.merkle, 4124, "{family}");
@@ -898,11 +785,11 @@ mod tests {
     /// own `stark_struct` does -- the caller must not pair a family with a foreign geometry.
     #[test]
     fn the_family_changes_the_count_not_just_the_price() {
-        let poseidon = verifier_hashes(&minimal_geometry(), "Poseidon1");
-        let blake3_arity = merkle_tree_arity("blake3");
+        let poseidon = verifier_hashes(&minimal_geometry(), HashFamily::Poseidon1);
+        let blake3_arity = merkle_tree_arity(HashFamily::Blake3);
         let blake3 = verifier_hashes(
             &VerifierGeometry { arity: blake3_arity, transcript_arity: blake3_arity, ..minimal_geometry() },
-            "blake3",
+            HashFamily::Blake3,
         );
 
         assert_eq!(blake3.merkle, poseidon.merkle * 2, "binary paths are twice as long");
@@ -924,7 +811,7 @@ mod tests {
     /// Same boundary `needs_compressor` tests, off the recurser's constants so a layout change moves both.
     #[test]
     fn the_block_boundary_is_the_n_bits_boundary() {
-        use pil2_stark_recurser::plonk2pil::setups::blake3::{BLAKE3_CLOCKS, CLOCK_WRAP_ROWS};
+        use pil2_stark_recurser::plonk2pil::gen::blocks::{BLAKE3_CLOCKS, CLOCK_WRAP_ROWS};
 
         let n_bits = |blocks: usize| (blocks * BLAKE3_CLOCKS + CLOCK_WRAP_ROWS).next_power_of_two().trailing_zeros();
         let capacity = blake3_recursion_fit(&HashCounts::default(), 4).capacity;
@@ -1023,6 +910,6 @@ mod starkinfo_geometry_tests {
         v["starkStruct"]["logDegrees"] = serde_json::json!([22, 18, 14, 10, 7, 4]);
         v["starkStruct"]["logDomainSizes"] = serde_json::json!([23, 19, 15, 11, 8, 5]);
         let g = geometry_from_starkinfo(&v).unwrap();
-        assert_eq!(verifier_hashes(&g, "blake3").total(), 34587, "FibonacciSquare's measured figure");
+        assert_eq!(verifier_hashes(&g, HashFamily::Blake3).total(), 34587, "FibonacciSquare's measured figure");
     }
 }

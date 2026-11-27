@@ -100,7 +100,6 @@ template BitReverse(nBits, eSize) {
     signal input in[n][eSize];
     signal output out[n][eSize];
 
-    var nDiv2 = n>>1;
     var ri;
     for (var i=0; i< n; i++) {
         ri = rev(i, nBits);
@@ -162,11 +161,11 @@ template Permute(nBits, nBitsWidth) {
     signal output out[n][3];
 
     var width = 1 << nBitsWidth;
-    var heigth = 1 << (nBits - nBitsWidth);
+    var height = 1 << (nBits - nBitsWidth);
 
     for (var x=0; x<width; x++) {
-        for (var y=0; y<heigth; y++) {
-            out[x*heigth+y] <== in[y*width+x];
+        for (var y=0; y<height; y++) {
+            out[x*height+y] <== in[y*width+x];
         }
     }
 
@@ -217,9 +216,9 @@ template FFTBig(nBits, eSize, inv) {
                 w = 1;
             } else {
                 var width = 1 << (i*2);
-                var heigth = n / width;
-                var y = (j*4) \ heigth;
-                var x = (j*4) % heigth;
+                var height = n / width;
+                var y = (j*4) \ height;
+                var x = (j*4) % height;
                 var p = x*width + y;
                 w = roots(i*2+2) ** p;
             }

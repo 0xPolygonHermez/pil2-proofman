@@ -208,7 +208,7 @@ impl<F: PrimeField64> SetupsVadcop<F> {
             // A Goldilocks STARK of the key's own family, the layer after the vadcop_final; the
             // poseidon families' recursivef is setup-snark's (BN128) and the SnarkWrapper's.
             let path = final_snark
-                .filter(|_| global_info.hash == "blake3")
+                .filter(|_| global_info.hash.is_blake3())
                 .map(|snark| snark.join("recursivef").join("recursivef"))
                 .filter(|path| PathBuf::from(format!("{}.starkinfo.json", path.display())).exists());
             let setup_recursivef = if let Some(path) = path {
@@ -515,7 +515,7 @@ impl<F: PrimeField64> SetupRepository<F> {
             true => {
                 let global_bin_path =
                     &global_info.get_proving_key_path().join("pilout.globalConstraints.bin").display().to_string();
-                Some(expressions_bin_new_c(global_bin_path.as_str(), true, false))
+                Some(expressions_bin_new_c(global_bin_path.as_str(), true))
             }
             false => None,
         };

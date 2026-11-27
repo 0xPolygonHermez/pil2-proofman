@@ -204,10 +204,7 @@ fn check_proving_key(proving_key: &Path) -> (PilfflonkGlobalInfo, PilfflonkInfo,
         serde_json::from_slice::<serde_json::Value>(&text).unwrap();
     }
     let text = fs::read(proving_key.join(GLOBAL_CONSTRAINTS_FILE)).unwrap();
-    assert_eq!(
-        serde_json::from_slice::<serde_json::Value>(&text).unwrap(),
-        serde_json::json!({"constraints": [], "hints": []})
-    );
+    assert_eq!(serde_json::from_slice::<serde_json::Value>(&text).unwrap(), serde_json::json!({"hints": []}));
     ProofNames::new(&gi, &[&info]).unwrap();
     WitnessShape::from_proving_key(&gi, &[&info]).unwrap();
     (gi, info, vkey)
@@ -455,7 +452,9 @@ fn it_writes_the_proving_key_of_the_fibonacci_fixture() {
         info.cm_pols_map.iter().map(|p| (p.name.as_str(), p.stage_id, p.im_pol)).collect();
     assert_eq!(names, [("l1", 0, false), ("l2", 1, false), ("Fibonacci.ImPol", 2, true), ("Q0", 0, false)]);
     let pilout = pb::PilOut::decode(fs::read(&pilout_path).unwrap().as_slice()).unwrap();
-    let exp_id = info.cm_pols_map[2].exp_id.unwrap() as usize;
+    // the setup's expId is the core's canonical numbering
+    let canonical = info.cm_pols_map[2].exp_id.unwrap() as u32;
+    let exp_id = pil_info::core::from_pilout::pilout_expr_index(&pilout, 0, 0, canonical).unwrap();
     let witness = |col_idx, row_offset| {
         Some(pb::Operand {
             operand: Some(operand::Operand::WitnessCol(operand::WitnessCol { stage: 1, col_idx, row_offset })),

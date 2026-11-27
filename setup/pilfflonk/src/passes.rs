@@ -1,4 +1,4 @@
-//! The symbolic passes over BN128 (pilfflonk/docs/README.md#setup-pilfflonk): `pil_info::run` with
+//! The symbolic passes over BN128 (pilfflonk/docs/README.md#setup-pilfflonk): `pil_info::shplonk_info` with
 //! `PilInfoCfg::bn128()` and the degree search (pilfflonk/docs/protocol.md#degree-search),
 //! `Search { max: D }` for `--max-constraint-degree D`.
 //!
@@ -13,8 +13,7 @@ use std::any::Any;
 use std::thread;
 
 use pil2_pilout::pilout as pb;
-use pil_info::pil::prepare::PrepareOptions;
-use pil_info::{DegreePolicy, PilInfoCfg, PilInfoResult};
+use pil_info::{DegreePolicy, PilInfoCfg, ShplonkResult, PrepareOptions};
 
 use crate::error::SetupError;
 use crate::validate::ValidAir;
@@ -31,10 +30,11 @@ pub fn cfg(max_constraint_degree: u64) -> Result<PilInfoCfg, SetupError> {
 }
 
 /// Runs the passes on the AIR of `pilout` that [`crate::validate::validate`] returned.
-pub fn run_passes(pilout: &pb::PilOut, air: ValidAir, max_constraint_degree: u64) -> Result<PilInfoResult, SetupError> {
+pub fn run_passes(pilout: &pb::PilOut, air: ValidAir, max_constraint_degree: u64) -> Result<ShplonkResult, SetupError> {
     let cfg = cfg(max_constraint_degree)?;
     let options = PrepareOptions::default();
-    on_passes_thread(|| pil_info::run(pilout, air.airgroup_id, air.air_id, &cfg, &options))?.map_err(SetupError::Passes)
+    on_passes_thread(|| pil_info::shplonk_info(pilout, air.airgroup_id, air.air_id, &cfg, &options))?
+        .map_err(SetupError::Passes)
 }
 
 /// Runs `passes` on a thread with [`PASSES_STACK_SIZE`] of stack: what it returns, or its panic

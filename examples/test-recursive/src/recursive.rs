@@ -48,7 +48,7 @@ impl<F: PrimeField64> WitnessComponent<F> for Compressor {
     ) -> ProofmanResult<()> {
         if stage == 1 {
             let setup = sctx.get_setup(0, 0)?;
-            let hash_family = pctx.global_info.hash.to_lowercase();
+            let hash_family = pctx.global_info.hash.as_str().to_lowercase();
             let current_dir = env::current_dir()
                 .expect("Failed to get current directory")
                 .join("examples/test-recursive")

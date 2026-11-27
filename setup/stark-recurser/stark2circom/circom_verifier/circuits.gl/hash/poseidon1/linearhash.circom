@@ -3,7 +3,8 @@ pragma custom_templates;
 
 include "poseidon.circom";
 
-template LinearHash(nInputs, eSize) {
+// arity: unused, the signature every family's ../merklehash.circom calls.
+template LinearHash(nInputs, arity, eSize) {
     signal input in[nInputs][eSize];
     signal output out[4];
 

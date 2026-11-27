@@ -1,7 +1,7 @@
 //! Non-recursive setup command: the main orchestrator for the setup pipeline.
 
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
@@ -9,11 +9,12 @@ use rayon::prelude::*;
 
 use pil2_pilout::pilout::{self as pb};
 use prost::Message;
-use crate::output::global_info::{build_global_info_json, write_global_constraints, write_global_info_json};
-use crate::pil::prepare::PrepareOptions;
+use crate::output::global_info::{global_info_json, write_global_constraints, write_global_info_json};
+use pil_info::PrepareOptions;
+use crate::commands::common::push_im_pols_stats;
 use crate::commands::recursive_setup::run_recursive_setup;
+use crate::proving_key::pipeline::{self, kinds, PipelineCtx};
 use crate::types::stark_struct::{generate_basic_stark_struct, StarkStructsConfig};
-use crate::output::stark_info::{build_starkinfo_output, collect_opening_points, solve_low_degree_test};
 
 /// Setup options parsed from CLI args.
 pub struct SetupOptions {
@@ -33,11 +34,10 @@ pub struct SetupOptions {
     /// Optional path to write per-AIR stats (same format as `proofman-setup stats`).
     /// If None, no stats file is written.
     pub stats_output_path: Option<String>,
-    pub hash: String,
+    pub hash: proofman_common::hash_family::HashFamily,
     /// Proofs each recursive2 circuit aggregates: 2, 3 or 4.
     pub agg_arity: usize,
-    /// Build the `vadcop_final_compressed` stage. Defaults per family -- see
-    /// `hash_family::compressed_final_by_default` -- and can be added later with the
+    /// Build the `vadcop_final_compressed` stage (default true); it can be added later with the
     /// `setup-compressed-final` subcommand.
     pub compressed_final: bool,
     /// Label written as `setupVersion` in globalInfo.json; the consumer (ZisK) checks it at load.
@@ -81,7 +81,7 @@ pub(crate) fn nvcc_present() -> bool {
 
 /// Run the non-recursive setup pipeline.
 pub fn run_setup(opts: &SetupOptions) -> Result<()> {
-    proofman_starks_lib_c::set_hash_family_c(&opts.hash);
+    proofman_starks_lib_c::set_hash_family_c(opts.hash.ffi_id());
     let pilout_data = fs::read(&opts.airout_path)?;
     let pilout = pb::PilOut::decode(pilout_data.as_slice())?;
     let pilout_name = pilout.name.clone().unwrap_or_else(|| "pilout".to_string());
@@ -148,18 +148,20 @@ pub fn run_setup(opts: &SetupOptions) -> Result<()> {
     let build_dir = opts.build_dir.clone();
     let fixed_dir = opts.fixed_dir.clone();
     let pilout_name_shared = pilout_name.clone();
+    let family = opts.hash;
 
     // Always write globalConstraints first — run_recursive_setup reads them from disk.
     // globalInfo.json is written now only for the non-recursive path; for recursive it is
     // written once at the end after hasCompressor flags are known.
-    write_global_constraints(&pilout, &pilout_name, &opts.build_dir, &settings_map)?;
+    let header = pil_info::core::pilout_core::PiloutCore::header_of(&pilout)?;
+    write_global_constraints(&header, &opts.build_dir)?;
     if !opts.recursive {
         write_global_info_json(
-            &pilout,
+            &header,
             &pilout_name,
             &opts.build_dir,
             &settings_map,
-            &opts.hash,
+            opts.hash,
             opts.agg_arity,
             opts.compressed_final,
             opts.setup_version.as_deref(),
@@ -183,12 +185,13 @@ pub fn run_setup(opts: &SetupOptions) -> Result<()> {
                 // every line pil_info, the const-tree builder and the expression codegen emit from
                 // inside here would otherwise be unattributable. Entering it prefixes them all.
                 let _span = tracing::info_span!("air", name = %item.air_name).entered();
-                let n_bits = log2_usize(item.num_rows);
+                let n_bits = crate::proving_key::util::exact_log2(item.num_rows as u64)
+                    .with_context(|| format!("air '{}' row count", item.air_name))?;
                 tracing::info!("Computing setup for air '{}'", item.air_name);
 
                 let air_settings = settings_map.resolve(&item.airgroup_name, &item.air_name);
 
-                let stark_struct = generate_basic_stark_struct(&air_settings, n_bits, &opts.hash);
+                let stark_struct = generate_basic_stark_struct(&air_settings, n_bits, opts.hash);
 
                 let files_dir = PathBuf::from(&build_dir)
                     .join("provingKey")
@@ -197,140 +200,20 @@ pub fn run_setup(opts: &SetupOptions) -> Result<()> {
                     .join("airs")
                     .join(&item.air_name)
                     .join("air");
-                fs::create_dir_all(&files_dir)?;
-
-                let const_path = files_dir.join(format!("{}.const", item.air_name));
-
-                // A path that cannot produce `.const` must drop any file an earlier run
-                // left, or the `const_path.exists()` check below builds the const tree
-                // and verkey from stale fixed columns and still exits 0. The verkey pair
-                // goes too: it is only rewritten when `.const` exists.
-                let drop_stale_const = |why: &str| -> Result<()> {
-                    let mut dropped = false;
-                    for stale in [
-                        const_path.clone(),
-                        files_dir.join(format!("{}.verkey.json", item.air_name)),
-                        files_dir.join(format!("{}.verkey.bin", item.air_name)),
-                    ] {
-                        if stale.exists() {
-                            fs::remove_file(&stale)
-                                .with_context(|| format!("removing stale {} ({})", stale.display(), why))?;
-                            dropped = true;
-                        }
-                    }
-                    if dropped {
-                        tracing::warn!(
-                            "Air '{}': dropped stale .const/.verkey in {} — {}",
-                            item.air_name,
-                            files_dir.display(),
-                            why
-                        );
-                    }
-                    Ok(())
+                let mut ctx = PipelineCtx::new(PathBuf::from(&build_dir), files_dir, &item.air_name, family);
+                ctx.label = format!("Air '{}'", item.air_name);
+                ctx.pilout = Some(pilout.clone());
+                ctx.air = (item.ag_idx, item.air_idx);
+                ctx.fixed_dir = fixed_dir.as_ref().map(PathBuf::from);
+                ctx.stark_struct = Some(stark_struct);
+                ctx.prepare = PrepareOptions { im_pols_stages: false, inplace_stage_commit: true };
+                ctx.key = crate::pil::stark_setup::KeyIdentity {
+                    name: Some(item.air_name.clone()),
+                    circuit_type: Some(proofman_common::circuit_type_of(item.ag_idx as u64, item.air_idx as u64 + 1)),
+                    ..Default::default()
                 };
-
-                // `.const` comes from `<fixed_dir>/<air>.fixed` when present, else from the
-                // pilout's inline fixed_cols. An air whose fixed columns neither source can
-                // supply is an error: without `.const` there is no verkey, and the key would
-                // only fail at prove time.
-                let air = &pilout.air_groups[item.ag_idx].airs[item.air_idx];
-                let fixed_file = fixed_dir.as_ref().map(|fd| Path::new(fd).join(format!("{}.fixed", item.air_name)));
-                if let Some(src) = fixed_file.as_ref().filter(|src| src.exists()) {
-                    fs::copy(src, &const_path)?;
-                } else if air.fixed_cols.is_empty() {
-                    tracing::debug!("Air '{}': no fixed columns — skipping .const generation", item.air_name);
-                    drop_stale_const("the air has no fixed columns")?;
-                } else if air.fixed_cols.iter().all(|fc| !fc.values.is_empty()) {
-                    crate::io::fixed_cols::write_const_file(
-                        const_path.to_str().unwrap_or(""),
-                        air,
-                        &[], // no external plonk polynomial values needed
-                    )?;
-                    tracing::info!(
-                        "Generated .const from pilout inline fixed_cols for air '{}' ({} columns, {} rows)",
-                        item.air_name,
-                        air.fixed_cols.len(),
-                        air.num_rows.unwrap_or(0)
-                    );
-                } else {
-                    drop_stale_const("its fixed columns have no source")?;
-                    match fixed_file {
-                        Some(src) => anyhow::bail!(
-                            "Air '{}': fixed file not found: {} (its fixed columns are not inline in the pilout)",
-                            item.air_name,
-                            src.display()
-                        ),
-                        None => anyhow::bail!(
-                            "Air '{}': some fixed columns have no inline values in the pilout; \
-                             provide --fixed-dir (-u) with its .fixed file",
-                            item.air_name
-                        ),
-                    }
-                }
-
-                let starkinfo_path = files_dir.join(format!("{}.starkinfo.json", item.air_name));
-
-                let prepare_opts = PrepareOptions { debug: false, im_pols_stages: false, inplace_stage_commit: true };
-                let pil_result =
-                    crate::pil::info::pil_info(&pilout, item.ag_idx, item.air_idx, &stark_struct, &prepare_opts)?;
-                let setup_result = &pil_result.setup;
-                let pil_code = &pil_result.pil_code;
-
-                let opening_points = collect_opening_points(setup_result);
-                let ldt = solve_low_degree_test(&stark_struct, pil_code.fri_batch_size.max(1) as u64);
-
-                let starkinfo_output = build_starkinfo_output(
-                    setup_result,
-                    &stark_struct,
-                    pil_code,
-                    &opening_points,
-                    &ldt,
-                    item.ag_idx,
-                    item.air_idx,
-                    Some(proofman_common::circuit_type_of(item.ag_idx as u64, item.air_idx as u64 + 1)),
-                    &item.air_name,
-                    pil_result.c_exp_id,
-                    pil_result.deep_exp_id,
-                    pil_result.q_deg,
-                );
-
-                // Say which low-degree test this air runs, with the solved schedule.
-                tracing::info!(
-                    "Air '{}' low-degree test: {}",
-                    item.air_name,
-                    starkinfo_output.stark_struct.low_degree_test.describe()
-                );
-
-                let starkinfo_json = crate::output::json::to_json_string(&starkinfo_output)?;
-                fs::write(&starkinfo_path, &starkinfo_json)?;
-
-                fs::write(
-                    files_dir.join(format!("{}.expressionsinfo.json", item.air_name)),
-                    &crate::output::json::to_json_string(&pil_code.expressions_info)?,
-                )?;
-                fs::write(
-                    files_dir.join(format!("{}.verifierinfo.json", item.air_name)),
-                    &crate::output::json::to_json_string(&pil_code.verifier_info)?,
-                )?;
-
-                let verkey_json_path = files_dir.join(format!("{}.verkey.json", item.air_name));
-                if const_path.exists() {
-                    let const_root = crate::proving_key::bctree::compute_const_tree(
-                        const_path.to_str().unwrap_or(""),
-                        starkinfo_path.to_str().unwrap_or(""),
-                        verkey_json_path.to_str().unwrap_or(""),
-                    )?;
-                    let verkey_bin: Vec<u8> = const_root.iter().flat_map(|v| v.to_le_bytes()).collect();
-                    fs::write(files_dir.join(format!("{}.verkey.bin", item.air_name)), &verkey_bin)?;
-                }
-
-                write_bin_files_from_pil_code(
-                    &starkinfo_json,
-                    &pil_code.expressions_info,
-                    &pil_code.verifier_info,
-                    &files_dir.join(format!("{}.bin", item.air_name)),
-                    &files_dir.join(format!("{}.verifier.bin", item.air_name)),
-                )?;
+                pipeline::run(&kinds::steps_for_basic(&kinds::BasicCfg { user_fixed: fixed_dir.is_some() }), &mut ctx)?;
+                let (summary, im_pols_info) = ctx.stats.take().context("basic setup produced no stats")?;
 
                 tracing::info!("Setup for air '{}' complete", item.air_name);
                 Ok((
@@ -338,8 +221,8 @@ pub fn run_setup(opts: &SetupOptions) -> Result<()> {
                     item.air_idx,
                     item.airgroup_name.clone(),
                     item.air_name.clone(),
-                    pil_result.summary.clone(),
-                    pil_result.im_pols_info.clone(),
+                    summary,
+                    im_pols_info,
                 ))
             })
             .collect()
@@ -364,19 +247,7 @@ pub fn run_setup(opts: &SetupOptions) -> Result<()> {
         for (_, _, airgroup_name, air_name, summary, (base_field, extended_field)) in &stats_entries {
             stats_lines.push(format!("Airgroup: {} Air: {}", airgroup_name, air_name));
             stats_lines.push(format!("Summary: {}", summary));
-            if !base_field.is_empty() {
-                stats_lines.push("Intermediate polynomials baseField:".to_string());
-                for pol in base_field {
-                    stats_lines.push(format!("    {}", pol));
-                }
-            }
-            if !extended_field.is_empty() {
-                stats_lines.push("Intermediate polynomials extendedField:".to_string());
-                for pol in extended_field {
-                    stats_lines.push(format!("    {}", pol));
-                }
-            }
-            stats_lines.push(String::new());
+            push_im_pols_stats(&mut stats_lines, base_field, extended_field);
         }
 
         fs::write(stats_path, stats_lines.join("\n"))?;
@@ -385,16 +256,16 @@ pub fn run_setup(opts: &SetupOptions) -> Result<()> {
 
     if opts.recursive {
         tracing::info!("Starting recursive setup...");
-        let global_info_base = build_global_info_json(
-            &pilout,
+        let global_info_base = global_info_json(
+            &header,
             &pilout_name,
             &settings_map,
-            &opts.hash,
+            opts.hash,
             opts.agg_arity,
             opts.compressed_final,
             opts.setup_version.as_deref(),
             &Default::default(),
-        );
+        )?;
         let summary = run_recursive_setup(&pilout, &pilout_name, opts, &settings_map, global_info_base)?;
 
         // Build final settings map: start from user-supplied settings and overlay any
@@ -405,11 +276,11 @@ pub fn run_setup(opts: &SetupOptions) -> Result<()> {
             final_settings.set_has_compressor(air_name);
         }
         write_global_info_json(
-            &pilout,
+            &header,
             &pilout_name,
             &opts.build_dir,
             &final_settings,
-            &opts.hash,
+            opts.hash,
             opts.agg_arity,
             opts.compressed_final,
             opts.setup_version.as_deref(),
@@ -426,47 +297,12 @@ pub fn run_setup(opts: &SetupOptions) -> Result<()> {
             chunk: opts.exps_chunk,
             stark_src: opts.exps_stark_src.clone().map(std::path::PathBuf::from),
         };
-        // Non-fatal: setup itself succeeded and the provingKey is valid; the
-        // prover falls back to the interpreter for any AIR without a .so.
-        if let Err(e) = crate::commands::gen_exps::run_gen_exps(&gen_opts) {
-            tracing::error!("Expression kernel codegen failed (continuing): {:#}", e);
-        }
+        // A kernel that does not compile is a generator or toolchain bug; skips are only warned.
+        crate::commands::gen_exps::run_gen_exps(&gen_opts).context("expression kernel codegen")?;
     }
 
     tracing::info!("Setup complete");
     Ok(())
-}
-
-/// Write binary files using in-memory generate_pil_code structs (no disk round-trip).
-fn write_bin_files_from_pil_code(
-    starkinfo_json: &str,
-    expressions_info: &crate::pil::gen_code::ExpressionsInfo,
-    verifier_info: &crate::pil::gen_code::VerifierInfo,
-    bin_output: &Path,
-    verifier_bin_output: &Path,
-) -> Result<()> {
-    use crate::types::stark_info::StarkInfo;
-
-    let si_json: serde_json::Value = serde_json::from_str(starkinfo_json)?;
-    let stark_info = StarkInfo::from_json(&si_json)?;
-
-    let ei = crate::types::stark_info::ExpressionsInfo::try_from(expressions_info)?;
-    crate::io::bin_file::write_expressions_bin_file(bin_output.to_str().unwrap_or(""), &stark_info, &ei)?;
-
-    let vi = crate::types::stark_info::VerifierInfo::try_from(verifier_info)?;
-    crate::io::bin_file::write_verifier_expressions_bin_file(
-        verifier_bin_output.to_str().unwrap_or(""),
-        &stark_info,
-        &vi,
-    )?;
-
-    Ok(())
-}
-
-/// Compute floor(log2(n)) for a nonzero usize.
-fn log2_usize(n: usize) -> usize {
-    assert!(n > 0, "log2_usize: n must be positive");
-    (usize::BITS - 1 - n.leading_zeros()) as usize
 }
 
 #[cfg(test)]
@@ -487,7 +323,7 @@ mod tests {
             recursive_jobs: 1,
             setup_jobs: 1,
             stats_output_path: None,
-            hash: "Poseidon2".to_string(),
+            hash: proofman_common::hash_family::HashFamily::Poseidon2,
             agg_arity: 3,
             recursive_n_bits: None,
             compressed_final: true,
@@ -529,6 +365,7 @@ mod tests {
                 stage,
                 ..Default::default()
             }],
+            num_proof_values: vec![1],
             ..Default::default()
         };
         let mut buf = Vec::new();
@@ -546,7 +383,7 @@ mod tests {
             recursive_jobs: 1,
             setup_jobs: 1,
             stats_output_path: None,
-            hash: "Poseidon2".to_string(),
+            hash: proofman_common::hash_family::HashFamily::Poseidon2,
             agg_arity: 3,
             recursive_n_bits: None,
             compressed_final: true,
@@ -665,7 +502,7 @@ mod tests {
             recursive_jobs: 1,
             setup_jobs: 1,
             stats_output_path: None,
-            hash: "Poseidon2".to_string(),
+            hash: proofman_common::hash_family::HashFamily::Poseidon2,
             agg_arity: 3,
             recursive_n_bits: None,
             compressed_final: true,
@@ -714,7 +551,7 @@ mod tests {
             recursive_jobs: 1,
             setup_jobs: 1,
             stats_output_path: None,
-            hash: "Poseidon2".to_string(),
+            hash: proofman_common::hash_family::HashFamily::Poseidon2,
             agg_arity: 3,
             recursive_n_bits: None,
             compressed_final: true,

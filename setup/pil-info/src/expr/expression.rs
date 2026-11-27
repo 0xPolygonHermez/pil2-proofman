@@ -22,14 +22,6 @@ impl ExprChild {
             ExprChild::Inline(expr) => expr,
         }
     }
-
-    /// Return the arena index if this is an `Id` variant, else `None`.
-    pub fn as_id(&self) -> Option<ExprId> {
-        match self {
-            ExprChild::Id(id) => Some(*id),
-            ExprChild::Inline(_) => None,
-        }
-    }
 }
 
 /// A single expression node in the arena.
@@ -46,7 +38,6 @@ pub struct Expression {
     pub value: Option<String>,
     pub boundary_id: Option<usize>,
     pub boundary: Option<String>,
-    pub opening: Option<i64>,
     pub commit_id: Option<usize>,
     pub stage_id: Option<usize>,
     pub airgroup_id: Option<usize>,
@@ -76,7 +67,6 @@ impl Default for Expression {
             value: None,
             boundary_id: None,
             boundary: None,
-            opening: None,
             commit_id: None,
             stage_id: None,
             airgroup_id: None,
@@ -86,40 +76,5 @@ impl Default for Expression {
             info_computed: false,
             line: None,
         }
-    }
-}
-
-/// Arena-based expression storage.
-/// Expressions reference each other by ExprId (index).
-#[derive(Debug, Default)]
-pub struct ExpressionArena {
-    pub exprs: Vec<Expression>,
-}
-
-impl ExpressionArena {
-    pub fn new() -> Self {
-        Self { exprs: Vec::new() }
-    }
-
-    pub fn push(&mut self, expr: Expression) -> ExprId {
-        let id = self.exprs.len();
-        self.exprs.push(expr);
-        id
-    }
-
-    pub fn get(&self, id: ExprId) -> &Expression {
-        &self.exprs[id]
-    }
-
-    pub fn get_mut(&mut self, id: ExprId) -> &mut Expression {
-        &mut self.exprs[id]
-    }
-
-    pub fn len(&self) -> usize {
-        self.exprs.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.exprs.is_empty()
     }
 }

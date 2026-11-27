@@ -68,6 +68,17 @@ impl FieldCfg {
     }
 }
 
+impl From<&FieldCfg> for constraint_dag::DagField {
+    /// `goldilocks` and `bn128` are the only field configurations.
+    fn from(f: &FieldCfg) -> Self {
+        if f.ext_dim == 1 {
+            constraint_dag::DagField::Bn128
+        } else {
+            constraint_dag::DagField::Goldilocks
+        }
+    }
+}
+
 /// How the degree search that picks the intermediate polynomials is bounded and scored.
 ///
 /// Both policies run the same search: for every maximum degree `d` from 2 up to the bound, find the
@@ -107,9 +118,9 @@ impl DegreePolicy {
 /// constraint polynomial.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Opening {
-    /// The STARK's: the DEEP polynomial (`deepExpId`, its challenges `std_vf1`/`std_vf2` and the
-    /// `queryVerifier`), which its low-degree test, FRI or STIR, runs on, and the quotient's pieces
-    /// in the `evMap`, whose evaluations the verifier receives and checks against `Q(ξ)`.
+    /// The STARK's: the DEEP polynomial's challenges `std_vf1`/`std_vf2` (the polynomial itself,
+    /// which its low-degree test, FRI or STIR, runs on, is computed natively from starkinfo), and the
+    /// quotient's pieces in the `evMap`, whose evaluations the verifier receives and checks against `Q(ξ)`.
     Deep,
     /// pilfflonk's: the prover opens the committed polynomials with SHPLONK outside these passes,
     /// and the verifier computes `Q(ξ)` rather than receiving it
@@ -146,6 +157,16 @@ impl PilInfoCfg {
             opening: Opening::Shplonk,
         }
     }
+}
+
+/// Per-key setup options.
+#[derive(Debug, Clone, Default)]
+pub struct PrepareOptions {
+    /// When true, enable intermediate polynomial batching by stage.
+    pub im_pols_stages: bool,
+    /// A basic air: the GPU prover commits its stages in place, which the prover memory
+    /// estimate must know. False for recursion, final and SNARK-wrapper airs.
+    pub inplace_stage_commit: bool,
 }
 
 #[cfg(test)]

@@ -221,7 +221,6 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
         airgroupValues : (Goldilocks::Element *)d_aux_trace + offsetAirgroupValues,
         airValues : (Goldilocks::Element *)d_aux_trace + offsetAirValues,
         evals : (Goldilocks::Element *)d_aux_trace + offsetEvals,
-        xDivXSub : nullptr,
         pConstPolsAddress: d_const_pols_unpacked,
         pConstPolsExtendedTreeAddress,
         pCustomCommitsFixed,
@@ -397,18 +396,16 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
     TimerStopGPU(timer, STARK_STEP_Q);
     TimerStartGPU(timer, STARK_STEP_EVALS);
     
-    uint64_t xiChallengeIndex = 0;
     TimerStartCategoryGPU(timer, TRANSCRIPT);
     for (uint64_t i = 0; i < setupCtx.starkInfo.challengesMap.size(); i++)
     {
         if(setupCtx.starkInfo.challengesMap[i].stage == setupCtx.starkInfo.nStages + 2) {
-            if(setupCtx.starkInfo.challengesMap[i].stageId == 0) xiChallengeIndex = i;
             d_transcript->getField((uint64_t *)&h_params.challenges[i * FIELD_EXTENSION], stream);
         }
     }
     TimerStopCategoryGPU(timer, TRANSCRIPT);
 
-    Goldilocks::Element *d_xiChallenge = &h_params.challenges[xiChallengeIndex * FIELD_EXTENSION];
+    Goldilocks::Element *d_xiChallenge = &h_params.challenges[setupCtx.starkInfo.deepTables->xiIdx * FIELD_EXTENSION];
     gl64_t * d_LEv = (gl64_t *) h_params.aux_trace +setupCtx.starkInfo.mapOffsets[std::make_pair("lev", false)];
 
     cudagraph::run(cudagraph::key(0x4556414cULL, graphCtxId), countId, stream, [&] {

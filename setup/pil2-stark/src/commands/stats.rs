@@ -3,11 +3,12 @@
 use std::fs;
 use std::path::PathBuf;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use pil2_pilout::pilout as pb;
 use prost::Message;
 
-use crate::pil::prepare::PrepareOptions;
+use crate::commands::common::push_im_pols_stats;
+use pil_info::PrepareOptions;
 use crate::types::stark_struct::{generate_basic_stark_struct, StarkStructsConfig};
 
 /// Options for the stats subcommand.
@@ -20,7 +21,7 @@ pub struct StatsOptions {
     /// Path to compiled .pilout file.
     pub airout_path: String,
     /// Hash family (tree/transcript geometry), as in the setup command.
-    pub hash: String,
+    pub hash: proofman_common::hash_family::HashFamily,
     /// Output file for detailed per-AIR stats (default: `tmp/stats.txt`).
     pub output_path: Option<String>,
     /// Optional path to starkstructs.json.
@@ -81,32 +82,33 @@ pub fn run_stats(opts: &StatsOptions) -> Result<()> {
                 continue;
             }
 
-            let n_bits = log2_usize(num_rows);
+            let n_bits = crate::proving_key::util::exact_log2(num_rows as u64)
+                .with_context(|| format!("air '{air_name}' row count"))?;
 
             let air_settings = settings_map.resolve(&airgroup_name, &air_name);
 
-            let stark_struct = generate_basic_stark_struct(&air_settings, n_bits, &opts.hash);
+            let stark_struct = generate_basic_stark_struct(&air_settings, n_bits, opts.hash);
 
-            let prepare_opts =
-                PrepareOptions { debug: false, im_pols_stages: opts.im_pols_stages, inplace_stage_commit: true };
+            let prepare_opts = PrepareOptions { im_pols_stages: opts.im_pols_stages, inplace_stage_commit: true };
 
             tracing::info!("Computing stats for air '{}'", air_name);
-            let pil_result = crate::pil::info::pil_info(&pilout, ag_idx, air_idx, &stark_struct, &prepare_opts)?;
+            let pil_result = crate::pil::stark_setup::stark_setup(
+                &pilout,
+                ag_idx,
+                air_idx,
+                &stark_struct,
+                &prepare_opts,
+                &Default::default(),
+            )?;
 
             // Both the native and the in-circuit verifier run the same algorithm, so one count
             // serves both; only the price of a single hash differs.
-            let family = opts.hash.as_str();
-            let geom = crate::verifier_hashes::geometry_for_family(
-                &stark_struct,
-                &pil_result.setup,
-                pil_result.pil_code.ev_map.len(),
-                pil_result.pil_code.fri_batch_size,
-            );
-            let counts = crate::verifier_hashes::verifier_hashes(&geom, family);
+            let geom = crate::verifier_hashes::geometry_from_starkinfo(&serde_json::to_value(&pil_result.starkinfo)?)?;
+            let counts = crate::verifier_hashes::verifier_hashes(&geom, opts.hash);
             let verifier_hashes = counts.total().to_string();
 
             // Only blake3 sizes its recursion by hashing blocks, so only there can hashes answer this.
-            let fit = (family == "blake3").then(|| {
+            let fit = opts.hash.is_blake3().then(|| {
                 let f = crate::verifier_hashes::blake3_recursion_fit(&counts, opts.blake3_lanes);
                 (f, if f.needs_compressor { "yes" } else { "no" })
             });
@@ -124,7 +126,7 @@ pub fn run_stats(opts: &StatsOptions) -> Result<()> {
 
             stats_lines.push(format!("Airgroup: {} Air: {} ({ldt})", airgroup_name, air_name));
             stats_lines.push(format!("Summary: {}", pil_result.summary));
-            stats_lines.push(format!("Verifier hashes ({family}):"));
+            stats_lines.push(format!("Verifier hashes ({}):", opts.hash));
             stats_lines.push(format!(
                 "    total: {:>9} | leaf: {:>8} merkle: {:>8} ldt: {:>8} transcript: {:>5} grinding: {} \
                  (arity {}, {} queries, llv {}, {} grinding bits, standalone transcript)",
@@ -148,19 +150,7 @@ pub fn run_stats(opts: &StatsOptions) -> Result<()> {
             }
 
             let (base_field, extended_field) = &pil_result.im_pols_info;
-            if !base_field.is_empty() {
-                stats_lines.push("Intermediate polynomials baseField:".to_string());
-                for pol in base_field {
-                    stats_lines.push(format!("    {}", pol));
-                }
-            }
-            if !extended_field.is_empty() {
-                stats_lines.push("Intermediate polynomials extendedField:".to_string());
-                for pol in extended_field {
-                    stats_lines.push(format!("    {}", pol));
-                }
-            }
-            stats_lines.push(String::new());
+            push_im_pols_stats(&mut stats_lines, base_field, extended_field);
         }
     }
 
@@ -190,10 +180,10 @@ fn run_stats_proving_key(opts: &StatsOptions) -> Result<()> {
     // presence, so a key whose compressed-final layer is missing still reports the rest.
     let pctx = ProofCtx::<Goldilocks>::create_ctx(pk_path, false, VerboseMode::Info, Arc::new(MpiCtx::new()), false)
         .map_err(|e| anyhow::anyhow!("Failed to load proving key: {e:?}"))?;
-    let family = pctx.global_info.hash.clone();
+    let family = pctx.global_info.hash;
 
     // (name, group, geometry)
-    let mut circuits: Vec<(String, String, crate::verifier_hashes::VerifierGeometry)> = Vec::new();
+    let mut circuits: Vec<(String, String, crate::verifier_hashes::VerifierGeometry, String)> = Vec::new();
 
     let sctx = SetupCtx::<Goldilocks>::new(&pctx.global_info, &ProofType::Basic, false, false)
         .map_err(|e| anyhow::anyhow!("Failed to load basic setups: {e:?}"))?;
@@ -201,7 +191,7 @@ fn run_stats_proving_key(opts: &StatsOptions) -> Result<()> {
         for (air_id, air) in air_group.iter().enumerate() {
             let setup = sctx.get_setup(airgroup_id, air_id).map_err(|e| anyhow::anyhow!("{e:?}"))?;
             let geom = crate::verifier_hashes::geometry_from_stark_info(&setup.stark_info);
-            circuits.push((air.name.clone(), "basic".to_string(), geom));
+            circuits.push((air.name.clone(), "basic".to_string(), geom, security_line(&setup.stark_info)));
         }
     }
 
@@ -213,7 +203,12 @@ fn run_stats_proving_key(opts: &StatsOptions) -> Result<()> {
                 if pctx.global_info.get_air_has_compressor(airgroup_id, air_id) {
                     let setup = sctx_compressor.get_setup(airgroup_id, air_id).map_err(|e| anyhow::anyhow!("{e:?}"))?;
                     let geom = crate::verifier_hashes::geometry_from_stark_info(&setup.stark_info);
-                    circuits.push((format!("{}_compressor", air.name), "compression".to_string(), geom));
+                    circuits.push((
+                        format!("{}_compressor", air.name),
+                        "compression".to_string(),
+                        geom,
+                        security_line(&setup.stark_info),
+                    ));
                 }
             }
         }
@@ -224,7 +219,12 @@ fn run_stats_proving_key(opts: &StatsOptions) -> Result<()> {
         for airgroup_id in 0..pctx.global_info.air_groups.len() {
             let setup = sctx_recursive2.get_setup(airgroup_id, 0).map_err(|e| anyhow::anyhow!("{e:?}"))?;
             let geom = crate::verifier_hashes::geometry_from_stark_info(&setup.stark_info);
-            circuits.push((format!("Recursive1/2 (airgroup {airgroup_id})"), "aggregation".to_string(), geom));
+            circuits.push((
+                format!("Recursive1/2 (airgroup {airgroup_id})"),
+                "aggregation".to_string(),
+                geom,
+                security_line(&setup.stark_info),
+            ));
         }
 
         for (template, name) in [("vadcop_final", "VadcopFinal"), ("vadcop_final_compressed", "VadcopFinalCompressed")]
@@ -250,7 +250,7 @@ fn run_stats_proving_key(opts: &StatsOptions) -> Result<()> {
             )
             .map_err(|e| anyhow::anyhow!("{e:?}"))?;
             let geom = crate::verifier_hashes::geometry_from_stark_info(&setup.stark_info);
-            circuits.push((name.to_string(), "final".to_string(), geom));
+            circuits.push((name.to_string(), "final".to_string(), geom, security_line(&setup.stark_info)));
         }
     }
 
@@ -261,16 +261,17 @@ fn run_stats_proving_key(opts: &StatsOptions) -> Result<()> {
 
     let mut stats_lines: Vec<String> = Vec::new();
     let mut summary_lines: Vec<String> = Vec::new();
-    for (name, group, geom) in &circuits {
-        let counts = crate::verifier_hashes::verifier_hashes(geom, &family);
+    for (name, group, geom, security) in &circuits {
+        let counts = crate::verifier_hashes::verifier_hashes(geom, family);
         let ldt = if geom.stir_rounds.is_empty() { "FRI" } else { "STIR" };
         summary_lines.push(format!(
-            "{} | {} | {} | nBitsExt: {} | verifierHashes: {}",
+            "{} | {} | {} | nBitsExt: {} | verifierHashes: {} | {}",
             group,
             name,
             ldt,
             geom.n_bits_ext,
-            counts.total()
+            counts.total(),
+            security
         ));
         stats_lines.push(format!("Circuit: {name} ({group}, {ldt}, hash {family})"));
         stats_lines.push(format!("Verifier hashes ({family}):"));
@@ -301,8 +302,20 @@ fn run_stats_proving_key(opts: &StatsOptions) -> Result<()> {
     Ok(())
 }
 
-/// floor(log2(n)) for a nonzero usize.
-fn log2_usize(n: usize) -> usize {
-    assert!(n > 0, "log2_usize: n must be positive");
-    (usize::BITS - 1 - n.leading_zeros()) as usize
+/// The exact security report of a built circuit: `security: BCHKS25 X bits`.
+fn security_line(si: &proofman_common::StarkInfo) -> String {
+    if si.fri_batch_size == 0 || si.security.proximity_gap <= 0.0 {
+        return "security: n/a (key lacks friBatchSize or proximityGap, regenerate)".to_string();
+    }
+    let report = crate::types::security::check::report_built(
+        &si.stark_struct,
+        si.fri_batch_size,
+        &si.security.regime,
+        si.security.proximity_gap,
+    )
+    .map_err(|e| e.to_string());
+    match report {
+        Ok(r) => format!("{} [{}, weakest {}]", r.summary(), r.config, r.weakest_phase),
+        Err(e) => format!("security: ERROR {e}"),
+    }
 }

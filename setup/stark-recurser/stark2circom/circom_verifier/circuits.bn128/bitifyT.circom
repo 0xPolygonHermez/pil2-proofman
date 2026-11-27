@@ -1,6 +1,7 @@
 pragma circom 2.1.0;
 
 include "compconstant.circom";
+include "bitify.circom";
 
 template AliasCheckT() {
 
@@ -51,9 +52,15 @@ template Bits2NumT(n) {
 }
 
 
-template Bits2Num_strictT() {
-    signal input {binary} in[254];
-    signal output out;
+// A transcript word's bits (verifier/transcript.circom): a Goldilocks word below 2^64, or a BN128 element.
+template TranscriptWordBits(n) {
+    signal input in;
+    signal output {binary} out[n];
 
-    out <== Bits2NumT(254)(in);
+    if (n == 64) {
+        out <== Num2Bits(64)(in);
+    } else {
+        assert(n == 254);
+        out <== Num2Bits_strictT()(in);
+    }
 }

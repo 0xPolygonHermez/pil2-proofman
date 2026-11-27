@@ -2,6 +2,9 @@ use anyhow::{anyhow, Context, Result};
 use serde_json::Value;
 use std::collections::HashMap;
 
+use pil_info::core::dag::format::ConstraintDag;
+use pil_info::core::dag::lower_code::LowerTables;
+use pil_info::FieldCfg;
 use crate::types::stark_struct::{LowDegreeTest, StarkStruct};
 use crate::types::{goldilocks_u64, GOLDILOCKS_MODULUS};
 
@@ -21,10 +24,10 @@ pub struct PolMap {
     pub pols_map_id: u64,
 }
 
-/// Evaluation map entry.
+/// Evaluation map entry; `prime` is its opening point.
 #[derive(Debug, Clone)]
 pub struct EvMap {
-    pub ev_type: String,
+    pub ev_type: proofman_common::EvMapEType,
     pub id: u64,
     pub prime: i64,
     pub commit_id: u64,
@@ -35,14 +38,6 @@ pub struct EvMap {
 #[derive(Debug, Clone)]
 pub struct CustomCommit {
     pub name: String,
-}
-
-/// Boundary descriptor.
-#[derive(Debug, Clone)]
-pub struct Boundary {
-    pub name: String,
-    pub offset_min: Option<u64>,
-    pub offset_max: Option<u64>,
 }
 
 /// Mirrors the C++ StarkInfo loaded from starkinfo.json.
@@ -63,18 +58,18 @@ pub struct StarkInfo {
 
     pub ev_map: Vec<EvMap>,
     pub opening_points: Vec<i64>,
-    pub boundaries: Vec<Boundary>,
 
     pub q_deg: u64,
     pub q_dim: u64,
-    pub deep_exp_id: u64,
     pub c_exp_id: u64,
 
     pub map_sections_n: HashMap<String, u64>,
     /// The proof travels as a Merkle multiproof.
     pub multiproof: bool,
-    /// `proofman_common::StarkInfo::proof_layout`, or why the json is not a full starkinfo.
-    pub layout: Option<std::result::Result<proofman_common::ProofLayout, String>>,
+    /// The same json as `proofman_common::StarkInfo`, the one typed starkinfo reader.
+    pub common: proofman_common::StarkInfo,
+    /// The constraint DAG's resolver tables.
+    pub lower_tables: LowerTables,
 }
 
 /// Expression code block as loaded from expressionsInfo JSON.
@@ -127,17 +122,15 @@ pub struct ExpressionsInfo {
     pub hints_info: Vec<Hint>,
 }
 
-/// Verifier info loaded from the JSON file.
+/// A STARK verifierinfo: the constraint DAG (a stale `qVerifier` beside it is ignored).
 #[derive(Debug, Clone)]
 pub struct VerifierInfo {
-    pub q_verifier: ExpCode,
-    pub query_verifier: ExpCode,
+    pub constraint_dag: ConstraintDag,
 }
 
 /// Global constraints info loaded from JSON.
 #[derive(Debug, Clone)]
 pub struct GlobalConstraintsInfo {
-    pub constraints: Vec<ExpCode>,
     pub hints: Vec<Hint>,
 }
 
@@ -221,79 +214,44 @@ fn parse_pol_map_array(v: &Value, key: &str) -> Vec<PolMap> {
 impl StarkInfo {
     /// Parse a StarkInfo from a serde_json::Value (the parsed starkinfo.json).
     pub fn from_json(j: &Value) -> Result<Self> {
+        // the keyVersion gate and the typed parse are proofman_common's; the rest is setup-only
+        let common = proofman_common::StarkInfo::try_from_value(j).map_err(|e| anyhow!("{e}"))?;
         let ss = j.get("starkStruct").unwrap_or(&Value::Null);
         let low_degree_test: LowDegreeTest = serde_json::from_value(ss.clone())
             .map_err(|e| anyhow::anyhow!("starkinfo starkStruct: cannot parse the low-degree test schedule: {e}"))?;
-
+        let cs = &common.stark_struct;
         let stark_struct = StarkStruct {
-            n_bits: get_u64(ss, "nBits") as usize,
-            n_bits_ext: get_u64(ss, "nBitsExt") as usize,
-            hash_commits: get_bool(ss, "hashCommits"),
-            last_level_verification: get_u64(ss, "lastLevelVerification") as usize,
-            merkle_tree_arity: get_u64(ss, "merkleTreeArity") as usize,
-            transcript_arity: get_u64(ss, "transcriptArity") as usize,
-            merkle_tree_custom: get_bool(ss, "merkleTreeCustom"),
-            verification_hash_type: get_str(ss, "verificationHashType").to_string(),
+            n_bits: cs.n_bits as usize,
+            n_bits_ext: cs.n_bits_ext as usize,
+            hash_commits: cs.hash_commits,
+            last_level_verification: cs.last_level_verification as usize,
+            merkle_tree_arity: cs.merkle_tree_arity as usize,
+            transcript_arity: cs.transcript_arity as usize,
+            merkle_tree_custom: cs.merkle_tree_custom,
+            verification_hash_type: cs.verification_hash_type.clone(),
             low_degree_test,
         };
-
-        let custom_commits: Vec<CustomCommit> = j
-            .get("customCommits")
-            .and_then(|a| a.as_array())
-            .map(|arr| arr.iter().map(|c| CustomCommit { name: get_str(c, "name").to_string() }).collect())
-            .unwrap_or_default();
-
-        let ev_map: Vec<EvMap> = j
-            .get("evMap")
-            .and_then(|a| a.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .map(|e| EvMap {
-                        ev_type: get_str(e, "type").to_string(),
-                        id: get_u64(e, "id"),
-                        prime: get_i64(e, "prime"),
-                        commit_id: get_u64(e, "commitId"),
-                        opening_pos: get_u64(e, "openingPos"),
-                    })
-                    .collect()
+        let ev_map = (common.ev_map.iter().enumerate())
+            .map(|(i, e)| {
+                let prime = *common
+                    .opening_points
+                    .get(e.opening_pos)
+                    .ok_or_else(|| anyhow!("evMap {i}: openingPos past openingPoints"))?;
+                Ok(EvMap {
+                    ev_type: e.type_,
+                    id: e.id,
+                    prime,
+                    commit_id: e.commit_id,
+                    opening_pos: e.opening_pos as u64,
+                })
             })
-            .unwrap_or_default();
-
-        let opening_points: Vec<i64> = j
-            .get("openingPoints")
-            .and_then(|a| a.as_array())
-            .map(|arr| arr.iter().map(|v| v.as_i64().unwrap_or(0)).collect())
-            .unwrap_or_default();
-
-        let boundaries: Vec<Boundary> = j
-            .get("boundaries")
-            .and_then(|a| a.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .map(|b| Boundary {
-                        name: get_str(b, "name").to_string(),
-                        offset_min: b.get("offsetMin").and_then(|v| v.as_u64()),
-                        offset_max: b.get("offsetMax").and_then(|v| v.as_u64()),
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
-
-        let mut map_sections_n: HashMap<String, u64> = HashMap::new();
-        if let Some(msn) = j.get("mapSectionsN").and_then(|v| v.as_object()) {
-            for (k, v) in msn {
-                if let Some(val) = v.as_u64() {
-                    map_sections_n.insert(k.clone(), val);
-                }
-            }
-        }
-
+            .collect::<Result<Vec<_>>>()?;
         Ok(StarkInfo {
             stark_struct,
-            n_stages: get_u64(j, "nStages"),
-            n_constants: get_u64(j, "nConstants"),
-            n_publics: get_u64(j, "nPublics"),
-            custom_commits,
+            n_stages: u64::from(common.n_stages),
+            n_constants: common.n_constants,
+            n_publics: common.n_publics,
+            custom_commits: common.custom_commits.iter().map(|c| CustomCommit { name: c.name.clone() }).collect(),
             cm_pols_map: parse_pol_map_array(j, "cmPolsMap"),
             const_pols_map: parse_pol_map_array(j, "constPolsMap"),
             challenges_map: parse_pol_map_array(j, "challengesMap"),
@@ -301,19 +259,14 @@ impl StarkInfo {
             air_values_map: parse_pol_map_array(j, "airValuesMap"),
             proof_values_map: parse_pol_map_array(j, "proofValuesMap"),
             ev_map,
-            opening_points,
-            boundaries,
-            q_deg: get_u64(j, "qDeg"),
-            q_dim: get_u64(j, "qDim"),
-            deep_exp_id: get_u64(j, "deepExpId"),
-            c_exp_id: get_u64(j, "cExpId"),
-            map_sections_n,
-            multiproof: get_bool(j, "multiproof"),
-            layout: Some(
-                serde_json::from_value::<proofman_common::StarkInfo>(j.clone())
-                    .map(|si| si.proof_layout())
-                    .map_err(|e| e.to_string()),
-            ),
+            opening_points: common.opening_points.clone(),
+            q_deg: common.q_deg,
+            q_dim: common.q_dim,
+            c_exp_id: common.c_exp_id,
+            map_sections_n: common.map_sections_n.clone(),
+            multiproof: common.multiproof,
+            lower_tables: pil2_stark_recurser::stark2circom::lower_tables(&common).context("starkinfo")?,
+            common,
         })
     }
 }
@@ -390,21 +343,18 @@ impl ExpressionsInfo {
 }
 
 impl VerifierInfo {
-    /// Parse from the verifierInfo JSON.
+    /// Parse from the verifierInfo JSON; fails without a `constraintDag`.
     pub fn from_json(j: &Value) -> Result<Self> {
-        let q_verifier = parse_exp_code(j.get("qVerifier").unwrap_or(&Value::Null))?;
-        let query_verifier = parse_exp_code(j.get("queryVerifier").unwrap_or(&Value::Null))?;
-        Ok(VerifierInfo { q_verifier, query_verifier })
+        let dag =
+            ConstraintDag::from_verifierinfo(j, &FieldCfg::goldilocks()).map_err(|e| anyhow!("verifierinfo: {e:?}"))?;
+        Ok(VerifierInfo { constraint_dag: dag })
     }
 }
 
 impl GlobalConstraintsInfo {
     /// Parse from global constraints JSON.
     pub fn from_json(j: &Value) -> Result<Self> {
-        let constraints = parse_array(j, "constraints", parse_exp_code)?;
-        let hints = parse_hints(j, "hints")?;
-
-        Ok(GlobalConstraintsInfo { constraints, hints })
+        Ok(GlobalConstraintsInfo { hints: parse_hints(j, "hints")? })
     }
 }
 
@@ -521,21 +471,13 @@ impl TryFrom<&crate::pil::gen_code::ExpressionsInfo> for ExpressionsInfo {
     }
 }
 
-/// Fails on a number that is not a Goldilocks element, on an operand of an unknown type, and on the
-/// verifier code of a backend that does not open with FRI: the STARK verifier needs the
-/// `queryVerifier`.
+/// Fails without a constraint DAG (`stark_setup` attaches it).
 impl TryFrom<&crate::pil::gen_code::VerifierInfo> for VerifierInfo {
     type Error = anyhow::Error;
 
     fn try_from(vi: &crate::pil::gen_code::VerifierInfo) -> Result<Self> {
-        let query_verifier = vi
-            .query_verifier
-            .as_ref()
-            .ok_or_else(|| anyhow!("the STARK verifier needs a queryVerifier, which only the DEEP opening has"))?;
-        Ok(VerifierInfo {
-            q_verifier: expression_entry_to_exp_code(&vi.q_verifier).context("the qVerifier")?,
-            query_verifier: expression_entry_to_exp_code(query_verifier).context("the queryVerifier")?,
-        })
+        let dag = vi.constraint_dag.clone();
+        Ok(VerifierInfo { constraint_dag: dag.ok_or_else(|| anyhow!("the verifierinfo has no constraint DAG"))? })
     }
 }
 
@@ -558,7 +500,6 @@ mod tests {
             stage: None,
             stage_id: None,
             commit_id: None,
-            opening: None,
             boundary_id: None,
             airgroup_id: None,
             exp_id: None,
@@ -626,10 +567,9 @@ mod tests {
         }
     }
 
-    /// End to end: the passes keep a constant wider than Goldilocks as it is, and the STARK writers
-    /// refuse it where they narrow it, instead of writing 0.
+    /// End to end: a pilout constant wider than Goldilocks reaches the STARK writers reduced mod p, never as 0.
     #[test]
-    fn a_wide_constant_of_the_pilout_is_refused_by_the_stark_writers() {
+    fn a_wide_constant_of_the_pilout_reaches_the_stark_writers_reduced() {
         use pil2_pilout::pilout::{self as pb, constraint, expression, operand, SymbolType};
 
         // 2^64 + 5, big-endian.
@@ -666,9 +606,13 @@ mod tests {
             ..Default::default()
         };
 
-        let result = pil_info::run(&pilout, 0, 0, &pil_info::PilInfoCfg::goldilocks(1), &Default::default()).unwrap();
-        let err = ExpressionsInfo::try_from(&result.pil_code.expressions_info).unwrap_err();
-        assert!(format!("{err:#}").ends_with(&not_goldilocks("18446744073709551621")), "{err:#}");
+        let cfg = pil_info::PilInfoCfg { opening: pil_info::Opening::Shplonk, ..pil_info::PilInfoCfg::goldilocks(1) };
+        let result = pil_info::shplonk_info(&pilout, 0, 0, &cfg, &Default::default()).unwrap();
+        let ei = ExpressionsInfo::try_from(&result.pil_code.expressions_info).unwrap();
+        let numbers = ei.expressions_code.iter().flat_map(|e| &e.code).flat_map(|op| &op.src);
+        let numbers: Vec<u64> =
+            numbers.filter(|s| s.op_type == pil_info::types::code::OpType::Number).map(|s| s.value).collect();
+        assert!(numbers.contains(&((1u64 << 32) + 4)), "2^64 + 5 mod p: {numbers:?}");
     }
 
     /// The same refusal when the code is read back from its JSON (the recursive setups).
@@ -691,7 +635,7 @@ mod tests {
         let err = ExpressionsInfo::from_json(&json(R_MINUS_ONE)).unwrap_err();
         assert_eq!(err.to_string(), not_goldilocks(R_MINUS_ONE));
 
-        let hints = serde_json::json!({"constraints": [], "hints": [{
+        let hints = serde_json::json!({"hints": [{
             "name": "h", "fields": [{"name": "f", "values": [{"op": "number", "value": R_MINUS_ONE, "pos": []}]}],
         }]});
         let err = GlobalConstraintsInfo::from_json(&hints).unwrap_err();

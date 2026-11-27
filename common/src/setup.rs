@@ -375,8 +375,9 @@ impl<F: PrimeField64> Setup<F> {
         } else {
             // Otherwise, initialize the pointers with their respective values
             let stark_info_json = std::fs::read_to_string(&stark_info_path)
-                .unwrap_or_else(|_| panic!("Failed to read file {}", stark_info_path));
-            let stark_info = StarkInfo::from_json(&stark_info_json);
+                .map_err(|e| ProofmanError::InvalidSetup(format!("Failed to read {stark_info_path}: {e}")))?;
+            let stark_info = StarkInfo::try_from_json(&stark_info_json)
+                .map_err(|e| ProofmanError::InvalidSetup(format!("{stark_info_path}: {e}")))?;
             let recursive = setup_type != &ProofType::Basic || self_contained;
             let recursive_final = setup_type == &ProofType::RecursiveF;
             // The poseidon families' recursivef is a BN128 STARK, with a prover of its own (the
@@ -384,7 +385,7 @@ impl<F: PrimeField64> Setup<F> {
             let bn128_recursive_final = recursive_final && stark_info.stark_struct.verification_hash_type == "BN128";
             let p_stark_info =
                 stark_info_new_c(stark_info_path.as_str(), recursive_final, recursive, verify_constraints, false, gpu);
-            let expressions_bin = expressions_bin_new_c(expressions_bin_path.as_str(), false, false);
+            let expressions_bin = expressions_bin_new_c(expressions_bin_path.as_str(), false);
             let n_max_tmp1 = get_max_n_tmp1_c(expressions_bin);
             let n_max_tmp3 = get_max_n_tmp3_c(expressions_bin);
             set_memory_expressions_c(p_stark_info, n_max_tmp1, n_max_tmp3);

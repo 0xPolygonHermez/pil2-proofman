@@ -5,6 +5,8 @@
 #include <cmath>
 #include <string>
 #include <vector>
+#include <memory>
+#include <tuple>
 #include "zkassert.hpp"
 #include "goldilocks_base_field.hpp"
 #include "zklog.hpp"
@@ -33,9 +35,7 @@ typedef enum
     x = 11,
     Zi = 12,
     eval = 13,
-    xDivXSubXi = 14,
     q = 15,
-    f = 16,
 } opType;
 
 
@@ -45,14 +45,6 @@ public:
     std::string name;
     vector<uint32_t> stageWidths;
     vector<uint32_t> publicValues;
-};
-
-class Boundary
-{
-public:
-    std::string name;
-    uint64_t offsetMin;
-    uint64_t offsetMax;
 };
 
 /// The low-degree test run on the batched DEEP polynomial f_0.
@@ -162,9 +154,39 @@ public:
 // setMapOffsets, which sizes the "evals_partials" region for the reduction partials.
 static constexpr uint64_t EVALS_HELPER_CHUNKS = 32;
 
+struct DeepTables;
+
+// The starkinfo keyVersion this prover reads (the setup's KEY_VERSION).
+static constexpr uint64_t STARK_INFO_KEY_VERSION = 2;
+
 class StarkInfo
 {
 public:
+    // Elements of an air/airgroup/proof value: 1 at stage 1, else FIELD_EXTENSION (3, not defined here).
+    static uint64_t valueDim(const PolMap &m) { return m.stage == 1 ? 1 : 3; }
+
+    // The polynomial an evMap entry opens.
+    const PolMap &evPol(const EvMap &ev) const
+    {
+        return ev.type == EvMap::eType::cm       ? cmPolsMap[ev.id]
+               : ev.type == EvMap::eType::custom ? customCommitsMap[ev.commitId][ev.id]
+                                                 : constPolsMap[ev.id];
+    }
+
+    // A column's identity in the evMap: (type, commitId if custom else 0, id).
+    static std::tuple<uint64_t, uint64_t, uint64_t> colKey(EvMap::eType type, uint64_t commitId, uint64_t id)
+    {
+        return {uint64_t(type), type == EvMap::eType::custom ? commitId : 0, id};
+    }
+
+    // mapOffsets/mapSectionsN key of a column: cm<stage>, <custom name>0 or const.
+    std::string sectionName(EvMap::eType type, uint64_t stage, uint64_t commitId) const
+    {
+        return type == EvMap::eType::cm       ? "cm" + std::to_string(stage)
+               : type == EvMap::eType::custom ? customCommits[commitId].name + "0"
+                                              : "const";
+    }
+
     // Read from starkInfo file
     StarkStruct starkStruct;
 
@@ -197,14 +219,12 @@ public:
     vector<EvMap> evMap;
     
     vector<int64_t> openingPoints;
-    vector<Boundary> boundaries;
 
     uint64_t qDeg;
     uint64_t qDim;
 
     uint64_t nConstraints;
 
-    uint64_t deepExpId;
     uint64_t cExpId;
 
     std::map<std::string, uint64_t> mapSectionsN;
@@ -233,6 +253,9 @@ public:
     uint64_t airValuesSize;
     uint64_t airgroupValuesSize;
     uint64_t proofValuesSize;
+
+    // DEEP term tables (deep.hpp), built once per prover/verifier setup; null for verify_constraints setups.
+    std::shared_ptr<const DeepTables> deepTables;
 
     /* Constructor */
     StarkInfo(string file, bool recursive_final = false, bool recursive = false, bool verify_constraints = false, bool verify = false, bool gpu = false);

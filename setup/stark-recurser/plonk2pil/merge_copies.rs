@@ -30,9 +30,7 @@
 //! Dropping a copy is only sound if the connection re-enforces the equality, which
 //! requires a representative placed more than once to occupy >= 2 cells in
 //! connection-covered columns (`col < n_cols`); one placed once had a dead partner and
-//! needs nothing. [`verify_merge_soundness`] checks this, and that the sweep left no
-//! merged-away id, on the final `s_map`, and panics otherwise. The condition depends on
-//! the verifier circuit's layout, so it is enforced at runtime rather than assumed.
+//! needs nothing. The plonk checker (`check`) verifies every setup's result against its r1cs.
 
 use proofman_fields::Field;
 
@@ -114,9 +112,6 @@ pub struct MergeResult<F> {
     pub remap: Vec<u32>,
     /// Number of copy gates dropped.
     pub dropped: usize,
-    /// Representative id of every merged pair. Pass to [`verify_merge_soundness`]
-    /// after the sweep to check each has >= 2 connection-covered cells.
-    pub merged_reps: Vec<u32>,
 }
 
 /// Merge exact-copy signals, drop the redundant copy gates, and return a remap
@@ -144,12 +139,6 @@ pub fn merge_copy_signals<F: Field>(
         }
     }
 
-    // Representatives of every merged pair (for the post-sweep soundness check).
-    let mut merged_reps: Vec<u32> =
-        constraints.iter().zip(merged_away.iter()).filter(|(_, &m)| m).map(|(c, _)| uf.find(c.wires[0])).collect();
-    merged_reps.sort_unstable();
-    merged_reps.dedup();
-
     // Surviving constraints, with operands remapped to representatives.
     let mut out_constraints = Vec::with_capacity(constraints.len());
     let mut dropped = 0usize;
@@ -168,47 +157,7 @@ pub fn merge_copy_signals<F: Field>(
     // Materialize the full remap table (id -> representative) for the s_map sweep.
     let remap: Vec<u32> = (0..uf.parent.len() as u32).map(|id| uf.find(id)).collect();
 
-    MergeResult { constraints: out_constraints, additions: out_additions, remap, dropped, merged_reps }
-}
-
-/// Assert the soundness condition on the swept `s_map`; run after
-/// [`apply_remap_to_s_map`].
-///
-/// Two things must hold. The sweep reached every placement: no cell still holds an id that is
-/// not its own representative. And every merged representative placed more than once has >= 2
-/// cells in the connection band (`col < n_cols`), the only columns whose equalities the
-/// permutation enforces. A representative placed once is a copy whose other endpoint is dead
-/// (placed nowhere), so the dropped copy constrained nothing -- what circom --O1 leaves behind
-/// and --O2 would have removed.
-pub fn verify_merge_soundness(s_map: &[Vec<u32>], merged_reps: &[u32], remap: &[u32], n_cols: usize) {
-    use std::collections::HashMap;
-    let mut in_band: HashMap<u32, usize> = HashMap::new();
-    let mut total: HashMap<u32, usize> = HashMap::new();
-    let mut stale = 0usize;
-    for (c, col) in s_map.iter().enumerate() {
-        for &cell in col {
-            if cell == 0 {
-                continue;
-            }
-            if remap.get(cell as usize).is_some_and(|&r| r != cell) {
-                stale += 1;
-            }
-            *total.entry(cell).or_insert(0) += 1;
-            if c < n_cols {
-                *in_band.entry(cell).or_insert(0) += 1;
-            }
-        }
-    }
-    assert_eq!(stale, 0, "merge_copies: {stale} cells still hold a merged-away id: apply_remap_to_s_map missed them");
-    let unenforced = merged_reps
-        .iter()
-        .filter(|rep| total.get(rep).copied().unwrap_or(0) >= 2 && in_band.get(rep).copied().unwrap_or(0) < 2)
-        .count();
-    assert_eq!(
-        unenforced, 0,
-        "merge_copies: {unenforced} merged representatives are placed more than once but in fewer than 2 \
-         connection-covered cells (col < {n_cols}): their dropped copy equalities are unenforced"
-    );
+    MergeResult { constraints: out_constraints, additions: out_additions, remap, dropped }
 }
 
 /// Rewrite every `s_map` cell to its representative id from `remap`. Covers all
@@ -225,18 +174,15 @@ pub fn apply_remap_to_s_map(s_map: &mut [Vec<u32>], remap: &[u32]) {
     }
 }
 
-/// Remap + merged-representative payload the setup applies to `s_map` after placement.
+/// The remap the setup applies to `s_map` after placement.
 pub struct CopyMerge {
     /// `remap[id]` = representative; apply to every s_map cell via [`apply_remap_to_s_map`].
     pub remap: Vec<u32>,
-    /// Representatives of merged pairs; pass to [`verify_merge_soundness`] after the sweep.
-    pub merged_reps: Vec<u32>,
 }
 
 /// Run [`r1cs2plonk`] and, if `merge` is set, apply [`merge_copy_signals`].
 /// Returns the surviving `(constraints, additions)` and a [`CopyMerge`] payload.
-/// When `merge` is false the remap is identity (sweep is a no-op) and `merged_reps`
-/// is empty (soundness check is vacuous).
+/// When `merge` is false the remap is identity (sweep is a no-op).
 pub fn r1cs2plonk_merged<F: Field>(
     r1cs: &R1csFile<F>,
     merge: bool,
@@ -244,7 +190,7 @@ pub fn r1cs2plonk_merged<F: Field>(
     let (constraints, additions) = r1cs2plonk(r1cs);
     if !merge {
         let identity: Vec<u32> = (0..r1cs.header.n_vars).collect();
-        return (constraints, additions, CopyMerge { remap: identity, merged_reps: Vec::new() });
+        return (constraints, additions, CopyMerge { remap: identity });
     }
     let n_publics = r1cs.header.n_outputs + r1cs.header.n_pub_inputs;
     let before = constraints.len();
@@ -255,7 +201,7 @@ pub fn r1cs2plonk_merged<F: Field>(
         r.constraints.len(),
         r.dropped
     );
-    (r.constraints, r.additions, CopyMerge { remap: r.remap, merged_reps: r.merged_reps })
+    (r.constraints, r.additions, CopyMerge { remap: r.remap })
 }
 
 #[cfg(test)]
@@ -345,129 +291,6 @@ mod tests {
         assert_eq!(r.dropped, 3);
         assert_eq!(r.constraints.len(), 1);
         assert_eq!(r.remap[5], r.remap[8]);
-    }
-
-    /// On a real recursion R1CS: after the packer runs with merge on, every merged
-    /// exact-copy endpoint resolves to the same representative in the final s_map and
-    /// no raw endpoint id survives, so the connection argument ties them. Point it at
-    /// a real recursion `.r1cs` via `MERGE_R1CS` (no fixture committed):
-    ///   MERGE_R1CS=path/to/x.r1cs cargo test -p pil2-stark-recurser structural_merge_soundness -- --nocapture
-    ///
-    /// Not `#[ignore]`d: it self-skips loudly, and behind `--ignored` nobody ran the only
-    /// end-to-end check on the one place the pipeline drops a constraint.
-    #[test]
-    fn structural_merge_soundness() {
-        use crate::plonk2pil::r1cs::to_plonk::r1cs2plonk;
-        use crate::plonk2pil::r1cs::types::{read_r1cs_from_bytes, PlonkOptions};
-        use crate::plonk2pil::packers::pack_aggregation;
-        use std::collections::HashMap;
-
-        let Ok(f) = std::env::var("MERGE_R1CS") else {
-            eprintln!("set MERGE_R1CS=/path/to/file.r1cs to run this check");
-            return;
-        };
-        let bytes = std::fs::read(&f).unwrap_or_else(|e| panic!("read {f}: {e}"));
-        let r1cs = read_r1cs_from_bytes::<Goldilocks>(&bytes).unwrap();
-        let n_publics = r1cs.header.n_outputs + r1cs.header.n_pub_inputs;
-
-        // Recompute the remap the packer will use.
-        let (constraints, additions) = r1cs2plonk(&r1cs);
-        let mr = merge_copy_signals(&constraints, &additions, r1cs.header.n_vars, n_publics);
-
-        // Run the real packer WITH merge -> inspect final s_map. (pack_aggregation
-        // internally runs verify_merge_soundness; reaching here means it passed.)
-        let opts = PlonkOptions { merge_copies: true, ..Default::default() };
-        let res = pack_aggregation(&r1cs, &opts);
-
-        // Build a value-independent check: for each merged-away exact copy (sl,sr),
-        // remap[sl] must equal remap[sr] (guaranteed by union-find), AND every cell
-        // in s_map that holds sl or sr must now hold that common representative.
-        // Collect, per original id, the set of distinct ids it appears as in s_map.
-        let mut id_in_smap: HashMap<u32, bool> = HashMap::new();
-        for col in &res.s_map {
-            for &cell in col {
-                if cell != 0 {
-                    id_in_smap.insert(cell, true);
-                }
-            }
-        }
-
-        // Every dropped copy's endpoints share a representative (union-find property),
-        // and the representative is what's actually placed (no raw endpoint survives).
-        let mut violations = 0usize;
-        let mut checked = 0usize;
-        for c in &constraints {
-            if is_exact_copy(c) {
-                let [sl, sr, _] = c.wires;
-                let rep_l = mr.remap[sl as usize];
-                let rep_r = mr.remap[sr as usize];
-                if rep_l != rep_r {
-                    violations += 1;
-                    if violations <= 5 {
-                        eprintln!("VIOLATION: copy {sl}={sr} -> reps {rep_l},{rep_r} differ");
-                    }
-                    continue;
-                }
-                checked += 1;
-                // The raw endpoints must NOT appear in the final s_map (only the rep).
-                if sl != rep_l && id_in_smap.contains_key(&sl) {
-                    violations += 1;
-                    if violations <= 10 {
-                        eprintln!("VIOLATION: raw endpoint {sl} still present in s_map (rep {rep_l})");
-                    }
-                }
-                if sr != rep_r && id_in_smap.contains_key(&sr) {
-                    violations += 1;
-                    if violations <= 10 {
-                        eprintln!("VIOLATION: raw endpoint {sr} still present in s_map (rep {rep_r})");
-                    }
-                }
-            }
-        }
-        eprintln!(
-            "structural check: {} exact copies, {} checked, {} dropped, {} VIOLATIONS",
-            constraints.iter().filter(|c| is_exact_copy(c)).count(),
-            checked,
-            mr.dropped,
-            violations
-        );
-        assert_eq!(violations, 0, "merged copy endpoints must unify in s_map (sound)");
-    }
-
-    fn ident(n: u32) -> Vec<u32> {
-        (0..n).collect()
-    }
-
-    #[test]
-    fn guard_passes_when_rep_has_two_in_band_cells() {
-        // rep 5 appears twice in-band (cols < n_cols=4) -> sound.
-        let s_map = vec![vec![5u32], vec![5u32], vec![0u32], vec![0u32]];
-        verify_merge_soundness(&s_map, &[5], &ident(8), 4);
-    }
-
-    #[test]
-    fn guard_passes_a_dead_endpoint() {
-        // rep 5 is placed once: its copy partner is placed nowhere, so the copy bound nothing.
-        let s_map = vec![vec![5u32], vec![0u32], vec![0u32], vec![0u32]];
-        verify_merge_soundness(&s_map, &[5], &ident(8), 4);
-    }
-
-    #[test]
-    #[should_panic(expected = "unenforced")]
-    fn guard_fires_when_a_second_placement_is_out_of_band() {
-        // rep 5 in col 0 and in col 4 (>= n_cols=4): the permutation never sees the second cell.
-        let s_map = vec![vec![5u32], vec![0u32], vec![0u32], vec![0u32], vec![5u32]];
-        verify_merge_soundness(&s_map, &[5], &ident(8), 4);
-    }
-
-    #[test]
-    #[should_panic(expected = "missed them")]
-    fn guard_fires_when_the_sweep_missed_a_cell() {
-        // 6 merged into 5, but a cell still holds 6: the remap never reached it.
-        let mut remap = ident(8);
-        remap[6] = 5;
-        let s_map = vec![vec![5u32], vec![6u32], vec![0u32], vec![0u32]];
-        verify_merge_soundness(&s_map, &[5], &remap, 4);
     }
 
     #[test]

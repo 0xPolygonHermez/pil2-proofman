@@ -1,0 +1,17 @@
+[package]
+name = "constraint-dag"
+description = "The constraint DAG: format, JSON codec, validation, leaf resolution and evaluation (no_std)"
+version = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+keywords = { workspace = true }
+homepage = { workspace = true }
+repository = { workspace = true }
+categories = { workspace = true }
+
+[dependencies]
+serde = { version = "1.0.130", default-features = false, features = ["alloc", "derive"] }
+serde_json = { version = "1.0.68", default-features = false, features = ["alloc"] }
+
+[dev-dependencies]
+serde_json = { version = "1.0.68" }

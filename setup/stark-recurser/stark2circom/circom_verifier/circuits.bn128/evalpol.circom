@@ -1,5 +1,6 @@
 pragma circom 2.1.0;
 
+// Both field families' EvalPol: the includer brings its family's gl_family.circom.
 include "gl.circom";
 
 // Given a polynomial p(X) of degree lower than n over the GL³ field, and an evaluation point x from GL³,
@@ -11,7 +12,7 @@ template EvalPol(n) {
     signal output {maxNum} out[3];
 
     signal {maxNum} cmul[n-1][3];
-    cmul.maxNum = 0xFFFFFFFFFFFFFFFF;
+    cmul.maxNum = max64();
     
     for (var i=1; i<n; i++) {
         if (i==1) {

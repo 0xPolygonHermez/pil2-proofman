@@ -1281,6 +1281,7 @@ fn invariant_leaf(o: &Operand) -> bool {
             | Operand::Pub { .. }
             | Operand::Av { .. }
             | Operand::Agv { .. }
+            | Operand::Pv { .. }
             | Operand::Tab { .. }
     )
 }

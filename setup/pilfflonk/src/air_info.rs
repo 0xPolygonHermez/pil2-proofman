@@ -46,9 +46,9 @@ use std::collections::btree_map::Entry;
 use std::collections::BTreeMap;
 
 use pil2_pilout::pilout as pb;
-use pil_info::pil::constraint_poly::Boundary as PassesBoundary;
+use pil_info::core::ir::{Boundary as PassesBoundary, ColType};
 use pil_info::types::pilout_info::SymbolInfo;
-use pil_info::PilInfoResult;
+use pil_info::ShplonkResult;
 use proofman_pilfflonk::layout::{q_pieces, split_max_q_degree};
 use proofman_pilfflonk::names::column_name;
 pub use proofman_pilfflonk::names::q_piece_name;
@@ -143,7 +143,7 @@ fn column(symbol: &SymbolInfo, what: &str, i: usize) -> Result<(u64, u64), Setup
 }
 
 /// `constPolsMap`: every fixed column of `air`, each with its symbol.
-fn const_pols_map(result: &PilInfoResult, air: &pb::Air) -> Result<Vec<PolMapEntry>, SetupError> {
+fn const_pols_map(result: &ShplonkResult, air: &pb::Air) -> Result<Vec<PolMapEntry>, SetupError> {
     let map = &result.setup.const_pols_map;
     if map.len() != air.fixed_cols.len() || map.iter().any(|s| s.sym_type != "fixed") {
         return Err(SetupError::InvalidPilout(format!(
@@ -179,7 +179,7 @@ fn const_pols_map(result: &PilInfoResult, air: &pb::Air) -> Result<Vec<PolMapEnt
 
 /// `cmPolsMap`: the columns and im pols of `pil-info`'s, the columns named alike indexed, then the
 /// pieces of `Q` (see [the module](self)).
-fn cm_pols_map(result: &PilInfoResult, air: &pb::Air, q_pieces: u64) -> Result<Vec<PolMapEntry>, SetupError> {
+fn cm_pols_map(result: &ShplonkResult, air: &pb::Air, q_pieces: u64) -> Result<Vec<PolMapEntry>, SetupError> {
     let setup = &result.setup;
     let q_stage = setup.n_stages + 1;
     let n_columns = setup.cm_pols_map.iter().take_while(|s| s.stage != Some(q_stage)).count();
@@ -261,10 +261,7 @@ fn name_stage_entries(map: &[SymbolInfo], what: &str) -> Result<Vec<NameStageEnt
         .collect()
 }
 
-fn challenges_map(result: &PilInfoResult) -> Result<Vec<ChallengeMapEntry>, SetupError> {
-    if !result.pil_code.challenges_map.is_empty() {
-        return passes_output("the code added challenges, as the DEEP opening does".to_string());
-    }
+fn challenges_map(result: &ShplonkResult) -> Result<Vec<ChallengeMapEntry>, SetupError> {
     result
         .setup
         .challenges_map
@@ -282,31 +279,26 @@ fn challenges_map(result: &PilInfoResult) -> Result<Vec<ChallengeMapEntry>, Setu
         .collect()
 }
 
-fn boundary(b: &PassesBoundary) -> Result<Boundary, SetupError> {
-    match (b.name.as_str(), b.offset_min, b.offset_max) {
-        ("everyRow", _, _) => Ok(Boundary::EveryRow),
-        ("firstRow", _, _) => Ok(Boundary::FirstRow),
-        ("lastRow", _, _) => Ok(Boundary::LastRow),
-        ("everyFrame", Some(min), Some(max)) => {
-            Ok(Boundary::EveryFrame { offset_min: u64::from(min), offset_max: u64::from(max) })
+fn boundary(b: &PassesBoundary) -> Boundary {
+    match *b {
+        PassesBoundary::EveryRow => Boundary::EveryRow,
+        PassesBoundary::FirstRow => Boundary::FirstRow,
+        PassesBoundary::LastRow => Boundary::LastRow,
+        PassesBoundary::EveryFrame { min, max } => {
+            Boundary::EveryFrame { offset_min: u64::from(min), offset_max: u64::from(max) }
         }
-        (name, min, max) => passes_output(format!("boundary {name} (offsets {min:?}, {max:?})")),
     }
 }
 
-fn ev_map(result: &PilInfoResult) -> Result<Vec<EvMapEntry>, SetupError> {
-    result
-        .pil_code
-        .ev_map
-        .iter()
-        .enumerate()
+fn ev_map(result: &ShplonkResult) -> Result<Vec<EvMapEntry>, SetupError> {
+    (result.ev_map.iter().enumerate())
         .map(|(i, e)| {
-            let pol_type = match (e.entry_type.as_str(), e.commit_id) {
-                ("cm", None) => PolType::Cm,
-                ("const", None) => PolType::Const,
-                (other, _) => return passes_output(format!("evMap[{i}] is of type {other}")),
+            let pol_type = match (e.pol.col, e.pol.commit_id) {
+                (ColType::Witness, None) => PolType::Cm,
+                (ColType::Fixed, None) => PolType::Const,
+                (other, _) => return passes_output(format!("evMap[{i}] is of type {other:?}")),
             };
-            Ok(EvMapEntry { pol_type, id: e.id as u64, prime: e.prime, opening_pos: e.opening_pos as u64 })
+            Ok(EvMapEntry { pol_type, id: e.pol.id.into(), prime: e.pol.offset, opening_pos: e.opening_pos.into() })
         })
         .collect()
 }
@@ -318,15 +310,12 @@ fn ev_map(result: &PilInfoResult) -> Result<Vec<EvMapEntry>, SetupError> {
 /// (`JsonFile::validate`) before it is returned, so that nothing is written for a pilfflonkinfo
 /// that cannot be.
 pub fn air_setup(
-    result: &PilInfoResult,
+    result: &ShplonkResult,
     air_ref: AirRef,
     air: &pb::Air,
     max_q_degree: u64,
     packing: Packing,
 ) -> Result<AirSetup, SetupError> {
-    if result.deep_exp_id.is_some() {
-        return passes_output("a DEEP polynomial: the passes must run with PilInfoCfg::bn128()".to_string());
-    }
     let setup = &result.setup;
     let q_deg = u64::try_from(result.q_deg).map_err(|_| SetupError::QDegree(result.q_deg))?;
     let n_stages = setup.n_stages as u64;
@@ -362,7 +351,7 @@ pub fn air_setup(
         airgroup_values_map: name_stage_entries(&setup.airgroup_values_map, "airgroupValuesMap")?,
         map_sections_n,
         opening_points: setup.opening_points.clone(),
-        boundaries: result.boundaries.iter().map(boundary).collect::<Result<_, _>>()?,
+        boundaries: result.boundaries.iter().map(boundary).collect(),
         ev_map,
         q_deg,
         q_dim: 1,

@@ -45,6 +45,8 @@ prost = { workspace = true }
 num-bigint = { workspace = true }
 # The keys of the `pilfflonk verify` and `pilfflonk prove` tests.
 pilfflonk-setup = { workspace = true }
+# Maps a key's (canonical) expId back to the pilout's, which the oracle reads.
+pil-info = { workspace = true }
 # The Rust oracle, which the `pilfflonk prove` test checks the prover against.
 proofman-pilfflonk = { workspace = true, features = ["oracle"] }
 serde_json = { workspace = true }

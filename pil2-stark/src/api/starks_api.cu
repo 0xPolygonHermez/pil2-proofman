@@ -4345,12 +4345,6 @@ void release_first_gpu_buffer_gpu(void *d_buffers_) {
     d_buffers->firstGpuBufferBorrowed.store(0, std::memory_order_release);
 }
 
-uint32_t is_first_gpu_buffer_borrowed_gpu(void *d_buffers_) {
-    if (d_buffers_ == nullptr) return 0;
-    DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
-    return d_buffers->firstGpuBufferBorrowed.load(std::memory_order_acquire);
-}
-
 // Device id of the FIRST GPU (my_gpu_ids[0]) — the borrowed buffer's GPU. NOT
 // necessarily 0 (NUMA can reorder). Consumers bind this before using the buffer.
 uint32_t get_first_gpu_id_gpu(void *d_buffers_) {

@@ -745,6 +745,11 @@ mod tests {
             let err = ExecFile::<Bn128>::from_words(&exec).unwrap_err().to_string();
             assert!(err.contains(why), "expected \"{why}\", got: {err}");
         }
+        // no prefix reads: the reader never runs off a buffer
+        let exec = one_addition();
+        for len in 0..exec.len() {
+            assert!(ExecFile::<Bn128>::from_words(&exec[..len]).is_err(), "{len} of {} words", exec.len());
+        }
     }
 
     /// Of several refused additions, the error names the first, however the parse is split.
@@ -773,6 +778,13 @@ mod tests {
         assert!(
             err.contains(
                 "is format version 3 with 1-word coefficients, not version 2 with the 1-word ones of Goldilocks"
+            ),
+            "{err}"
+        );
+        let err = ExecFile::<Goldilocks>::from_words(&one_addition()).unwrap_err().to_string();
+        assert!(
+            err.contains(
+                "is format version 3 with 4-word coefficients, not version 2 with the 1-word ones of Goldilocks"
             ),
             "{err}"
         );

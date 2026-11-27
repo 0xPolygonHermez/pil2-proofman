@@ -25,6 +25,7 @@
 //! The tests below check that the checked-in files are what they compute, and write them with
 //! `PILFFLONK_UPDATE_FIXTURES=1`, as the Sample.bin test does. The Fibonacci one needs `PIL2C_EXEC`.
 
+use pil_info::core::from_pilout::pilout_expr_index;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -34,10 +35,8 @@ use serde_json::{json, Value};
 use pilfflonk_setup::command::{DEFAULT_EXTRA_MULS, DEFAULT_MAX_CONSTRAINT_DEGREE, DEFAULT_MAX_Q_DEGREE, PROVING_KEY_DIR};
 use pilfflonk_setup::passes;
 use pilfflonk_setup::{run_setup_pilfflonk, SetupPilfflonkOptions};
-use proofman_pilfflonk::oracle::{self, omega, AirOracle, ColumnRef, Domain, Fr};
-use proofman_pilfflonk::{
-    AirFile, Boundary, EvMapEntry, FileWitnessSource, JsonFile, PilfflonkGlobalInfo, PilfflonkInfo, PolType,
-};
+use proofman_pilfflonk::oracle::{self, omega, AirOracle, Domain, Fr};
+use proofman_pilfflonk::{AirFile, Boundary, FileWitnessSource, JsonFile, PilfflonkGlobalInfo, PilfflonkInfo};
 
 use super::*;
 
@@ -382,16 +381,6 @@ fn xi_and_std_vc() -> (Fr, Fr) {
     (Fr::from_u64(7).pow_u64(1000), Fr::from_u64(0x5eed).pow_u64(77))
 }
 
-/// The column an evMap entry evaluates, as the oracle names it.
-fn column_of(info: &PilfflonkInfo, e: &EvMapEntry) -> ColumnRef {
-    let pol = info.pol(e.pol_type, e.id).unwrap();
-    match (e.pol_type, pol.exp_id) {
-        (PolType::Const, _) => ColumnRef::Fixed(e.id as usize),
-        (PolType::Cm, Some(exp_id)) if pol.im_pol => ColumnRef::Im(exp_id as usize),
-        (PolType::Cm, _) => ColumnRef::Witness { stage: pol.stage as usize, idx: pol.stage_id as usize },
-    }
-}
-
 #[test]
 #[ignore = "needs PIL2C_EXEC"]
 fn the_fibonacci_fixtures_are_the_setups_and_the_oracles() {
@@ -419,10 +408,11 @@ fn the_fibonacci_fixtures_are_the_setups_and_the_oracles() {
 
     // The passes again, as the setup ran them, for the qVerifier.
     let cfg = passes::cfg(DEFAULT_MAX_CONSTRAINT_DEGREE).unwrap();
-    let result = pil_info::run(&pilout, 0, 0, &cfg, &Default::default()).unwrap();
+    let result = pil_info::shplonk_info(&pilout, 0, 0, &cfg, &Default::default()).unwrap();
     assert_eq!(Bytecode::from_bytes(&bin).unwrap(), Bytecode::from_pil_info(&result).unwrap());
     let context = CodeContext::from_pil_info(&result).unwrap();
-    let q_verifier = Code::from_entries(&result.pil_code.verifier_info.q_verifier.code, &context, None).unwrap();
+    let q_verifier =
+        Code::from_entries(&result.pil_code.verifier_info.q_verifier.as_ref().unwrap().code, &context, None).unwrap();
     let q_verifier_bin = Bytecode {
         n_stages: context.n_stages,
         expressions: vec![ExpressionBin {
@@ -447,13 +437,14 @@ fn the_fibonacci_fixtures_are_the_setups_and_the_oracles() {
     let source = FileWitnessSource::open(&witness_dir, &shape).unwrap();
     let values = air_oracle.values(&source, 0).unwrap();
     let (xi, std_vc) = xi_and_std_vc();
-    let im_pols: Vec<usize> =
-        info.cm_pols_map.iter().filter(|p| p.im_pol).map(|p| p.exp_id.unwrap() as usize).collect();
+    let im_pols = crate::support::im_pols(&pilout, &info);
     let q = air_oracle.q_at(&values, &im_pols, &std_vc, &xi).unwrap();
     let evals: Vec<Fr> = info
         .ev_map
         .iter()
-        .map(|e| air_oracle.column_at(&values, column_of(&info, e), e.prime as i32, &xi).unwrap())
+        .map(|e| {
+            air_oracle.column_at(&values, crate::support::column_of(&pilout, &info, e), e.prime as i32, &xi).unwrap()
+        })
         .collect();
     let zerofiers: Vec<Fr> = info.boundaries.iter().map(|b| zerofier_term(b, &xi, FIBONACCI_N_BITS)).collect();
     let publics: Vec<Fr> = witness.publics.iter().map(from_bytes).collect();
@@ -541,7 +532,9 @@ fn the_sum_bus_fixtures_are_the_setups_and_the_oracles() {
     let mut stage_2 = vec![Value::Null; info.map_sections_n["cm2"] as usize];
     for p in info.cm_pols_map.iter().filter(|p| p.stage == 2) {
         let column = if p.im_pol {
-            air_oracle.expression_rows(&values, p.exp_id.unwrap() as usize).unwrap()
+            air_oracle
+                .expression_rows(&values, pilout_expr_index(&pilout, 0, 0, p.exp_id.unwrap() as u32).unwrap())
+                .unwrap()
         } else {
             values.witness[1][p.stage_id as usize].clone()
         };

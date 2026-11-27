@@ -555,7 +555,7 @@ struct Fibonacci {
                 imExpId = p.expId;
             }
         }
-        assert(info.nStages == 1 && nWitness == 2 && imPos == 2 && imExpId == 6);
+        assert(info.nStages == 1 && nWitness == 2 && imPos == 2 && imExpId == 13);
     }
 
     ProverValues values(std::vector<std::vector<FrElement>> &fixedColumns,

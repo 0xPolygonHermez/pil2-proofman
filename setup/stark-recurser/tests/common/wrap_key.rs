@@ -1,7 +1,7 @@
 //! The pilfflonk key of a plonk2pil wrap, which the tests of the wrap (`tests/poseidon_bn128_wrap.rs`)
 //! and of its witness (`wrap-witness/tests`) set up alike: plonk2pil's PIL compiled with
 //! `PIL2C_EXEC` over BN128, and set up with plonk2pil's fixed columns and the family's knobs
-//! (`wrap::EXTRA_MULS`, and `wrap::MAX_CONSTRAINT_DEGREE` in the PIL). Included with `#[path]` from
+//! (`wrap_knobs`: extra muls here, the degree in the PIL). Included with `#[path]` from
 //! outside this crate, so it reads nothing of `common` and is told where the repository is.
 
 // Each test crate that includes it uses some of it.
@@ -11,7 +11,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use pil2_stark_recurser::plonk2pil::setups::poseidon_bn128::wrap::EXTRA_MULS;
+use pil2_stark_recurser::plonk2pil::gen::layouts::wrap_knobs;
+use proofman_common::hash_family::HashFamily;
 use pil2_stark_recurser::plonk2pil::PlonkResult;
 use pilfflonk_setup::command::{DEFAULT_MAX_CONSTRAINT_DEGREE, DEFAULT_MAX_Q_DEGREE, PROVING_KEY_DIR};
 use pilfflonk_setup::{run_setup_pilfflonk_with_external_fixed, ExternalFixedColumn, SetupPilfflonkOptions};
@@ -25,7 +26,14 @@ mod ptau;
 /// `repo_root` is the repository's root, where plonk2pil's PIL and the std are.
 pub fn set_up_key(repo_root: &Path, dir: &Path, res: &PlonkResult<Bn128>) -> PathBuf {
     // More powers than the layout's largest degree, 13·N + 12 for L1 at the family's knobs.
-    set_up_key_with(repo_root, dir, res, 14 << res.n_bits, EXTRA_MULS, DEFAULT_MAX_CONSTRAINT_DEGREE)
+    set_up_key_with(
+        repo_root,
+        dir,
+        res,
+        14 << res.n_bits,
+        wrap_knobs(HashFamily::Poseidon1).unwrap().extra_muls,
+        DEFAULT_MAX_CONSTRAINT_DEGREE,
+    )
 }
 
 /// [`set_up_key`] with an official ptau of at least `n_g1` powers, at least the layout's largest

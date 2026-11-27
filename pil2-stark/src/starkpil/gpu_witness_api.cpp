@@ -26,10 +26,4 @@ uint64_t gpu_witness_count(void *d_buffers) {
     return gpu_witness_count_impl(d_buffers);
 }
 
-/// Whether this air's witness is produced on the device.
-int gpu_witness_is_registered(void *d_buffers, uint64_t airgroupId, uint64_t airId) {
-    GpuWitnessAirReg r;
-    return gpu_witness_for(d_buffers, airgroupId, airId, &r) ? 1 : 0;
-}
-
 }  // extern "C"

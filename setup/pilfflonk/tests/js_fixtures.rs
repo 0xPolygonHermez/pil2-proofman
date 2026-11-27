@@ -26,15 +26,20 @@
 #[path = "../../../pilfflonk/tests/data/fibonacci.rs"]
 mod fibonacci;
 
+#[path = "support/oracle.rs"]
+mod support;
+
 use std::fs;
 use std::path::PathBuf;
 
+use pil2_pilout::pilout as pb;
 use pil2_pilout::pilout_proxy::PilOutProxy;
-use proofman_pilfflonk::oracle::{self, AirOracle, ColumnRef, Fr, Values};
+use proofman_pilfflonk::oracle::{self, AirOracle, Fr, Values};
 use proofman_pilfflonk::{
     prove, AirFile, EvMapEntry, FileWitnessSource, JsonFile, PilfflonkGlobalInfo, PilfflonkInfo, PolType, ProofNames,
     ProveOptions, ProvingKey, Vkey,
 };
+use support::{column_of, im_pols};
 use serde_json::{json, Map, Value};
 
 /// The fixture's size and inputs, as `pilfflonk/tests/fibonacci.rs`
@@ -69,21 +74,9 @@ fn fibonacci_proof() {
     out.publics.write(&dir.join("publics.json")).unwrap();
 }
 
-/// The column of the oracle an evaluation is of: a fixed column by its index, which is the
-/// pilout's, and a committed one by its stage and `stageId`, the pilout's index within the stage
-/// (`pilfflonk/tests/fibonacci.rs`); an im pol by its `expId`, the index of its expression in the
-/// pilout (the setup's numbering, which `setup/pil2-stark/tests/setup_pilfflonk.rs` checks).
-fn column_of(info: &PilfflonkInfo, e: &EvMapEntry) -> ColumnRef {
-    let pol = info.pol(e.pol_type, e.id).expect("an evMap entry of the pilfflonkinfo");
-    match (e.pol_type, pol.exp_id) {
-        (PolType::Const, _) => ColumnRef::Fixed(e.id as usize),
-        (PolType::Cm, Some(exp_id)) if pol.im_pol => ColumnRef::Im(exp_id as usize),
-        (PolType::Cm, _) => ColumnRef::Witness { stage: pol.stage as usize, idx: pol.stage_id as usize },
-    }
-}
-
 /// The AIR the cases of `q_at_xi.json` are of.
 struct Air<'a> {
+    pilout: &'a pb::PilOut,
     oracle: AirOracle,
     info: &'a PilfflonkInfo,
     /// Every entry of the evMap, with its name in the proof.
@@ -93,16 +86,11 @@ struct Air<'a> {
 impl Air<'_> {
     /// One case of `q_at_xi.json`: the evaluations of `values` at `ξ` and `Q(ξ)` from them.
     fn case(&self, name: &str, values: &Values, xi: Fr, std_vc: Fr) -> Value {
-        let im_pols: Vec<usize> = self
-            .info
-            .cm_pols_map
-            .iter()
-            .filter(|p| p.im_pol)
-            .map(|p| p.exp_id.expect("an im pol has an expId") as usize)
-            .collect();
+        let im_pols = im_pols(self.pilout, self.info);
         let mut evaluations = Map::new();
         for (name, e) in &self.names {
-            let value = self.oracle.column_at(values, column_of(self.info, e), e.prime as i32, &xi).unwrap();
+            let value =
+                self.oracle.column_at(values, column_of(self.pilout, self.info, e), e.prime as i32, &xi).unwrap();
             evaluations.insert(name.clone(), json!(decimal(&value)));
         }
         let q = self.oracle.q_at(values, &im_pols, &std_vc, &xi).unwrap();
@@ -136,7 +124,7 @@ fn q_at_xi() {
     assert_eq!(proof_names.evaluations().len(), info.ev_map.len());
     let names: Vec<(String, &EvMapEntry)> = proof_names.evaluations().iter().cloned().zip(ordered).collect();
 
-    let air = Air { oracle: AirOracle::new(&pilout, 0, 0).unwrap(), info: &info, names };
+    let air = Air { pilout: &pilout, oracle: AirOracle::new(&pilout, 0, 0).unwrap(), info: &info, names };
     assert_eq!(air.oracle.n_bits(), N_BITS);
     let witness_dir = dir.join("witness");
     fibonacci::witness(N_BITS, INPUTS).write(&witness_dir, &oracle::witness_shape(&pilout).unwrap()).unwrap();

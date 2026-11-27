@@ -1,6 +1,7 @@
-#include "expressions_ctx.hpp"
 #include "stir/stir.hpp"
 #include "stark_info.hpp"
+#include "constraint_dag.hpp"
+#include "deep.hpp"
 #include "merkleTreeGL.hpp"
 #include "merkleTreeBN128.hpp"
 
@@ -93,7 +94,12 @@ StirProof<ElementType> stirProofFromJson(json &jproof, const StirParams &params,
 }
 
 template <typename ElementType>
-bool starkVerify(json jproof, StarkInfo& starkInfo, ExpressionsBin& expressionsBin, string verkeyFile, Goldilocks::Element *publics, Goldilocks::Element *proofValues, bool challengesVadcop, Goldilocks::Element* globalChallenge) {
+bool starkVerify(json jproof, StarkInfo& starkInfo, const ConstraintDag& dag, string verkeyFile, Goldilocks::Element *publics, Goldilocks::Element *proofValues, bool challengesVadcop, Goldilocks::Element* globalChallenge) {
+
+    if (verifierInputsMissing(starkInfo, dag, publics, proofValues, challengesVadcop)) {
+        zklog.error("starkVerify: publics or proof values missing");
+        return false;
+    }
 
     json verkeyJson;
     file2json(verkeyFile, verkeyJson);
@@ -125,7 +131,7 @@ bool starkVerify(json jproof, StarkInfo& starkInfo, ExpressionsBin& expressionsB
     Goldilocks::Element airgroupValues[starkInfo.airgroupValuesSize];
     uint64_t ag = 0;
     for(uint64_t i = 0; i < starkInfo.airgroupValuesMap.size() ; ++i) {
-        uint64_t width = starkInfo.airgroupValuesMap[i].stage == 1 ? 1 : FIELD_EXTENSION;
+        uint64_t width = StarkInfo::valueDim(starkInfo.airgroupValuesMap[i]);
         for(uint64_t j = 0; j < width; ++j) {
             airgroupValues[ag++] = Goldilocks::fromString(jproof["airgroupvalues"][i][j]);
         }
@@ -140,12 +146,8 @@ bool starkVerify(json jproof, StarkInfo& starkInfo, ExpressionsBin& expressionsB
     Goldilocks::Element airValues[starkInfo.airValuesSize];
     uint64_t a = 0;
     for(uint64_t i = 0; i < starkInfo.airValuesMap.size(); ++i) {
-        if(starkInfo.airValuesMap[i].stage == 1) {
-            airValues[a++] = Goldilocks::fromString(jproof["airvalues"][i][0]);
-        } else {
-            airValues[a++] = Goldilocks::fromString(jproof["airvalues"][i][0]);
-            airValues[a++] = Goldilocks::fromString(jproof["airvalues"][i][1]);
-            airValues[a++] = Goldilocks::fromString(jproof["airvalues"][i][2]);
+        for(uint64_t j = 0; j < StarkInfo::valueDim(starkInfo.airValuesMap[i]); ++j) {
+            airValues[a++] = Goldilocks::fromString(jproof["airvalues"][i][j]);
         }
     }
 
@@ -215,14 +217,10 @@ bool starkVerify(json jproof, StarkInfo& starkInfo, ExpressionsBin& expressionsB
 
         uint64_t p = 0;
         for(uint64_t i = 0; i < starkInfo.airValuesMap.size(); i++) {
-            if(starkInfo.airValuesMap[i].stage == 1) {
-                p++;
-            } else {
-                if(starkInfo.airValuesMap[i].stage == s) {
-                    transcript.put(&airValues[p], FIELD_EXTENSION);
-                }
-                p += 3;
+            if(starkInfo.airValuesMap[i].stage != 1 && starkInfo.airValuesMap[i].stage == s) {
+                transcript.put(&airValues[p], FIELD_EXTENSION);
             }
+            p += StarkInfo::valueDim(starkInfo.airValuesMap[i]);
         }
         // Bind airgroupvalues to the transcript (they are otherwise only used in the Q check).
         // Only the Goldilocks transcript absorbs airgroupvalues.
@@ -235,7 +233,7 @@ bool starkVerify(json jproof, StarkInfo& starkInfo, ExpressionsBin& expressionsB
         uint64_t pag = 0;
         for(uint64_t i = 0; i < starkInfo.airgroupValuesMap.size(); i++) {
             // Stage 1 is absorbed in round 2; wider stages in their own round.
-            uint64_t width = starkInfo.airgroupValuesMap[i].stage == 1 ? 1 : FIELD_EXTENSION;
+            uint64_t width = StarkInfo::valueDim(starkInfo.airgroupValuesMap[i]);
             uint64_t eff = starkInfo.airgroupValuesMap[i].stage < 2 ? 2 : starkInfo.airgroupValuesMap[i].stage;
             if(eff == s) {
                 transcript.put(&airgroupValues[pag], width);
@@ -399,41 +397,19 @@ bool starkVerify(json jproof, StarkInfo& starkInfo, ExpressionsBin& expressionsB
     }
     
     Goldilocks::Element xiChallenge[FIELD_EXTENSION];
+    std::memcpy(&xiChallenge[0], &challenges[starkInfo.deepTables->xiIdx * FIELD_EXTENSION], FIELD_EXTENSION * sizeof(Goldilocks::Element));
 
-    for (uint64_t i = 0; i < starkInfo.challengesMap.size(); i++)
-    {
-        if(starkInfo.challengesMap[i].stage == starkInfo.nStages + 2) {
-            if(starkInfo.challengesMap[i].stageId == 0) {
-                std::memcpy(&xiChallenge[0], &challenges[i*FIELD_EXTENSION], FIELD_EXTENSION * sizeof(Goldilocks::Element));
-            }
-        }
-    }
+    const DeepTables &deepT = *starkInfo.deepTables;
+    const DeepConsts deepC = deepConstants(deepT, challenges, evals, starkInfo.starkStruct.nBits);
+    const uint64_t nOpenings = starkInfo.openingPoints.size();
 
-    ProverHelpers proverHelpers(starkInfo, xiChallenge);
-
-    SetupCtx setupCtx(starkInfo, expressionsBin);
-
-    Goldilocks::Element *xDivXSub = new Goldilocks::Element[starkInfo.openingPoints.size() * FIELD_EXTENSION * starkInfo.starkStruct.nQueries];
+    // xDivXSub[q][o] = 1 / (x_q - xi * w^o).
+    Goldilocks::Element *xDivXSub = new Goldilocks::Element[nOpenings * FIELD_EXTENSION * starkInfo.starkStruct.nQueries];
     for(uint64_t i = 0; i < starkInfo.starkStruct.nQueries; ++i) {
-        uint64_t query = queriesL0[i];
-        Goldilocks::Element x = Goldilocks::shift() * Goldilocks::exp(Goldilocks::w(starkInfo.starkStruct.nBitsExt), query);
-        for(uint64_t o = 0; o < starkInfo.openingPoints.size(); ++o) {
-            Goldilocks::Element w = Goldilocks::one();
-
-            for(uint64_t j = 0; j < uint64_t(std::abs(starkInfo.openingPoints[o])); ++j) {
-                w = w * Goldilocks::w(starkInfo.starkStruct.nBits);
-            }
-            if(starkInfo.openingPoints[o] < 0) {
-                w = Goldilocks::inv(w);
-            }
-            
-            Goldilocks::Element x_ext[FIELD_EXTENSION] = { x, Goldilocks::zero(), Goldilocks::zero() };
-            Goldilocks::Element aux[FIELD_EXTENSION];
-            Goldilocks3::mul((Goldilocks3::Element &)aux[0], (Goldilocks3::Element &)xiChallenge[0], w);
-            Goldilocks3::sub((Goldilocks3::Element &)aux[0], (Goldilocks3::Element &)x_ext[0], (Goldilocks3::Element &)aux[0]);
-            Goldilocks3::inv((Goldilocks3::Element *)aux, (Goldilocks3::Element *)aux);
-            std::memcpy(&xDivXSub[(i*starkInfo.openingPoints.size() + o)*FIELD_EXTENSION], &aux[0], FIELD_EXTENSION * sizeof(Goldilocks::Element));
-        }
+        Goldilocks::Element x = Goldilocks::shift() * Goldilocks::exp(Goldilocks::w(starkInfo.starkStruct.nBitsExt), queriesL0[i]);
+        Goldilocks3::Element *row = (Goldilocks3::Element *)&xDivXSub[i*nOpenings*FIELD_EXTENSION];
+        deepDenominators(deepC, x, row);
+        for(uint64_t o = 0; o < nOpenings; ++o) Goldilocks3::inv(row[o], row[o]);
     }
 
     Goldilocks::Element *trace = new Goldilocks::Element[starkInfo.mapSectionsN["cm1"]*starkInfo.starkStruct.nQueries];
@@ -469,36 +445,17 @@ bool starkVerify(json jproof, StarkInfo& starkInfo, ExpressionsBin& expressionsB
         }   
     }
 
-    StepsParams params = {
-        .trace = trace,
-        .aux_trace = aux_trace,
-        .publicInputs = publics,
-        .proofValues = proofValues,
-        .challenges = challenges,
-        .airgroupValues = airgroupValues,
-        .airValues = airValues,
-        .evals = evals,
-        .xDivXSub = xDivXSub,
-        .pConstPolsAddress = constPolsVals,
-        .pConstPolsExtendedTreeAddress = nullptr,
-        .pCustomCommitsFixed = trace_custom_commits_fixed,
-    };
-
     bool isValid = true;
 
     zklog.trace("Verifying evaluations");
-    ExpressionsPack expressionsPack(setupCtx, &proverHelpers, 1);
-    
-    Goldilocks::Element buff[FIELD_EXTENSION];
-    Dest dest(buff, 1, 0);
-    dest.addParams(starkInfo.cExpId, setupCtx.expressionsBin.expressionsInfo[starkInfo.cExpId].destDim);
-    
-    expressionsPack.calculateExpressions(params, dest, 1, false, false);
+    Goldilocks::Element xN[3];
+    Goldilocks3::pow((Goldilocks3::Element &)xN, (Goldilocks3::Element &)xiChallenge, uint64_t(1) << starkInfo.starkStruct.nBits);
 
-    Goldilocks::Element xN[3] = {Goldilocks::one(), Goldilocks::zero(), Goldilocks::zero()};
-    for(uint64_t i = 0; i < uint64_t(1 << starkInfo.starkStruct.nBits); ++i) {
-        Goldilocks3::mul((Goldilocks3::Element *)xN, (Goldilocks3::Element *)xN, (Goldilocks3::Element *)xiChallenge);
-    }
+    // Zi(everyRow) = 1/(xi^N - 1), the only STARK zerofier.
+    DagInputs dagInputs = {evals, challenges, publics, proofValues, airValues, airgroupValues, {xN[0] - Goldilocks::one(), xN[1], xN[2]}};
+    Goldilocks3::inv((Goldilocks3::Element &)dagInputs.zi, (Goldilocks3::Element &)dagInputs.zi);
+    Goldilocks::Element buff[FIELD_EXTENSION];
+    evalConstraintDag(dag, dagInputs, buff);
 
     Goldilocks::Element xAcc[3] = { Goldilocks::one(), Goldilocks::zero(), Goldilocks::zero() };
     Goldilocks::Element q[3] = { Goldilocks::zero(), Goldilocks::zero(), Goldilocks::zero() };
@@ -526,9 +483,15 @@ bool starkVerify(json jproof, StarkInfo& starkInfo, ExpressionsBin& expressionsB
 
     zklog.trace("Verifying FRI queries consistency");
     Goldilocks::Element buffQueries[FIELD_EXTENSION*starkInfo.starkStruct.nQueries];
-    Dest destQueries(buffQueries, starkInfo.starkStruct.nQueries, 0);
-    destQueries.addParams(starkInfo.deepExpId, setupCtx.expressionsBin.expressionsInfo[starkInfo.deepExpId].destDim);
-    expressionsPack.calculateExpressions(params, destQueries, starkInfo.starkStruct.nQueries, false, false);
+    {
+        // The opened rows, point = query index (stage 1 in trace, later stages in aux_trace).
+        const DeepSource src = deepSource(starkInfo, deepT, false, trace, aux_trace, constPolsVals, trace_custom_commits_fixed);
+#pragma omp parallel for
+        for(uint64_t q = 0; q < starkInfo.starkStruct.nQueries; ++q) {
+            deepEvalPoint(deepT, deepC, (const Goldilocks3::Element *)&xDivXSub[q * nOpenings * FIELD_EXTENSION], src.at(q),
+                          *(Goldilocks3::Element *)&buffQueries[q * FIELD_EXTENSION]);
+        }
+    }
     bool isValidFRIConsistency = true;
 #pragma omp parallel for
     for(uint64_t q = 0; q < starkInfo.starkStruct.nQueries; ++q) {

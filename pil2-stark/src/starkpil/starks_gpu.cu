@@ -203,6 +203,7 @@ void unpack_trace(
     CHECKCUDAERR(cudaGetLastError());
 }
 
+// everyRow only: StarkInfo::load refuses any other boundary.
 void computeZerofier(Goldilocks::Element *d_zi, uint64_t nBits, uint64_t nBitsExt, cudaStream_t stream) {
     uint64_t NExtended = 1 << nBitsExt;
     uint64_t extendBits = nBitsExt - nBits;
@@ -216,20 +217,6 @@ void computeZerofier(Goldilocks::Element *d_zi, uint64_t nBits, uint64_t nBitsEx
     dim3 blocks((NExtended + threads.x - 1) / threads.x);
     size_t shared_mem_size = extend * sizeof(gl64_t);
     buildZHInv_kernel<<<blocks, threads, shared_mem_size, stream>>>((gl64_t *)d_zi, extend, NExtended, w, sn);
-    
-    // TODO!
-    // for(uint64_t i = 1; i < boundaries.size(); ++i) {
-    //         Boundary boundary = boundaries[i];
-    //     if(boundary.name == "everyRow") {
-    //         buildZHInv(nBits, nBitsExt);
-    //     } else if(boundary.name == "firstRow") {
-    //         buildOneRowZerofierInv(nBits, nBitsExt, i, 0);
-    //     } else if(boundary.name == "lastRow") {
-    //         buildOneRowZerofierInv(nBits, nBitsExt, i, N);
-    //     } else if(boundary.name == "everyFrame") {
-    //         buildFrameZerofierInv(nBits, nBitsExt, i, boundary.offsetMin, boundary.offsetMax);
-    //     }
-    // }
 }
 
 __global__ void setProdIdentity3(gl64_t *pol) {
@@ -304,14 +291,15 @@ void extendAndMerkelize_inplace(uint64_t step, SetupCtx& setupCtx, MerkleTreeGL*
         const bool aliased = (src + offset_src) == (dst + offset_dst);
         ntt.LDE(dst, offset_dst, src, offset_src, setupCtx.starkInfo.starkStruct.nBits, setupCtx.starkInfo.starkStruct.nBitsExt, nCols, timer, stream, !aliased, (gl64_t*)pNodes, setupCtx.starkInfo.getNumNodesMTCommit(NExtended));
         PROOFMAN_SUMCHECK("proof_after_lde_cm%u", dst + offset_dst, (uint64_t)NExtended * nCols, stream, (unsigned)step);
-        if (!skipTree) {
-            TimerStartCategoryGPU(timer, MERKLE_TREE);
-            buildCommitTreeGPU(setupCtx.starkInfo.dropLeafLevel, setupCtx.starkInfo.starkStruct.merkleTreeArity, (uint64_t*)pNodes, (uint64_t*)(dst + offset_dst), nCols, NExtended, resolveLayout(setupCtx.starkInfo.starkStruct.nBits, nCols), stream);
-            TimerStopCategoryGPU(timer, MERKLE_TREE);
-        }
+    }
+    // a stage with no columns still commits, as the CPU does: the tree of empty leaves
+    if (!skipTree) {
+        TimerStartCategoryGPU(timer, MERKLE_TREE);
+        buildCommitTreeGPU(setupCtx.starkInfo.dropLeafLevel, setupCtx.starkInfo.starkStruct.merkleTreeArity, (uint64_t*)pNodes, (uint64_t*)(dst + offset_dst), nCols, NExtended, resolveLayout(setupCtx.starkInfo.starkStruct.nBits, nCols), stream);
+        TimerStopCategoryGPU(timer, MERKLE_TREE);
     }
 
-    if (nCols > 0 && !skipTree)
+    if (!skipTree)
     {
         uint64_t tree_size = setupCtx.starkInfo.getNumNodesMTCommit(NExtended);
         PROOFMAN_SUMCHECK("proof_root_cm%u", &pNodes[tree_size - HASH_SIZE], HASH_SIZE, stream, (unsigned)step);
@@ -1037,6 +1025,8 @@ void proveQueries_inplace(SetupCtx& setupCtx, gl64_t *d_queries_buff, uint64_t *
 
     for (uint k = 0; k < nTrees; k++)
     {
+        // a stage with no columns (its challenges are pilout-wide) opens none: a 0-block grid is a launch error
+        if (trees[k]->getMerkleTreeWidth() == 0) continue;
         dim3 nThreads(32, 32);
         dim3 nBlocks((trees[k]->getMerkleTreeWidth() + nThreads.x - 1) / nThreads.x, (nQueries + nThreads.y - 1) / nThreads.y);
         if (k < nStages + 1)
@@ -1482,7 +1472,8 @@ void calculateFRIExpression(SetupCtx& setupCtx, StepsParams &h_params, AirInstan
 
     computeFRIConstants(nOpenings, air_instance_info->nFriPols, air_instance_info->opening_points,
                         Goldilocks::w(si.starkStruct.nBits).fe, air_instance_info->friTermStart, air_instance_info->friTerms,
-                        (gl64_t*)h_params.evals, challenges + 4 * FIELD_EXTENSION, challenges + 5 * FIELD_EXTENSION, d_b,
+                        (gl64_t*)h_params.evals, challenges + si.deepTables->vf1Idx * FIELD_EXTENSION,
+                        challenges + si.deepTables->vf2Idx * FIELD_EXTENSION, d_b,
                         d_a, d_k, stream);
     // 1/(x - xi) once over the domain: dead zi/helper space behind q, overwritten by the first fold (fri_1).
     gl64_t *d_den = (gl64_t*)h_params.aux_trace + si.mapOffsets[std::make_pair("fri_denominators", true)];

@@ -88,7 +88,7 @@ fn bracket_open(lo: usize, hi: usize) -> bool {
 }
 
 /// Returns the largest chunk size (halving from the start size) that compiles
-/// with STACK=0, or None if it still spills at CHUNK_MIN (or fails to compile).
+/// with STACK=0, or None if it still spills at CHUNK_MIN. A TU nvcc rejects fails the run.
 /// On success the winning objects are copied into `out_dir` so the final link
 /// step reuses them without recompiling.
 pub fn tune_chunk(tc: &Toolchain, ir: &Ir, sym: &str, n_ops: usize, out_dir: &Path) -> anyhow::Result<Option<usize>> {
@@ -103,9 +103,8 @@ pub fn tune_chunk(tc: &Toolchain, ir: &Ir, sym: &str, n_ops: usize, out_dir: &Pa
     result
 }
 
-/// One probe: `Some(max STACK over the chunk TUs)` with their objects, or `None` when nvcc
-/// rejected a TU (reported; treated as spilling by the callers).
-type Probe = (Option<i64>, Vec<PathBuf>);
+/// One probe: max STACK over the chunk TUs, with their objects.
+type Probe = (i64, Vec<PathBuf>);
 
 fn tune_inner(
     tc: &Toolchain,
@@ -129,16 +128,10 @@ fn tune_inner(
         for (fname, text) in &files {
             std::fs::write(dir.join(fname), text)?;
         }
-        let results: Vec<(bool, String)> = files
+        files
             .par_iter()
             .zip(&objs)
-            .map(|((fname, _), obj)| tc.compile_tu(&dir.join(fname), obj, Some(probe)))
-            .collect::<anyhow::Result<Vec<_>>>()?;
-        if let Some((_, err)) = results.iter().find(|(ok, _)| !ok) {
-            let last = err.trim().lines().last().unwrap_or("");
-            eprintln!("  [tune] {sym} chunk={chunk} COMPILE FAILED: {last}");
-            return Ok(((None, objs), files.len()));
-        }
+            .try_for_each(|((fname, _), obj)| tc.compile_tu(&dir.join(fname), obj, Some(probe)))?;
         let stacks: Vec<i64> = objs.iter().map(|o| max_stack(o)).collect();
         if stacks.iter().any(|&s| s < 0) {
             anyhow::bail!(
@@ -147,14 +140,13 @@ fn tune_inner(
                  which the generator needs to prove every kernel free of local memory."
             );
         }
-        Ok(((Some(stacks.into_iter().max().unwrap_or(0)), objs), files.len()))
+        Ok(((stacks.into_iter().max().unwrap_or(0), objs), files.len()))
     };
 
     let mut chunk = n_ops.min(start);
     let mut last_spill: Option<usize> = None;
     while chunk >= q_chunk_floor(n_ops) {
         let ((st, objs), n_files) = compile_at(chunk)?;
-        let Some(st) = st else { return Ok(None) };
         eprintln!("  [tune] {sym} chunk={chunk} ({n_files} TUs) -> STACK={st}");
         // Zero, nothing else: any local memory, even the 8 bytes a single-kernel Q once
         // kept (VirtualTableZisk1, whose split costs +30% of a sub-millisecond kernel), makes
@@ -167,19 +159,11 @@ fn tune_inner(
             while hi.is_none() && lo < n_ops {
                 let up = (lo * 2).min(n_ops);
                 let ((st_up, objs_up), n_up) = compile_at(up)?;
-                match st_up {
-                    Some(0) => {
-                        eprintln!("  [tune] {sym} chunk={up} ({n_up} TUs, up) -> STACK=0");
-                        (lo, lo_objs) = (up, objs_up);
-                    }
-                    Some(st_up) => {
-                        eprintln!("  [tune] {sym} chunk={up} ({n_up} TUs, up) -> STACK={st_up}");
-                        hi = Some(up);
-                    }
-                    None => {
-                        eprintln!("  [tune] {sym} chunk={up} (up) -> compile failed, treated as spilling");
-                        hi = Some(up);
-                    }
+                eprintln!("  [tune] {sym} chunk={up} ({n_up} TUs, up) -> STACK={st_up}");
+                if st_up == 0 {
+                    (lo, lo_objs) = (up, objs_up);
+                } else {
+                    hi = Some(up);
                 }
             }
             // Halving and doubling both overshoot: a spill of a few bytes at one size costs
@@ -216,20 +200,12 @@ fn refine_up(
     while bracket_open(lo, hi) {
         let mid = (lo + hi) / 2;
         let ((st, objs), _) = compile_at(mid)?;
-        match st {
-            Some(0) => {
-                eprintln!("  [tune] {sym} chunk={mid} (refine) -> STACK=0");
-                lo = mid;
-                lo_objs = objs;
-            }
-            Some(st) => {
-                eprintln!("  [tune] {sym} chunk={mid} (refine) -> STACK={st}");
-                hi = mid;
-            }
-            None => {
-                eprintln!("  [tune] {sym} chunk={mid} (refine) -> compile failed, treated as spilling");
-                hi = mid;
-            }
+        eprintln!("  [tune] {sym} chunk={mid} (refine) -> STACK={st}");
+        if st == 0 {
+            lo = mid;
+            lo_objs = objs;
+        } else {
+            hi = mid;
         }
     }
     Ok((lo, lo_objs))
@@ -365,10 +341,7 @@ pub fn tune_exprs(
             return Ok(vec![None; items.len()]);
         }
         std::fs::write(&cu, emit_exprs_chunked_tu(sym, &active))?;
-        let (ok, log) = tc.compile_tu(&cu, &obj, Some(work))?;
-        if !ok {
-            anyhow::bail!("nvcc failed for {}: {log}", cu.display());
-        }
+        tc.compile_tu(&cu, &obj, Some(work))?;
         let stack_of = max_stack_by_tag(&resource_usage(&obj)?, &re_chunk);
         Ok(items
             .iter()

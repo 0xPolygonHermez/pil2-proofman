@@ -21,9 +21,7 @@ pub enum OpType {
     X,
     Zi,
     Eval,
-    XDivXSubXi,
     Q,
-    F,
 }
 
 impl OpType {
@@ -43,9 +41,7 @@ impl OpType {
             "x" => Ok(OpType::X),
             "Zi" => Ok(OpType::Zi),
             "eval" => Ok(OpType::Eval),
-            "xDivXSubXi" => Ok(OpType::XDivXSubXi),
             "q" => Ok(OpType::Q),
-            "f" => Ok(OpType::F),
             _ => Err(PilInfoError::UnknownOpType(s.to_string())),
         }
     }
@@ -66,9 +62,7 @@ impl OpType {
             OpType::X => "x",
             OpType::Zi => "Zi",
             OpType::Eval => "eval",
-            OpType::XDivXSubXi => "xDivXSubXi",
             OpType::Q => "q",
-            OpType::F => "f",
         }
     }
 }
@@ -100,7 +94,7 @@ mod tests {
 
     #[test]
     fn op_types_parse_back() {
-        for t in [OpType::Const, OpType::Cm, OpType::Tmp, OpType::Number, OpType::XDivXSubXi, OpType::F] {
+        for t in [OpType::Const, OpType::Cm, OpType::Tmp, OpType::Number, OpType::Q] {
             assert_eq!(OpType::parse(t.to_str()).unwrap(), t);
         }
     }

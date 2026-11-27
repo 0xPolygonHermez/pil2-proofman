@@ -1,8 +1,11 @@
 pragma circom 2.1.0;
 
-include "bitifyT.circom";
-include "lessthangl.circom";
+// The Goldilocks ops of both field families: the includer brings its family's lessthangl.circom
+// (LessThanGoldilocks, LessThan64Bits and the range check GLRangeBits).
 include "utils.circom";
+
+// The {maxNum} bound of a value range-checked to 64 bits (LessThan64Bits): every reduced value has it.
+function max64() { return 0xFFFFFFFFFFFFFFFF; }
 
 // Given an integer a, computes a % GL
 template GLNorm() {
@@ -16,7 +19,7 @@ template GLNorm() {
 
     var maxQuotientBits = log2((in.maxNum - 1) \ p) + 1;
 
-    _ <== Num2BitsT(maxQuotientBits)(k);
+    GLRangeBits(maxQuotientBits)(k);
     out <== LessThanGoldilocks()(value);
 }
 
@@ -72,7 +75,7 @@ template GLMul() {
     var maxQuotientBits = log2((ina.maxNum * inb.maxNum - 1) \ p) + 1;
 
 
-    _ <== Num2BitsT(maxQuotientBits)(k);
+    GLRangeBits(maxQuotientBits)(k);
     out <== LessThan64Bits()(mul);
 
 }
@@ -84,15 +87,6 @@ template GLCNorm() {
 
     for (var i=0; i<3; i++) {
         out[i] <== GLNorm()(in[i]);
-    }
-}
-
-template GLCCopy() {
-    signal input {maxNum} in[3];
-    signal output {maxNum} out[3];
-
-    for (var i=0; i<3; i++) {
-        out[i] <== GLCopy()(in[i]);
     }
 }
 
@@ -167,10 +161,10 @@ template GLCMulAdd() {
     muladd[1] <== m[1] -k[1]*p;
     muladd[2] <== m[2] -k[2]*p;
 
-    out.maxNum = 0xFFFFFFFFFFFFFFFF;
+    out.maxNum = max64();
 
     for (var i = 0; i<3; i++) {
-        _ <== Num2BitsT(maxQuotientBits)(k[i]);
+        GLRangeBits(maxQuotientBits)(k[i]);
         out[i] <== LessThan64Bits()(muladd[i]);
     }
 }
@@ -210,20 +204,6 @@ function _inv1(a) {
     }
     if (t<0) t += p;
     return t;
-}
-
-// Given an integer a != 0, computes a⁻¹ % GL
-template GLInv() {
-    signal input {maxNum} in;
-    signal output {maxNum} out;
-
-    signal inv <-- _inv1(in);
-
-    out.maxNum = 0xFFFFFFFFFFFFFFFF;
-    out <== LessThan64Bits()(inv);
-
-    signal {maxNum} check <== GLMul()(in, out);
-    check === 1;
 }
 
 // Given an array of three integers a = (a₁, a₂, a₃), computes a⁻¹ % GL³
@@ -272,7 +252,7 @@ template GLCInv() {
     inv[1] <--  i2;
     inv[2] <--  i3;
 
-    out.maxNum = 0xFFFFFFFFFFFFFFFF;
+    out.maxNum = max64();
     out[0] <== LessThan64Bits()(inv[0]);
     out[1] <== LessThan64Bits()(inv[1]);
     out[2] <== LessThan64Bits()(inv[2]);

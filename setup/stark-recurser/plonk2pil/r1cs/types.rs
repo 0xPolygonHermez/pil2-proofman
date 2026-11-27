@@ -69,13 +69,14 @@ pub struct R1csFile<F> {
     pub custom_gates_uses: Vec<CustomGateUse>,
 }
 
-// ─── Setup result types (shared by all four setup variants) ─────────────────
+// ─── Setup options and results ───────────────────────────────────────────────
 
 #[derive(Debug, Clone)]
 pub struct PlonkOptions {
     pub airgroup_name: Option<String>,
     pub max_constraint_degree: Option<usize>,
-    pub hash_id: String,
+    /// The STARK's family, or the hash of a BN128 wrap (Poseidon1 for every Poseidon key).
+    pub hash: proofman_common::hash_family::HashFamily,
     /// Eliminate exact copy constraints by merging signals; the connection argument
     /// then enforces the equality. Soundness depends on the s_map remap sweep being
     /// applied to custom-gate I/O cells (see [`crate::plonk2pil::merge_copies`]).
@@ -97,7 +98,7 @@ impl Default for PlonkOptions {
         Self {
             airgroup_name: None,
             max_constraint_degree: None,
-            hash_id: proofman_common::hash_family::DEFAULT_HASH_ID.to_string(),
+            hash: proofman_common::hash_family::HashFamily::DEFAULT,
             merge_copies: true,
             blake3_lanes: None,
             min_n_bits: None,

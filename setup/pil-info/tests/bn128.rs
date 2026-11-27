@@ -10,17 +10,13 @@
 //! PIL2C_EXEC=<pil2-compiler>/src/pil.js cargo test -p pil-info --test bn128 -- --ignored
 //! ```
 
-use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::path::Path;
 
-use num_bigint::BigUint;
-use pil2_pilout::pilout::{self as pb, constraint, expression, operand, SymbolType};
-use pil2_pilout::pilout_proxy::PilOutProxy;
-use pil_info::output::expressions_info::build_verifier_info_json;
+use pil2_pilout::pilout as pb;
+use pil_info::core::ir::ColType;
 use pil_info::types::output::CodeEntry;
-use pil_info::{DegreePolicy, PilInfoCfg, PilInfoResult};
+use pil_info::{DegreePolicy, PilInfoCfg, ShplonkResult};
 
-const R: &str = "21888242871839275222246405745257275088548364400416034343698204186575808495617";
 const R_MINUS_ONE: &str = "21888242871839275222246405745257275088548364400416034343698204186575808495616";
 const R_MINUS_TWO: &str = "21888242871839275222246405745257275088548364400416034343698204186575808495615";
 /// 2^200 + 7.
@@ -28,104 +24,9 @@ const WIDE: &str = "160693804425899027554196209234116260252220299378279283530138
 /// Goldilocks p − 1: what a `neg` became before the passes were parameterised.
 const GOLDILOCKS_NEG_ONE: &str = "18446744069414584320";
 
-// ---------------------------------------------------------------------------
-// Pilouts built in code
-// ---------------------------------------------------------------------------
+mod common;
 
-fn big_be(decimal: &str) -> Vec<u8> {
-    BigUint::parse_bytes(decimal.as_bytes(), 10).expect("a decimal constant").to_bytes_be()
-}
-
-fn op(operand: operand::Operand) -> Option<pb::Operand> {
-    Some(pb::Operand { operand: Some(operand) })
-}
-
-fn witness(col_idx: u32, row_offset: i32) -> Option<pb::Operand> {
-    op(operand::Operand::WitnessCol(operand::WitnessCol { stage: 1, col_idx, row_offset }))
-}
-
-fn fixed(idx: u32) -> Option<pb::Operand> {
-    op(operand::Operand::FixedCol(operand::FixedCol { idx, row_offset: 0 }))
-}
-
-fn constant(decimal: &str) -> Option<pb::Operand> {
-    op(operand::Operand::Constant(operand::Constant { value: big_be(decimal) }))
-}
-
-fn exp(idx: u32) -> Option<pb::Operand> {
-    op(operand::Operand::Expression(operand::Expression { idx }))
-}
-
-fn add(lhs: Option<pb::Operand>, rhs: Option<pb::Operand>) -> pb::Expression {
-    pb::Expression { operation: Some(expression::Operation::Add(expression::Add { lhs, rhs })) }
-}
-
-fn sub(lhs: Option<pb::Operand>, rhs: Option<pb::Operand>) -> pb::Expression {
-    pb::Expression { operation: Some(expression::Operation::Sub(expression::Sub { lhs, rhs })) }
-}
-
-fn mul(lhs: Option<pb::Operand>, rhs: Option<pb::Operand>) -> pb::Expression {
-    pb::Expression { operation: Some(expression::Operation::Mul(expression::Mul { lhs, rhs })) }
-}
-
-fn neg(value: Option<pb::Operand>) -> pb::Expression {
-    pb::Expression { operation: Some(expression::Operation::Neg(expression::Neg { value })) }
-}
-
-fn every_row(idx: u32) -> pb::Constraint {
-    pb::Constraint {
-        constraint: Some(constraint::Constraint::EveryRow(constraint::EveryRow {
-            expression_idx: Some(operand::Expression { idx }),
-            debug_line: Some(format!("constraint on expression {idx}")),
-        })),
-    }
-}
-
-fn column_symbol(name: &str, kind: SymbolType, stage: u32, id: u32) -> pb::Symbol {
-    pb::Symbol {
-        name: name.to_string(),
-        air_group_id: Some(0),
-        air_id: Some(0),
-        r#type: kind as i32,
-        id,
-        stage: Some(stage),
-        ..Default::default()
-    }
-}
-
-/// One BN128 air of 16 rows with one stage (`numChallenges = [0]`), as pil2com emits it.
-fn pilout(
-    witness_names: &[&str],
-    fixed_names: &[&str],
-    expressions: Vec<pb::Expression>,
-    constraints: Vec<pb::Constraint>,
-) -> pb::PilOut {
-    let mut symbols: Vec<pb::Symbol> = fixed_names
-        .iter()
-        .enumerate()
-        .map(|(i, name)| column_symbol(name, SymbolType::FixedCol, 0, i as u32))
-        .collect();
-    symbols.extend(
-        witness_names.iter().enumerate().map(|(i, name)| column_symbol(name, SymbolType::WitnessCol, 1, i as u32)),
-    );
-    let air = pb::Air {
-        name: Some("Synthetic".to_string()),
-        num_rows: Some(16),
-        fixed_cols: fixed_names.iter().map(|_| pb::FixedCol { values: Vec::new() }).collect(),
-        stage_widths: vec![witness_names.len() as u32],
-        expressions,
-        constraints,
-        ..Default::default()
-    };
-    pb::PilOut {
-        name: Some("synthetic".to_string()),
-        base_field: big_be(R),
-        air_groups: vec![pb::AirGroup { name: Some("Synthetic".to_string()), airs: vec![air], ..Default::default() }],
-        num_challenges: vec![0],
-        symbols,
-        ..Default::default()
-    }
-}
+use common::*;
 
 /// Wide constants and negations: `L1·(a − (2^200 + 7))`, `L1·(b − (r − 2))`, `(−a)·b + b'` and
 /// `−(a'·a) + b`.
@@ -172,25 +73,24 @@ fn sum_of_quartics_pilout() -> pb::PilOut {
 // What the passes produce
 // ---------------------------------------------------------------------------
 
-fn run(pilout: &pb::PilOut, cfg: &PilInfoCfg) -> PilInfoResult {
-    pil_info::run(pilout, 0, 0, cfg, &Default::default()).unwrap()
+fn run(pilout: &pb::PilOut, cfg: &PilInfoCfg) -> ShplonkResult {
+    pil_info::shplonk_info(pilout, 0, 0, cfg, &Default::default()).unwrap()
 }
 
 /// Every code block the passes emit: expressions, constraints and the verifier's.
-fn all_code(result: &PilInfoResult) -> Vec<&CodeEntry> {
+fn all_code(result: &ShplonkResult) -> Vec<&CodeEntry> {
     let info = &result.pil_code.expressions_info;
     let verifier = &result.pil_code.verifier_info;
     info.expressions_code
         .iter()
         .flat_map(|e| &e.code)
         .chain(info.constraints.iter().flat_map(|c| &c.code))
-        .chain(&verifier.q_verifier.code)
-        .chain(verifier.query_verifier.iter().flat_map(|q| &q.code))
+        .chain(&verifier.q_verifier.as_ref().expect("a qVerifier").code)
         .collect()
 }
 
 /// The values of the `number` operands in the emitted code.
-fn numbers(result: &PilInfoResult) -> Vec<String> {
+fn numbers(result: &ShplonkResult) -> Vec<String> {
     all_code(result)
         .into_iter()
         .flat_map(|c| std::iter::once(&c.dest).chain(&c.src))
@@ -199,44 +99,27 @@ fn numbers(result: &PilInfoResult) -> Vec<String> {
         .collect()
 }
 
-fn number_values_in_arena(result: &PilInfoResult) -> Vec<String> {
-    fn walk(e: &pil_info::expr::expression::Expression, out: &mut Vec<String>) {
-        if e.op == "number" {
-            out.extend(e.value.clone());
-        }
-        for child in &e.values {
-            if let pil_info::expr::expression::ExprChild::Inline(inline) = child {
-                walk(inline, out);
-            }
-        }
-    }
-    let mut out = Vec::new();
-    for e in &result.setup.expressions {
-        walk(e, &mut out);
-    }
-    out
-}
-
-fn im_pols(result: &PilInfoResult) -> usize {
+fn im_pols(result: &ShplonkResult) -> usize {
     result.setup.cm_pols_map.iter().filter(|p| p.im_pol).count()
 }
 
 /// Everything a pilfflonk run must give: dimension 1 everywhere, and no trace of the DEEP opening
 /// (pilfflonk/docs/README.md#setup-pilfflonk).
-fn assert_bn128_shape(result: &PilInfoResult) {
+fn assert_bn128_shape(result: &ShplonkResult) {
     let setup = &result.setup;
     let q_stage = setup.n_stages + 1;
 
-    for s in &setup.symbols {
-        assert_eq!(s.dim, 1, "symbol {} ({})", s.name, s.sym_type);
-    }
-    for (name, map) in [("cmPolsMap", &setup.cm_pols_map), ("challengesMap", &setup.challenges_map)] {
+    let maps = [
+        ("cmPolsMap", &setup.cm_pols_map),
+        ("constPolsMap", &setup.const_pols_map),
+        ("challengesMap", &setup.challenges_map),
+        ("airgroupValuesMap", &setup.airgroup_values_map),
+        ("airValuesMap", &setup.air_values_map),
+    ];
+    for (name, map) in maps {
         for p in map {
             assert_eq!(p.dim, 1, "{name}: {}", p.name);
         }
-    }
-    for e in &setup.expressions {
-        assert!(e.dim <= 1, "expression {} of dim {}", e.op, e.dim);
     }
     for c in all_code(result) {
         for r in std::iter::once(&c.dest).chain(&c.src) {
@@ -244,28 +127,20 @@ fn assert_bn128_shape(result: &PilInfoResult) {
         }
     }
 
-    // No DEEP opening: no DEEP polynomial, no queryVerifier, no FRI challenges, no quotient evaluations.
-    assert_eq!(result.deep_exp_id, None);
-    assert_eq!(result.pil_code.deep_exp_id, None);
-    assert!(result.pil_code.verifier_info.query_verifier.is_none());
-    assert!(result.pil_code.challenges_map.is_empty());
+    // No DEEP opening: no FRI challenges, no quotient evaluations.
     let challenges: Vec<&str> = setup.challenges_map.iter().map(|c| c.name.as_str()).collect();
     assert_eq!(challenges, ["std_vc", "std_xi"]);
-    for e in &setup.expressions {
-        assert!(!matches!(e.op.as_str(), "xDivXSubXi" | "eval"), "a DEEP polynomial node: {}", e.op);
-    }
-    for c in all_code(result) {
-        assert_ne!(c.dest.ref_type, "f", "the DEEP polynomial's destination");
-        assert!(c.src.iter().all(|r| r.ref_type != "xDivXSubXi"));
-    }
-    for ev in &result.pil_code.ev_map {
-        let stage = setup.cm_pols_map.get(ev.id).and_then(|p| p.stage);
-        assert!(ev.entry_type != "cm" || stage != Some(q_stage), "quotient piece {} in the evMap", ev.id);
+    let info = &result.pil_code.expressions_info;
+    let prover =
+        info.expressions_code.iter().flat_map(|e| &e.code).chain(info.constraints.iter().flat_map(|c| &c.code));
+    assert!(prover.flat_map(|c| &c.src).all(|r| r.ref_type != "eval"), "a DEEP polynomial node");
+    for ev in &result.ev_map {
+        let stage = setup.cm_pols_map.get(ev.pol.id as usize).and_then(|p| p.stage);
+        assert!(ev.pol.col != ColType::Witness || stage != Some(q_stage), "quotient piece {} in the evMap", ev.pol.id);
     }
     let verifier_info = serde_json::to_value(&result.pil_code.verifier_info).expect("serializable");
     let keys: Vec<&String> = verifier_info.as_object().expect("an object").keys().collect();
     assert_eq!(keys, ["qVerifier"]);
-    assert_eq!(build_verifier_info_json(&result.pil_code.verifier_info), verifier_info);
 }
 
 // ---------------------------------------------------------------------------
@@ -287,38 +162,6 @@ fn bn128_keeps_wide_constants_and_negates_with_r_minus_one() {
         assert!(in_code.iter().any(|n| n == value), "{value} not in the code: {in_code:?}");
     }
     assert!(!in_code.iter().any(|n| n == GOLDILOCKS_NEG_ONE));
-
-    // Both negations became multiplications by r − 1.
-    let in_arena = number_values_in_arena(&result);
-    assert_eq!(in_arena.iter().filter(|n| *n == R_MINUS_ONE).count(), 2, "{in_arena:?}");
-}
-
-/// The same pilout under the STARK's configuration still gets the DEEP opening.
-#[test]
-fn goldilocks_keeps_the_deep_opening() {
-    let pilout = wide_constants_pilout();
-    let result = run(&pilout, &PilInfoCfg::goldilocks(1));
-
-    let deep_exp_id = result.deep_exp_id.expect("deepExpId");
-    assert_eq!(result.pil_code.deep_exp_id, Some(deep_exp_id));
-    let query_verifier = result.pil_code.verifier_info.query_verifier.as_ref().expect("queryVerifier");
-    assert_eq!(query_verifier.exp_id, deep_exp_id);
-    let names: Vec<&str> = result.pil_code.challenges_map.iter().map(|c| c.name.as_str()).collect();
-    assert!(names.contains(&"std_vf1") && names.contains(&"std_vf2"), "{names:?}");
-    let verifier_info = serde_json::to_value(&result.pil_code.verifier_info).expect("serializable");
-    assert!(verifier_info.get("queryVerifier").is_some());
-
-    let q_stage = result.setup.n_stages + 1;
-    let q_evals = result
-        .pil_code
-        .ev_map
-        .iter()
-        .filter(|ev| ev.entry_type == "cm" && result.setup.cm_pols_map[ev.id].stage == Some(q_stage))
-        .count();
-    assert_eq!(q_evals as i64, result.q_deg, "one evaluation per quotient piece");
-
-    assert!(numbers(&result).iter().any(|n| n == GOLDILOCKS_NEG_ONE));
-    assert!(result.setup.cm_pols_map.iter().any(|p| p.dim == 3), "the quotient lives in the extension");
 }
 
 #[test]
@@ -347,32 +190,8 @@ fn bn128_lower_max_constraint_degree_adds_im_pols() {
 // Tests on compiled PIL (need PIL2C_EXEC)
 // ---------------------------------------------------------------------------
 
-fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../..").canonicalize().expect("the repository root")
-}
-
-/// Compile `pil` (relative to the repository root) over BN128 with `PIL2C_EXEC`.
-fn compile_bn128(pil: &str) -> pb::PilOut {
-    let compiler = std::env::var("PIL2C_EXEC")
-        .expect("PIL2C_EXEC must name a pil2com that has `--field` (e.g. <pil2-compiler>/src/pil.js)");
-    let root = repo_root();
-    let stem = Path::new(pil).file_stem().expect("a file name").to_string_lossy().into_owned();
-    let out = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("{stem}.bn128.pilout"));
-    let status = Command::new(compiler)
-        .current_dir(&root)
-        .arg(pil)
-        .arg("-I")
-        .arg("pil2-components/lib/std/pil")
-        .arg("--field")
-        .arg("bn128")
-        .arg("-o")
-        .arg(&out)
-        .status()
-        .expect("PIL2C_EXEC runs");
-    assert!(status.success(), "pil2com failed on {pil}");
-    let pilout = PilOutProxy::new(out.to_str().expect("a UTF-8 path")).expect("a pilout").pilout;
-    assert_eq!(pilout.base_field, big_be(R), "{pil} was not compiled over BN128: does PIL2C_EXEC have `--field`?");
-    pilout
+fn compile(pil: &str) -> pb::PilOut {
+    compile_bn128(Path::new(pil)).unwrap_or_else(|| panic!("pil2com failed on {pil}"))
 }
 
 /// The Fibonacci fixture (5 `everyRow` constraints of degree up to 3, offsets {0, 1}).
@@ -384,7 +203,7 @@ fn compile_bn128(pil: &str) -> pb::PilOut {
 #[test]
 #[ignore = "needs PIL2C_EXEC"]
 fn fibonacci_fixture_over_bn128() {
-    let pilout = compile_bn128("pilfflonk/tests/fixtures/fibonacci/fibonacci.pil");
+    let pilout = compile("pilfflonk/tests/fixtures/fibonacci/fibonacci.pil");
     let result = run(&pilout, &PilInfoCfg::bn128());
 
     assert_bn128_shape(&result);
@@ -411,8 +230,8 @@ fn fibonacci_fixture_over_bn128() {
         im_pols(&result),
         result.q_deg,
         result.setup.cm_pols_map.iter().map(|p| (&p.name, p.stage, p.dim)).collect::<Vec<_>>(),
-        result.pil_code.ev_map.iter().map(|e| (&e.entry_type, e.id, e.prime)).collect::<Vec<_>>(),
-        result.pil_code.verifier_info.q_verifier.code.len(),
+        result.ev_map.iter().map(|e| (e.pol.col, e.pol.id, e.pol.offset)).collect::<Vec<_>>(),
+        result.pil_code.verifier_info.q_verifier.as_ref().map_or(0, |q| q.code.len()),
     );
 }
 
@@ -420,7 +239,7 @@ fn fibonacci_fixture_over_bn128() {
 #[test]
 #[ignore = "needs PIL2C_EXEC"]
 fn wide_constants_fixture_over_bn128() {
-    let pilout = compile_bn128("setup/pil-info/tests/fixtures/wide_constants.pil");
+    let pilout = compile("setup/pil-info/tests/fixtures/wide_constants.pil");
     let result = run(&pilout, &PilInfoCfg::bn128());
 
     assert_bn128_shape(&result);

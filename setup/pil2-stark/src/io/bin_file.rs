@@ -3,7 +3,7 @@ use anyhow::Result;
 use crate::io::bin_file_writer::BinFileWriter;
 use crate::io::parser_args::{get_parser_args, ExpsInfo};
 use crate::types::goldilocks_u64;
-use crate::types::stark_info::{ExpressionsInfo, Hint, OpType, StarkInfo, VerifierInfo};
+use crate::types::stark_info::{ExpressionsInfo, Hint, OpType, StarkInfo};
 
 const CHELPERS_NSECTIONS: u32 = 3;
 const CHELPERS_EXPRESSIONS_SECTION: u32 = 1;
@@ -23,17 +23,6 @@ struct PreparedExpressionsBin {
     max_ops: u64,
 }
 
-/// Prepared verifier binary data.
-struct PreparedVerifierBin {
-    q_code: ExpsInfo,
-    query_code: ExpsInfo,
-    numbers_exps: Vec<String>,
-    max_tmp1: u64,
-    max_tmp3: u64,
-    max_args: u64,
-    max_ops: u64,
-}
-
 fn prepare_expressions_bin(
     stark_info: &StarkInfo,
     expressions_info: &ExpressionsInfo,
@@ -45,43 +34,30 @@ fn prepare_expressions_bin(
 
     let n = 1u64 << stark_info.stark_struct.n_bits;
 
-    let mut max_tmp1: u64 = 0;
-    let mut max_tmp3: u64 = 0;
-    let mut max_args: u64 = 0;
-    let mut max_ops: u64 = 0;
+    let (mut max_tmp1, mut max_tmp3, mut max_args, mut max_ops) = (0u64, 0u64, 0u64, 0u64);
+    let mut bump = |i: &ExpsInfo| {
+        max_tmp1 = max_tmp1.max(i.n_temp1);
+        max_tmp3 = max_tmp3.max(i.n_temp3);
+        max_args = max_args.max(i.args.len() as u64);
+        max_ops = max_ops.max(i.ops.len() as u64);
+    };
 
     // Process constraints
     for constraint_code in &expressions_info.constraints {
-        let (first_row, last_row) = match constraint_code.boundary.as_str() {
-            "everyRow" => (0, n),
-            "firstRow" | "finalProof" => (0, 1),
-            "lastRow" => (n - 1, n),
-            "everyFrame" => (constraint_code.offset_min, n - constraint_code.offset_max),
-            other => anyhow::bail!("Invalid boundary: {}", other),
-        };
+        // the STARK refuses every other boundary at ingestion
+        if constraint_code.boundary != "everyRow" {
+            anyhow::bail!("constraint boundary {}, and the STARK takes only everyRow", constraint_code.boundary);
+        }
+        let (first_row, last_row) = (0, n);
 
-        let result =
-            get_parser_args(stark_info, &constraint_code.code, &mut numbers_constraints, false, false, None, "")?;
-
-        let mut info = result.exps_info;
+        let mut info = get_parser_args(stark_info, &constraint_code.code, &mut numbers_constraints)?;
         info.stage = constraint_code.stage;
         info.first_row = first_row;
         info.last_row = last_row;
         info.line = constraint_code.line.clone();
         info.im_pol = constraint_code.im_pol;
 
-        if info.n_temp1 > max_tmp1 {
-            max_tmp1 = info.n_temp1;
-        }
-        if info.n_temp3 > max_tmp3 {
-            max_tmp3 = info.n_temp3;
-        }
-        if info.args.len() as u64 > max_args {
-            max_args = info.args.len() as u64;
-        }
-        if info.ops.len() as u64 > max_ops {
-            max_ops = info.ops.len() as u64;
-        }
+        bump(&info);
 
         constraints_info.push(info);
     }
@@ -92,7 +68,6 @@ fn prepare_expressions_bin(
 
         // Check if dest should be redirected to tmp
         let is_special = exp_code.exp_id == stark_info.c_exp_id
-            || exp_code.exp_id == stark_info.deep_exp_id
             || stark_info.cm_pols_map.iter().any(|c| c.exp_id == exp_code.exp_id);
 
         if is_special {
@@ -103,25 +78,12 @@ fn prepare_expressions_bin(
             }
         }
 
-        let result = get_parser_args(stark_info, &exp_code.code, &mut numbers_exps, false, false, None, "")?;
-
-        let mut info = result.exps_info;
+        let mut info = get_parser_args(stark_info, &exp_code.code, &mut numbers_exps)?;
         info.exp_id = exp_code.exp_id;
         info.stage = exp_code.stage;
         info.line = exp_code.line.clone();
 
-        if info.n_temp1 > max_tmp1 {
-            max_tmp1 = info.n_temp1;
-        }
-        if info.n_temp3 > max_tmp3 {
-            max_tmp3 = info.n_temp3;
-        }
-        if info.args.len() as u64 > max_args {
-            max_args = info.args.len() as u64;
-        }
-        if info.ops.len() as u64 > max_ops {
-            max_ops = info.ops.len() as u64;
-        }
+        bump(&info);
 
         exps_info.push(info);
     }
@@ -137,59 +99,6 @@ fn prepare_expressions_bin(
         max_args,
         max_ops,
     })
-}
-
-fn prepare_verifier_expressions_bin(
-    stark_info: &StarkInfo,
-    verifier_info: &VerifierInfo,
-) -> Result<PreparedVerifierBin> {
-    let mut max_tmp1: u64 = 0;
-    let mut max_tmp3: u64 = 0;
-    let mut max_args: u64 = 0;
-    let mut max_ops: u64 = 0;
-    let mut numbers_exps: Vec<String> = Vec::new();
-
-    let q_result =
-        get_parser_args(stark_info, &verifier_info.q_verifier.code, &mut numbers_exps, false, true, None, "")?;
-    let mut q_code = q_result.exps_info;
-    q_code.exp_id = stark_info.c_exp_id;
-    q_code.stage = stark_info.n_stages + 1;
-    q_code.line = String::new();
-
-    if q_code.n_temp1 > max_tmp1 {
-        max_tmp1 = q_code.n_temp1;
-    }
-    if q_code.n_temp3 > max_tmp3 {
-        max_tmp3 = q_code.n_temp3;
-    }
-    if q_code.args.len() as u64 > max_args {
-        max_args = q_code.args.len() as u64;
-    }
-    if q_code.ops.len() as u64 > max_ops {
-        max_ops = q_code.ops.len() as u64;
-    }
-
-    let query_result =
-        get_parser_args(stark_info, &verifier_info.query_verifier.code, &mut numbers_exps, false, true, None, "")?;
-    let mut query_code = query_result.exps_info;
-    query_code.exp_id = stark_info.deep_exp_id;
-    query_code.stage = stark_info.n_stages + 2;
-    query_code.line = String::new();
-
-    if query_code.n_temp1 > max_tmp1 {
-        max_tmp1 = query_code.n_temp1;
-    }
-    if query_code.n_temp3 > max_tmp3 {
-        max_tmp3 = query_code.n_temp3;
-    }
-    if query_code.args.len() as u64 > max_args {
-        max_args = query_code.args.len() as u64;
-    }
-    if query_code.ops.len() as u64 > max_ops {
-        max_ops = query_code.ops.len() as u64;
-    }
-
-    Ok(PreparedVerifierBin { q_code, query_code, numbers_exps, max_tmp1, max_tmp3, max_args, max_ops })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -422,38 +331,6 @@ pub fn write_expressions_bin_file(
     )?;
 
     write_hints_section(&mut writer, &bin.hints_info, CHELPERS_HINTS_SECTION)?;
-
-    println!("> Writing the chelpers file finished");
-    println!("---------------------------------------------");
-
-    writer.close()?;
-    Ok(())
-}
-
-/// Writes the verifier expressions binary file (1 section: expressions for q and query).
-pub fn write_verifier_expressions_bin_file(
-    path: &str,
-    stark_info: &StarkInfo,
-    verifier_info: &VerifierInfo,
-) -> Result<()> {
-    println!("> Writing chelpers verifier file");
-
-    let bin = prepare_verifier_expressions_bin(stark_info, verifier_info)?;
-
-    let ver_exps = vec![bin.q_code, bin.query_code];
-
-    let mut writer = BinFileWriter::new(path, "chps", 1, 1)?;
-
-    write_expressions_section(
-        &mut writer,
-        &ver_exps,
-        &bin.numbers_exps,
-        bin.max_tmp1,
-        bin.max_tmp3,
-        bin.max_args,
-        bin.max_ops,
-        CHELPERS_EXPRESSIONS_SECTION,
-    )?;
 
     println!("> Writing the chelpers file finished");
     println!("---------------------------------------------");

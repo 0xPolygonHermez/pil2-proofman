@@ -1,410 +1,109 @@
 pragma circom 2.1.0;
 pragma custom_templates;
 
-include "select_vk.circom";
-include "agg_values.circom";
-include "acc_points.circom";
-
 include "test.verifier.circom";
+include "mains/recursive2.circom";
 
-template Recursive2() {
-    var airgroupId = 0;
-    var circuitType = 1; // circuitTypeOf(airgroupId, 0)
-    var rootCBasics[3][4];
+// The data of the keys this circuit verifies (lib_params.rs): key_<name>(k) is key k's <name>.
+function key_nBits(k) { return 17; }
+function key_nBitsExt(k) { return 20; }
+function key_arity(k) { return 4; }
+function key_lastLevels(k) { return 2; }
+function key_nQueries(k) { return 72; }
+function key_batchSize(k) { return 9; }
+function key_powBits(k) { return 21; }
+function key_qDeg(k) { return 7; }
+function key_qPolEv(k) { return 119; }
+function key_nEvals(k) { return 152; }
+function key_nPublics(k) { return 399; }
+function key_nAirValues(k) { return 0; }
+function key_nAirgroupValues(k) { return 0; }
+function key_nProofValues(k) { return 0; }
+function key_nStages(k) { return 2; }
+function key_nChallenges(k) { return 6; }
+function key_hashCommits(k) { return 1; }
+function key_circuitType(k) { return 0; }
+function key_nRoots(k) { return 598; }
+function key_firstRootDim(k) { return 3; }
+function key_verkeyInput(k) { return 1; }
+function key_enableInput(k) { return 1; }
+function key_nTrees(k) { return 4; }
+function key_CHALLENGES_PER_STAGE(k) { return [0, 0, 2]; }
+function key_AIR_VALUE_STAGE(k) { return [0]; }
+function key_AIRGROUP_VALUE_STAGE(k) { return [0]; }
+function key_L0_TREE_START(k) { return [0, 48, 60, 81, 127]; }
+function key_ROOT_C(k) { return [0, 0, 0, 0]; }
+function key_proofSize(k) { return 63009; }
+function key_offAirgroupValues(k) { return -1; }
+function key_offAirValues(k) { return -1; }
+function key_offEvals(k) { return 12; }
+function key_offFinal(k) { return 62912; }
+function key_offNonce(k) { return 63008; }
+function key_offBetas(k) { return -1; }
+function key_offNonces(k) { return -1; }
+function key_OFF_STAGE_ROOT(k) { return [0, 4, 8]; }
+function key_OFF_L0_VALUES(k) { return [10756, 21188, 29028, 468]; }
+function key_OFF_L0_SIBLINGS(k) { return [14212, 22052, 30540, 3780]; }
+function key_OFF_L0_LAST_LEVELS(k) { return [21124, 28964, 37452, 10692]; }
+function key_OFF_L0_ROOT(k) { return [0, 4, 8, -1]; }
+function key_L0_ROOT_PUBLICS(k) { return [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]; }
+function key_OFF_FOLD_ROOT(k) { return [37516, 37520, 37524, 37528, 37532]; }
+function key_OFF_FOLD_VALUES(k) { return [37536, 45376, 51488, 56736, 60256]; }
+function key_OFF_FOLD_SIBLINGS(k) { return [39264, 47104, 53216, 58464, 61984]; }
+function key_OFF_FOLD_LAST_LEVELS(k) { return [45312, 51424, 56672, 60192, 62848]; }
+function key_OFF_ANS_COEFFS(k) { return [0]; }
+function key_OFF_SHAKE_COEFFS(k) { return [0]; }
+function key_nOpenings(k) { return 19; }
+function key_nPols(k) { return 105; }
+function key_nColumnGroups(k) { return 6; }
+function key_nPrefixSums(k) { return 21; }
+function key_OPENING_ROOT(k) { return [11575992183625933494, 17891969694835432085, 16287335884293908063, 11970842550450932764, 12477578612481739161, 8201046199761910586, 17209560082449230913, 8992281176983196029, 2841727033376697931, 16403767884237967044, 25110052138364961, 14361513308298917157, 8892493137794983311, 13583859940902678234, 9071788333329385449, 15139302138664925958, 1, 5718075921287398682, 8167150655112846419]; }
+function key_OPENING_NUM_EVALS(k) { return [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 3, 4, 105, 25, 1]; }
+function key_EVAL_COLUMN(k) { return [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 2, 0, 1, 2, 0, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 1, 2, 38, 39, 40, 41, 42, 43, 44, 0, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 3, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 38, 46, 47, 48, 49, 50, 51, 52, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 62]; }
+function key_PREFIX_SUMS(k) { return [0, 1, 19, 2, 20, 3, 21, 4, 22, 5, 23, 6, 24, 7, 25, 8, 26, 9, 27, 10, 28, 11, 29, 12, 30, 13, 31, 14, 32, 15, 33, 16, 14, 15, 35, 16, 15, 16, 16, 17, 38, 18]; }
+function key_COLUMN_GROUPS(k) { return [34, 1, 0, 124, 1, 36, 2, 1, 115, 1, 2, 116, 1, 37, 1, 3, 48, 3, 16, 76, 4, 81, 1, 5, 82, 1, 6, 83, 1, 7, 84, 1, 8, 85, 1, 9, 86, 1, 10, 87, 1, 11, 88, 1, 12, 89, 1, 13, 90, 1, 14, 91, 1, 15, 92, 1, 16, 93, 1, 17, 94, 1, 18, 95, 1, 19, 96, 1, 20, 97, 1, 21, 98, 1, 22, 99, 1, 23, 100, 1, 24, 101, 1, 25, 102, 1, 26, 103, 1, 27, 104, 1, 28, 105, 1, 29, 106, 1, 30, 107, 1, 31, 108, 1, 32, 109, 1, 33, 110, 1, 34, 111, 1, 35, 112, 1, 36, 113, 1, 37, 114, 1, 39, 118, 1, 40, 119, 1, 41, 120, 1, 42, 121, 1, 43, 122, 1, 44, 123, 1, 45, 125, 1, 53, 6, 1, 54, 7, 1, 55, 8, 1, 56, 9, 1, 57, 10, 1, 58, 11, 1, 59, 12, 1, 60, 13, 1, 61, 14, 1, 79, 32, 1, 80, 33, 1, 81, 34, 1, 82, 35, 1, 83, 36, 1, 84, 37, 1, 85, 38, 1, 86, 39, 1, 87, 40, 1, 88, 41, 1, 89, 42, 1, 90, 43, 1, 91, 44, 1, 92, 45, 1, 93, 46, 1, 94, 47, 1, 95, 51, 3, 96, 54, 3, 97, 57, 3, 98, 60, 3, 99, 63, 3, 100, 66, 3, 101, 69, 3, 102, 72, 3, 103, 75, 3, 104, 78, 3, 38, 24, 38, 117, 1, 46, 126, 1, 47, 0, 1, 48, 1, 1, 49, 2, 1, 50, 3, 1, 51, 4, 1, 52, 5, 1, 63, 16, 1, 64, 17, 1, 65, 18, 1, 66, 19, 1, 67, 20, 1, 68, 21, 1, 69, 22, 1, 70, 23, 1, 71, 24, 1, 72, 25, 1, 73, 26, 1, 74, 27, 1, 75, 28, 1, 76, 29, 1, 77, 30, 1, 78, 31, 1, 39, 1, 62, 15, 1]; }
+function key_OPENING_EXPONENT(k) { return [-16, -15, -14, -13, -12, -11, -10, -9, -8, -7, -6, -5, -4, -3, -2, -1, 0, 1, 2]; }
+function key_nSteps(k) { return 6; }
+function key_stir(k) { return 0; }
+function key_stirM(k) { return 0; }
+function key_stirFinalBits(k) { return 0; }
+function key_STEPS(k) { return [20, 17, 14, 11, 8, 5]; }
+function key_STIR_LOG_DOMAIN_SIZES(k) { return [0]; }
+function key_STIR_FOLDING_FACTORS(k) { return [0]; }
+function key_STIR_NUM_QUERIES(k) { return [0]; }
+function key_STIR_GRINDING_BITS(k) { return [0]; }
 
-    rootCBasics[0] = [15888095544973178522,18097331276733069627,5961057599051898850,13995333006100556138];
-    rootCBasics[1] = [10093855824943693966,315592600678857803,39799995136856706,18356347887605707897];
-    rootCBasics[2] = [17767987172803407234,3767875557947684689,6044542393135073347,7001863772793767094];
-    signal output sv_circuitType;
-    signal output sv_aggregatedProofs;
-    signal output sv_aggregationTypes[2];
-    signal output sv_airgroupvalues[2][3];
-    signal output sv_stage1Hash[368];
+// Key k's constraints at xi.
+template ConstraintRootsAt(k) {
+    signal input evals[key_nEvals(k)][3];
+    signal input challenges[key_nChallenges(k)][3];
+    signal input publics[nonEmpty(key_nPublics(k))];
+    signal input proofvalues[nonEmpty(key_nProofValues(k))][3];
+    signal input airvalues[nonEmpty(key_nAirValues(k))][3];
+    signal input airgroupvalues[nonEmpty(key_nAirgroupValues(k))][3];
+    signal output roots[key_nRoots(k)][3];
 
-    signal input publics[8];
-
-    signal input proofValues[2][3];
-
-    signal input globalChallenge[3];
-    signal input rootCAgg[4];
-
-    signal input a_sv_circuitType;
-    signal input a_sv_aggregatedProofs;
-    signal input a_sv_aggregationTypes[2];
-    signal input a_sv_airgroupvalues[2][3];
-    signal input a_sv_stage1Hash[368];
-
-    signal input a_root1[4];
-    signal input a_root2[4];
-    signal input a_root3[4];
-    signal input a_evals[152][3];
-
-    signal input a_s0_valsC[72][46];
-    signal input a_s0_siblingsC[72][8][12];
-    signal input a_s0_last_mt_levelsC[16][4];
-    signal input a_s0_vals1[72][48];
-    signal input a_s0_siblings1[72][8][12];
-    signal input a_s0_last_mt_levels1[16][4];
-    signal input a_s0_vals2[72][12];
-    signal input a_s0_siblings2[72][8][12];
-    signal input a_s0_last_mt_levels2[16][4];
-    signal input a_s0_vals3[72][21];
-    signal input a_s0_siblings3[72][8][12];
-    signal input a_s0_last_mt_levels3[16][4];
-    signal input a_s1_root[4];
-    signal input a_s2_root[4];
-    signal input a_s3_root[4];
-    signal input a_s4_root[4];
-    signal input a_s5_root[4];
-    signal input a_s1_vals[72][24];
-    signal input a_s1_siblings[72][7][12];
-    signal input a_s1_last_mt_levels[16][4];
-    signal input a_s2_vals[72][24];
-    signal input a_s2_siblings[72][5][12];
-    signal input a_s2_last_mt_levels[16][4];
-    signal input a_s3_vals[72][24];
-    signal input a_s3_siblings[72][4][12];
-    signal input a_s3_last_mt_levels[16][4];
-    signal input a_s4_vals[72][24];
-    signal input a_s4_siblings[72][2][12];
-    signal input a_s4_last_mt_levels[16][4];
-    signal input a_s5_vals[72][24];
-    signal input a_s5_siblings[72][1][12];
-    signal input a_s5_last_mt_levels[16][4];
-    signal input a_finalPol[32][3];
-    signal input a_nonce;
-
-    signal input b_sv_circuitType;
-    signal input b_sv_aggregatedProofs;
-    signal input b_sv_aggregationTypes[2];
-    signal input b_sv_airgroupvalues[2][3];
-    signal input b_sv_stage1Hash[368];
-
-    signal input b_root1[4];
-    signal input b_root2[4];
-    signal input b_root3[4];
-    signal input b_evals[152][3];
-
-    signal input b_s0_valsC[72][46];
-    signal input b_s0_siblingsC[72][8][12];
-    signal input b_s0_last_mt_levelsC[16][4];
-    signal input b_s0_vals1[72][48];
-    signal input b_s0_siblings1[72][8][12];
-    signal input b_s0_last_mt_levels1[16][4];
-    signal input b_s0_vals2[72][12];
-    signal input b_s0_siblings2[72][8][12];
-    signal input b_s0_last_mt_levels2[16][4];
-    signal input b_s0_vals3[72][21];
-    signal input b_s0_siblings3[72][8][12];
-    signal input b_s0_last_mt_levels3[16][4];
-    signal input b_s1_root[4];
-    signal input b_s2_root[4];
-    signal input b_s3_root[4];
-    signal input b_s4_root[4];
-    signal input b_s5_root[4];
-    signal input b_s1_vals[72][24];
-    signal input b_s1_siblings[72][7][12];
-    signal input b_s1_last_mt_levels[16][4];
-    signal input b_s2_vals[72][24];
-    signal input b_s2_siblings[72][5][12];
-    signal input b_s2_last_mt_levels[16][4];
-    signal input b_s3_vals[72][24];
-    signal input b_s3_siblings[72][4][12];
-    signal input b_s3_last_mt_levels[16][4];
-    signal input b_s4_vals[72][24];
-    signal input b_s4_siblings[72][2][12];
-    signal input b_s4_last_mt_levels[16][4];
-    signal input b_s5_vals[72][24];
-    signal input b_s5_siblings[72][1][12];
-    signal input b_s5_last_mt_levels[16][4];
-    signal input b_finalPol[32][3];
-    signal input b_nonce;
-
-    signal input c_sv_circuitType;
-    signal input c_sv_aggregatedProofs;
-    signal input c_sv_aggregationTypes[2];
-    signal input c_sv_airgroupvalues[2][3];
-    signal input c_sv_stage1Hash[368];
-
-    signal input c_root1[4];
-    signal input c_root2[4];
-    signal input c_root3[4];
-    signal input c_evals[152][3];
-
-    signal input c_s0_valsC[72][46];
-    signal input c_s0_siblingsC[72][8][12];
-    signal input c_s0_last_mt_levelsC[16][4];
-    signal input c_s0_vals1[72][48];
-    signal input c_s0_siblings1[72][8][12];
-    signal input c_s0_last_mt_levels1[16][4];
-    signal input c_s0_vals2[72][12];
-    signal input c_s0_siblings2[72][8][12];
-    signal input c_s0_last_mt_levels2[16][4];
-    signal input c_s0_vals3[72][21];
-    signal input c_s0_siblings3[72][8][12];
-    signal input c_s0_last_mt_levels3[16][4];
-    signal input c_s1_root[4];
-    signal input c_s2_root[4];
-    signal input c_s3_root[4];
-    signal input c_s4_root[4];
-    signal input c_s5_root[4];
-    signal input c_s1_vals[72][24];
-    signal input c_s1_siblings[72][7][12];
-    signal input c_s1_last_mt_levels[16][4];
-    signal input c_s2_vals[72][24];
-    signal input c_s2_siblings[72][5][12];
-    signal input c_s2_last_mt_levels[16][4];
-    signal input c_s3_vals[72][24];
-    signal input c_s3_siblings[72][4][12];
-    signal input c_s3_last_mt_levels[16][4];
-    signal input c_s4_vals[72][24];
-    signal input c_s4_siblings[72][2][12];
-    signal input c_s4_last_mt_levels[16][4];
-    signal input c_s5_vals[72][24];
-    signal input c_s5_siblings[72][1][12];
-    signal input c_s5_last_mt_levels[16][4];
-    signal input c_finalPol[32][3];
-    signal input c_nonce;
-
-    signal aggregationTypes[2];
-    for(var i = 0; i < 2; i++) {
-        aggregationTypes[i] <== a_sv_aggregationTypes[i];
-        a_sv_aggregationTypes[i] === b_sv_aggregationTypes[i];
-        a_sv_aggregationTypes[i] === c_sv_aggregationTypes[i];
-    }
-    component vA = parallel StarkVerifier0();
-    vA.root1 <== a_root1;
-    vA.root2 <== a_root2;
-    vA.root3 <== a_root3;
-    vA.evals <== a_evals;
-    vA.s0_valsC <== a_s0_valsC;
-    vA.s0_siblingsC <== a_s0_siblingsC;
-    vA.s0_last_mt_levelsC <== a_s0_last_mt_levelsC;
-    vA.s0_vals1 <== a_s0_vals1;
-    vA.s0_siblings1 <== a_s0_siblings1;
-    vA.s0_last_mt_levels1 <== a_s0_last_mt_levels1;
-    vA.s0_vals2 <== a_s0_vals2;
-    vA.s0_siblings2 <== a_s0_siblings2;
-    vA.s0_last_mt_levels2 <== a_s0_last_mt_levels2;
-    vA.s0_vals3 <== a_s0_vals3;
-    vA.s0_siblings3 <== a_s0_siblings3;
-    vA.s0_last_mt_levels3 <== a_s0_last_mt_levels3;
-    vA.s1_root <== a_s1_root;
-    vA.s2_root <== a_s2_root;
-    vA.s3_root <== a_s3_root;
-    vA.s4_root <== a_s4_root;
-    vA.s5_root <== a_s5_root;
-    vA.s1_vals <== a_s1_vals;
-    vA.s1_siblings <== a_s1_siblings;
-    vA.s1_last_mt_levels <== a_s1_last_mt_levels;
-    vA.s2_vals <== a_s2_vals;
-    vA.s2_siblings <== a_s2_siblings;
-    vA.s2_last_mt_levels <== a_s2_last_mt_levels;
-    vA.s3_vals <== a_s3_vals;
-    vA.s3_siblings <== a_s3_siblings;
-    vA.s3_last_mt_levels <== a_s3_last_mt_levels;
-    vA.s4_vals <== a_s4_vals;
-    vA.s4_siblings <== a_s4_siblings;
-    vA.s4_last_mt_levels <== a_s4_last_mt_levels;
-    vA.s5_vals <== a_s5_vals;
-    vA.s5_siblings <== a_s5_siblings;
-    vA.s5_last_mt_levels <== a_s5_last_mt_levels;
-    vA.finalPol <== a_finalPol;
-    vA.nonce <== a_nonce;
-
-    component vB = parallel StarkVerifier0();
-    vB.root1 <== b_root1;
-    vB.root2 <== b_root2;
-    vB.root3 <== b_root3;
-    vB.evals <== b_evals;
-    vB.s0_valsC <== b_s0_valsC;
-    vB.s0_siblingsC <== b_s0_siblingsC;
-    vB.s0_last_mt_levelsC <== b_s0_last_mt_levelsC;
-    vB.s0_vals1 <== b_s0_vals1;
-    vB.s0_siblings1 <== b_s0_siblings1;
-    vB.s0_last_mt_levels1 <== b_s0_last_mt_levels1;
-    vB.s0_vals2 <== b_s0_vals2;
-    vB.s0_siblings2 <== b_s0_siblings2;
-    vB.s0_last_mt_levels2 <== b_s0_last_mt_levels2;
-    vB.s0_vals3 <== b_s0_vals3;
-    vB.s0_siblings3 <== b_s0_siblings3;
-    vB.s0_last_mt_levels3 <== b_s0_last_mt_levels3;
-    vB.s1_root <== b_s1_root;
-    vB.s2_root <== b_s2_root;
-    vB.s3_root <== b_s3_root;
-    vB.s4_root <== b_s4_root;
-    vB.s5_root <== b_s5_root;
-    vB.s1_vals <== b_s1_vals;
-    vB.s1_siblings <== b_s1_siblings;
-    vB.s1_last_mt_levels <== b_s1_last_mt_levels;
-    vB.s2_vals <== b_s2_vals;
-    vB.s2_siblings <== b_s2_siblings;
-    vB.s2_last_mt_levels <== b_s2_last_mt_levels;
-    vB.s3_vals <== b_s3_vals;
-    vB.s3_siblings <== b_s3_siblings;
-    vB.s3_last_mt_levels <== b_s3_last_mt_levels;
-    vB.s4_vals <== b_s4_vals;
-    vB.s4_siblings <== b_s4_siblings;
-    vB.s4_last_mt_levels <== b_s4_last_mt_levels;
-    vB.s5_vals <== b_s5_vals;
-    vB.s5_siblings <== b_s5_siblings;
-    vB.s5_last_mt_levels <== b_s5_last_mt_levels;
-    vB.finalPol <== b_finalPol;
-    vB.nonce <== b_nonce;
-
-    component vC = parallel StarkVerifier0();
-    vC.root1 <== c_root1;
-    vC.root2 <== c_root2;
-    vC.root3 <== c_root3;
-    vC.evals <== c_evals;
-    vC.s0_valsC <== c_s0_valsC;
-    vC.s0_siblingsC <== c_s0_siblingsC;
-    vC.s0_last_mt_levelsC <== c_s0_last_mt_levelsC;
-    vC.s0_vals1 <== c_s0_vals1;
-    vC.s0_siblings1 <== c_s0_siblings1;
-    vC.s0_last_mt_levels1 <== c_s0_last_mt_levels1;
-    vC.s0_vals2 <== c_s0_vals2;
-    vC.s0_siblings2 <== c_s0_siblings2;
-    vC.s0_last_mt_levels2 <== c_s0_last_mt_levels2;
-    vC.s0_vals3 <== c_s0_vals3;
-    vC.s0_siblings3 <== c_s0_siblings3;
-    vC.s0_last_mt_levels3 <== c_s0_last_mt_levels3;
-    vC.s1_root <== c_s1_root;
-    vC.s2_root <== c_s2_root;
-    vC.s3_root <== c_s3_root;
-    vC.s4_root <== c_s4_root;
-    vC.s5_root <== c_s5_root;
-    vC.s1_vals <== c_s1_vals;
-    vC.s1_siblings <== c_s1_siblings;
-    vC.s1_last_mt_levels <== c_s1_last_mt_levels;
-    vC.s2_vals <== c_s2_vals;
-    vC.s2_siblings <== c_s2_siblings;
-    vC.s2_last_mt_levels <== c_s2_last_mt_levels;
-    vC.s3_vals <== c_s3_vals;
-    vC.s3_siblings <== c_s3_siblings;
-    vC.s3_last_mt_levels <== c_s3_last_mt_levels;
-    vC.s4_vals <== c_s4_vals;
-    vC.s4_siblings <== c_s4_siblings;
-    vC.s4_last_mt_levels <== c_s4_last_mt_levels;
-    vC.s5_vals <== c_s5_vals;
-    vC.s5_siblings <== c_s5_siblings;
-    vC.s5_last_mt_levels <== c_s5_last_mt_levels;
-    vC.finalPol <== c_finalPol;
-    vC.nonce <== c_nonce;
-
-    vA.publics[0] <== a_sv_circuitType;
-    vA.publics[1] <== a_sv_aggregatedProofs;
-    for(var i = 0; i < 2; i++) {
-        vA.publics[2 + i] <== a_sv_aggregationTypes[i];
-    }
-    for(var i = 0; i < 2; i++) {
-        vA.publics[4 + 3*i] <== a_sv_airgroupvalues[i][0];
-        vA.publics[4 + 3*i + 1] <== a_sv_airgroupvalues[i][1];
-        vA.publics[4 + 3*i + 2] <== a_sv_airgroupvalues[i][2];
-    }
-    for (var i = 0; i < 368; i++) {
-        vA.publics[10 + i] <== a_sv_stage1Hash[i];
-    }
-    for(var i = 0; i < 8; i++) {
-        vA.publics[378 + i] <== publics[i];
-    }
-    for(var i = 0; i < 2; i++) {
-        vA.publics[386 + 3*i] <== proofValues[i][0];
-        vA.publics[386 + 3*i + 1] <== proofValues[i][1];
-        vA.publics[386 + 3*i + 2] <== proofValues[i][2];
-    }
-    vA.publics[392] <== globalChallenge[0];
-    vA.publics[392 +1] <== globalChallenge[1];
-    vA.publics[392 +2] <== globalChallenge[2];
-    signal {binary} a_sv_isNull <== IsZero()(a_sv_circuitType);
-    vA.enable <== 1 - a_sv_isNull;
-
-    vB.publics[0] <== b_sv_circuitType;
-    vB.publics[1] <== b_sv_aggregatedProofs;
-    for(var i = 0; i < 2; i++) {
-        vB.publics[2 + i] <== b_sv_aggregationTypes[i];
-    }
-    for(var i = 0; i < 2; i++) {
-        vB.publics[4 + 3*i] <== b_sv_airgroupvalues[i][0];
-        vB.publics[4 + 3*i + 1] <== b_sv_airgroupvalues[i][1];
-        vB.publics[4 + 3*i + 2] <== b_sv_airgroupvalues[i][2];
-    }
-    for (var i = 0; i < 368; i++) {
-        vB.publics[10 + i] <== b_sv_stage1Hash[i];
-    }
-    for(var i = 0; i < 8; i++) {
-        vB.publics[378 + i] <== publics[i];
-    }
-    for(var i = 0; i < 2; i++) {
-        vB.publics[386 + 3*i] <== proofValues[i][0];
-        vB.publics[386 + 3*i + 1] <== proofValues[i][1];
-        vB.publics[386 + 3*i + 2] <== proofValues[i][2];
-    }
-    vB.publics[392] <== globalChallenge[0];
-    vB.publics[392 +1] <== globalChallenge[1];
-    vB.publics[392 +2] <== globalChallenge[2];
-    signal {binary} b_sv_isNull <== IsZero()(b_sv_circuitType);
-    vB.enable <== 1 - b_sv_isNull;
-
-    vC.publics[0] <== c_sv_circuitType;
-    vC.publics[1] <== c_sv_aggregatedProofs;
-    for(var i = 0; i < 2; i++) {
-        vC.publics[2 + i] <== c_sv_aggregationTypes[i];
-    }
-    for(var i = 0; i < 2; i++) {
-        vC.publics[4 + 3*i] <== c_sv_airgroupvalues[i][0];
-        vC.publics[4 + 3*i + 1] <== c_sv_airgroupvalues[i][1];
-        vC.publics[4 + 3*i + 2] <== c_sv_airgroupvalues[i][2];
-    }
-    for (var i = 0; i < 368; i++) {
-        vC.publics[10 + i] <== c_sv_stage1Hash[i];
-    }
-    for(var i = 0; i < 8; i++) {
-        vC.publics[378 + i] <== publics[i];
-    }
-    for(var i = 0; i < 2; i++) {
-        vC.publics[386 + 3*i] <== proofValues[i][0];
-        vC.publics[386 + 3*i + 1] <== proofValues[i][1];
-        vC.publics[386 + 3*i + 2] <== proofValues[i][2];
-    }
-    vC.publics[392] <== globalChallenge[0];
-    vC.publics[392 +1] <== globalChallenge[1];
-    vC.publics[392 +2] <== globalChallenge[2];
-    signal {binary} c_sv_isNull <== IsZero()(c_sv_circuitType);
-    vC.enable <== 1 - c_sv_isNull;
-
-    vA.rootC <== SelectVerificationKeyNull(3, airgroupId)(a_sv_circuitType, rootCBasics, rootCAgg);
-    vB.rootC <== SelectVerificationKeyNull(3, airgroupId)(b_sv_circuitType, rootCBasics, rootCAgg);
-    vC.rootC <== SelectVerificationKeyNull(3, airgroupId)(c_sv_circuitType, rootCBasics, rootCAgg);
-
-    sv_circuitType <== circuitType;
-
-    sv_aggregationTypes <== aggregationTypes;
-    signal {binary} aggTypes[2];
-    for (var i = 0; i < 2; i++) {
-        sv_aggregationTypes[i] * (sv_aggregationTypes[i] - 1) === 0;
-        aggTypes[i] <== sv_aggregationTypes[i];
-    }
-
-    signal {binary} AB_isNull <== IsZero()(2 - a_sv_isNull - b_sv_isNull);
-    signal airgroupValues_AB[2][3];
-    for (var i = 0; i < 2; i++) {
-        airgroupValues_AB[i] <== AggregateAirgroupValuesNull()(a_sv_airgroupvalues[i], b_sv_airgroupvalues[i], aggTypes[i], a_sv_isNull, b_sv_isNull);
-        sv_airgroupvalues[i] <== AggregateAirgroupValuesNull()(airgroupValues_AB[i], c_sv_airgroupvalues[i], aggTypes[i], AB_isNull, c_sv_isNull);
-    }
-
-    signal {binary} isNull[3] <== [a_sv_isNull, b_sv_isNull, c_sv_isNull];
-    sv_aggregatedProofs <== AggregateProofsNull(3)([a_sv_aggregatedProofs, b_sv_aggregatedProofs, c_sv_aggregatedProofs], isNull);
-
-    signal AB_stage1Hash[368] <== AggregateValuesNull(368)(a_sv_stage1Hash, b_sv_stage1Hash, a_sv_isNull, b_sv_isNull);
-    sv_stage1Hash <== AggregateValuesNull(368)(AB_stage1Hash, c_sv_stage1Hash, AB_isNull, c_sv_isNull);
-
-
-    for (var i=0; i<4; i++) {
-        vA.publics[395 + i] <== rootCAgg[i];
-        vB.publics[395 + i] <== rootCAgg[i];
-        vC.publics[395 + i] <== rootCAgg[i];
-    }
+    roots <== ConstraintRoots0()(evals, challenges, publics, proofvalues, airvalues, airgroupvalues);
 }
 
-component main {public [publics, proofValues, globalChallenge, rootCAgg]} = Recursive2();
+function vadcop_airgroupId() { return 0; }
+function vadcop_airId() { return 0; }
+function vadcop_nPublics() { return 8; }
+function vadcop_nProofValues() { return 2; }
+function vadcop_nPVMap() { return 2; }
+function vadcop_PV() { return [1, 1]; }
+function vadcop_W() { return 368; }
+function vadcop_ec() { return 0; }
+function vadcop_ecA() { return [0, 0, 0, 0, 0]; }
+function vadcop_ecB() { return [0, 0, 0, 0, 0]; }
+function vadcop_ecZ() { return [0, 0, 0, 0, 0]; }
+function vadcop_ecC1() { return [0, 0, 0, 0, 0]; }
+function vadcop_ecC2() { return [0, 0, 0, 0, 0]; }
+function vadcop_multiAir() { return 1; }
+function vadcop_nAgg(i) { if (i == 0) { return 2; } return 0; }
+function vadcop_AGG(i) { if (i == 0) { return [0, 0]; } return [0]; }
+function vadcop_nBasics(i) { if (i == 0) { return 3; } return 0; }
+function vadcop_basics(i) { if (i == 0) { return [[202556868925631864, 8253526039676467598, 973455749637265658, 17000121448691290678], [10083618062899040488, 8560748376547614721, 24964050296172539, 2383367642340288215], [14453292471017267706, 14000900561165299894, 2682987345211412535, 6512486633536822164]]; } return [[0, 0, 0, 0]]; }
+function vadcop_rootCAgg(i) { return [0, 0, 0, 0]; }
+
+component main {public [publics, proofValues, globalChallenge, rootCAgg]} = Recursive2(3);

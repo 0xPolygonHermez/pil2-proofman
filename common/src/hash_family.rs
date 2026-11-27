@@ -2,6 +2,7 @@
 
 use proofman_starks_lib_c::GOLDILOCKS_POSEIDON_MERKLE_TREE_ARITY;
 use serde::{Deserialize, Serialize};
+use HashFamily::{Blake3, Poseidon1, Poseidon2};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum GateRole {
@@ -16,7 +17,7 @@ pub enum GateRole {
     Blake3Node,
     Blake3Compress,
     /// circom's `PoseidonT(t)`: the original Poseidon over BN128, with every round's state as an
-    /// output of the gate. The gate of the final SNARK wrap ([`BN128_WRAP_FAMILY`]).
+    /// output of the gate. The hash gate of the Poseidon1 BN128 wrap; of no STARK family.
     PoseidonT,
     /// circom's `Num2Bytes(nBits)`: its input `in` as `⌈nBits/16⌉` chunks of 16 bits, `out`, least
     /// significant first, so that `in < 2^(16·⌈nBits/16⌉)`. The range check of the final SNARK
@@ -24,34 +25,78 @@ pub enum GateRole {
     RangeCheck,
 }
 
-/// The STARK's hash families: what `--hash`, a proof and a `globalInfo.json` name, and what every
-/// per-family function below answers for. All of them are over Goldilocks.
-pub const FAMILIES: &[&str] = &["Poseidon1", "Poseidon2", "blake3"];
+/// Typed STARK hash family, all over Goldilocks. Parsing is case-sensitive (`Poseidon1`/`Poseidon2`/`blake3`);
+/// serde reads and writes the same name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "&'static str")]
+pub enum HashFamily {
+    Poseidon1,
+    Poseidon2,
+    Blake3,
+}
 
-/// The family of the final SNARK wrap's AIR, which plonk2pil sets up over BN128 for pilfflonk. Its
-/// hash gate is circom's `PoseidonT`: the original Poseidon (the C++'s `PoseidonBN128`) over BN128.
-///
-/// Its name is its hash's, as the STARK families' are, and its field's: the original Poseidon over
-/// Goldilocks is `Poseidon1`. It is not one of [`FAMILIES`]: no STARK hashes with it, so the
-/// per-family functions here refuse it as unknown. It owns its gates in `GATES`, `PoseidonT` and
-/// the range check `Num2Bytes`, which is how an r1cs is told to be the wrap's.
-pub const BN128_WRAP_FAMILY: &str = "PoseidonBN128";
+impl HashFamily {
+    pub const ALL: [HashFamily; 3] = [Poseidon1, Poseidon2, Blake3];
 
-/// The family of the final SNARK wrap's AIR of a blake3 proving key, over BN128: its hash gates
-/// are blake3's (`Blake3Node`, `Blake3Compress`), and its range check `Num2Bytes`, as the
-/// [`BN128_WRAP_FAMILY`]'s. Not one of [`FAMILIES`], as that one.
-pub const BLAKE3_BN128_WRAP_FAMILY: &str = "blake3BN128";
+    /// What every `--hash` default, every `Default` carrying a family and a `globalInfo.json` without `hash` take.
+    pub const DEFAULT: HashFamily = Blake3;
 
-/// The family a caller gets when it does not choose one: every `--hash` default, every `Default`
-/// impl that carries a family, and the read-back value for a `globalInfo.json` with no `hash`.
-pub const DEFAULT_HASH_ID: &str = "blake3";
+    pub fn is_blake3(self) -> bool {
+        self == Blake3
+    }
+
+    /// The id `set_hash_family_c` takes (C++ `HashFamily` in hash_family.hpp).
+    pub const fn ffi_id(self) -> u8 {
+        match self {
+            Poseidon1 => 1,
+            Poseidon2 => 2,
+            Blake3 => 3,
+        }
+    }
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Poseidon1 => "Poseidon1",
+            Poseidon2 => "Poseidon2",
+            Blake3 => "blake3",
+        }
+    }
+}
+
+impl std::fmt::Display for HashFamily {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl std::str::FromStr for HashFamily {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, String> {
+        Self::ALL.into_iter().find(|f| f.as_str() == s).ok_or_else(|| {
+            let valid: Vec<_> = Self::ALL.iter().map(|f| f.as_str()).collect();
+            format!("unknown hash family '{s}'; valid (case-sensitive): {}", valid.join(", "))
+        })
+    }
+}
+
+impl TryFrom<String> for HashFamily {
+    type Error = String;
+    fn try_from(s: String) -> Result<Self, String> {
+        s.parse()
+    }
+}
+
+impl From<HashFamily> for &'static str {
+    fn from(f: HashFamily) -> Self {
+        f.as_str()
+    }
+}
 
 /// Merkle-tree arity of `family`'s commitment trees over Goldilocks digests
-pub fn merkle_tree_arity(family: &str) -> u64 {
+pub fn merkle_tree_arity(family: HashFamily) -> u64 {
     match family {
-        "Poseidon1" | "Poseidon2" => GOLDILOCKS_POSEIDON_MERKLE_TREE_ARITY,
-        "blake3" => 2,
-        fam => panic!("Unknown hash family: {fam}"),
+        Poseidon1 | Poseidon2 => GOLDILOCKS_POSEIDON_MERKLE_TREE_ARITY,
+        Blake3 => 2,
     }
 }
 
@@ -63,11 +108,10 @@ pub fn merkle_tree_arity(family: &str) -> u64 {
 /// Poseidon recursion settles at 2^17. blake3's is 2^19, because its verification is dominated by
 /// arity-2 Merkle path hashing at 56 AIR rows a compression -- reading 17 here would make every
 /// blake3 air demand a compressor it does not need, and each compressor is a whole extra proof.
-pub fn recursive_bits_threshold(family: &str) -> usize {
+pub fn recursive_bits_threshold(family: HashFamily) -> usize {
     match family {
-        "blake3" => 19,
-        "Poseidon1" | "Poseidon2" => 17,
-        fam => panic!("Unknown hash family: {fam}"),
+        Blake3 => 19,
+        Poseidon1 | Poseidon2 => 17,
     }
 }
 
@@ -76,20 +120,18 @@ pub fn recursive_bits_threshold(family: &str) -> usize {
 /// Worth it exactly where Merkle paths are expensive, which is where the tree is binary: a path
 /// twice as long makes it cheaper to fold hard and keep fewer layers, and no uniform folding factor
 /// expresses that. At arity 4 a fold of 3 and a fold of 4 tie, so poseidon gains nothing and keeps
-/// the schedule its committed verifiers and circom fixtures encode. See
-/// `stark_struct::optimal_fri_steps`.
-pub fn uses_optimal_fri_schedule(family: &str) -> bool {
+/// its fixed-rate schedule. See `stark_struct::optimal_fri_steps`.
+pub fn uses_optimal_fri_schedule(family: HashFamily) -> bool {
     merkle_tree_arity(family) == 2
 }
 
 /// Field elements one compression of `family` absorbs: a BLAKE3 block is 64 bytes, so 8 Goldilocks
 /// elements. Not a rate -- these are compression functions that take a whole block per call and
 /// carry the chaining value in the state, so a leaf of `w` elements costs `ceil(w / this)`.
-pub fn compression_block_elements(family: &str) -> usize {
+pub fn compression_block_elements(family: HashFamily) -> usize {
     match family {
-        "blake3" => 8,
-        "Poseidon1" | "Poseidon2" => 8,
-        fam => panic!("Unknown hash family: {fam}"),
+        Blake3 => 8,
+        Poseidon1 | Poseidon2 => 8,
     }
 }
 
@@ -98,11 +140,10 @@ pub fn compression_block_elements(family: &str) -> usize {
 /// Everything below the terminal is sent in the clear, and the verifier evaluates it at every query
 /// -- which is `2^terminal` extension multiplications a query, arithmetic rather than hashing. Above
 /// 7 that arithmetic outgrows the room the BLAKE3 block interiors leave for it.
-pub fn fri_terminal_degree(family: &str) -> usize {
+pub fn fri_terminal_degree(family: HashFamily) -> usize {
     match family {
-        "blake3" => 7,
-        "Poseidon1" | "Poseidon2" => 5,
-        fam => panic!("Unknown hash family: {fam}"),
+        Blake3 => 7,
+        Poseidon1 | Poseidon2 => 5,
     }
 }
 
@@ -119,38 +160,34 @@ pub fn fri_terminal_degree(family: &str) -> usize {
 /// `LAST_LEVEL_NODES = 16`); poseidon takes the default. The blake3 COMPRESSOR takes one more still,
 /// and that is a per-template call rather than a per-family one -- see
 /// `proving_key::recursive::recursive_last_level_verification`.
-pub fn recursive_last_level_verification(family: &str) -> Option<usize> {
+pub fn recursive_last_level_verification(family: HashFamily) -> Option<usize> {
     match family {
-        "blake3" => Some(5),
-        "Poseidon1" | "Poseidon2" => None,
-        fam => panic!("Unknown hash family: {fam}"),
+        Blake3 => Some(5),
+        Poseidon1 | Poseidon2 => None,
     }
 }
 
 /// Proof-of-work bits the FINAL stage grinds for.
 ///
-/// Its own function rather than `recursive_grinding_bits`, because the two differ for poseidon: the
-/// recursion grinds 20 and the final stage 22, and both are pinned by what the committed verifiers
-/// encode. blake3 grinds 27 here: at blowup 2^4 a query is worth ~2 bits, and the exact solver gives
+/// Its own function rather than `recursive_grinding_bits`, because the two differ: poseidon's recursion
+/// grinds 21 and its final stage 22, blake3's 24 and 27. blake3 grinds 27 here: at blowup 2^4 a query is worth ~2 bits, and the exact solver gives
 /// 52 queries at 26, 51 at 27 and 28. The compressed final that verifies this proof sits at ~99% of
 /// its hash blocks, so that one query is the difference between 2^18 and 2^19 rows there.
-pub fn final_grinding_bits(family: &str) -> usize {
+pub fn final_grinding_bits(family: HashFamily) -> usize {
     match family {
-        "blake3" => 27,
-        "Poseidon1" | "Poseidon2" => 22,
-        fam => panic!("Unknown hash family: {fam}"),
+        Blake3 => 27,
+        Poseidon1 | Poseidon2 => 22,
     }
 }
 
 /// Rows the `vadcop_final` air is pinned to, as log2, or `None` to let it size itself.
 ///
-/// Pinned so one committed verifier per family serves every pilout: the verifier encodes nBits, so
-/// airgroup count must not move it. Poseidon has no committed final verifier, so it sizes itself.
-pub fn final_n_bits(family: &str) -> Option<usize> {
+/// Pinned so the airgroup count does not move blake3's final air, which the compressed final verifies
+/// at ~99% of its hash blocks. Poseidon sizes itself.
+pub fn final_n_bits(family: HashFamily) -> Option<usize> {
     match family {
-        "blake3" => Some(18),
-        "Poseidon1" | "Poseidon2" => None,
-        fam => panic!("Unknown hash family: {fam}"),
+        Blake3 => Some(18),
+        Poseidon1 | Poseidon2 => None,
     }
 }
 
@@ -167,12 +204,11 @@ pub fn final_n_bits(family: &str) -> Option<usize> {
 /// and degree-8 constraints with no intermediate polynomials. Its proof is what the compressed final
 /// verifies, so fewer queries is what lets that layer fit 2^18 at two lanes.
 ///
-/// Poseidon keeps 4, which its committed verifiers and circom fixtures encode.
-pub fn final_blowup_factor(family: &str) -> usize {
+/// Poseidon keeps 4.
+pub fn final_blowup_factor(family: HashFamily) -> usize {
     match family {
-        "blake3" => 4,
-        "Poseidon1" | "Poseidon2" => 4,
-        fam => panic!("Unknown hash family: {fam}"),
+        Blake3 => 4,
+        Poseidon1 | Poseidon2 => 4,
     }
 }
 
@@ -191,26 +227,15 @@ pub fn max_constraint_degree_for_blowup(blowup: usize) -> usize {
     (2usize.pow(blowup as u32) + 1).min(CAP)
 }
 
-/// Whether the pipeline builds the `vadcop_final_compressed` stage by default.
-///
-/// The stage shrinks the final proof that ships; the BN128 wrap reads the uncompressed vadcop_final.
-///
-/// Off is not the same as unavailable: `proofman-setup setup-compressed-final` adds the stage to an
-/// existing proving key, so a key built without it can gain it later.
-pub fn compressed_final_by_default(_family: &str) -> bool {
-    true
-}
-
 /// Blowup the `vadcop_final_compressed` air is built at, as log2.
 ///
 /// blake3's compressed proof is the one that ships, so it trades prover memory (~2x per step) for
 /// proof size; it is proven once per block, so the memory is not held next to anything else.
 /// Poseidon keeps the final air's blowup.
-pub fn compressed_final_blowup_factor(family: &str) -> usize {
+pub fn compressed_final_blowup_factor(family: HashFamily) -> usize {
     match family {
-        "blake3" => 5,
-        "Poseidon1" | "Poseidon2" => final_blowup_factor(family),
-        fam => panic!("Unknown hash family: {fam}"),
+        Blake3 => 5,
+        Poseidon1 | Poseidon2 => final_blowup_factor(family),
     }
 }
 
@@ -218,63 +243,34 @@ pub fn compressed_final_blowup_factor(family: &str) -> usize {
 ///
 /// blake3: at blowup 2^5 a query is worth ~2.5 bits, so the count only moves every few bits of
 /// grinding: the exact solver gives 42 queries at 26, 41 at 27 and 28. 27 is the cheapest grind for 41.
-pub fn compressed_final_grinding_bits(family: &str) -> usize {
+pub fn compressed_final_grinding_bits(family: HashFamily) -> usize {
     match family {
-        "blake3" => 27,
-        "Poseidon1" | "Poseidon2" => final_grinding_bits(family),
-        fam => panic!("Unknown hash family: {fam}"),
+        Blake3 => 27,
+        Poseidon1 | Poseidon2 => final_grinding_bits(family),
     }
 }
 
 /// Whether proofman has a multiproof codec for `family` at this tree and transcript arity
 /// (`proofman::compressed_proof`, which dispatches on exactly this).
-pub fn has_multiproof_codec(family: &str, merkle_arity: u64, transcript_arity: u64) -> bool {
-    matches!((family, merkle_arity, transcript_arity), ("blake3", 2, _) | ("Poseidon1" | "Poseidon2", 2, 4))
+pub fn has_multiproof_codec(family: HashFamily, merkle_arity: u64, transcript_arity: u64) -> bool {
+    matches!((family, merkle_arity, transcript_arity), (Blake3, 2, _) | (Poseidon1 | Poseidon2, 2, 4))
 }
 
-/// Whether the `vadcop_final_compressed` proof travels as a Merkle multiproof. Fibonacci STIR:
-/// blake3 249,359 B against 264,935 flat, Poseidon2 201,826 against 220,282.
-pub fn compressed_final_multiproof(family: &str) -> bool {
+/// The FRI terminal domain of the `vadcop_final_compressed` proof where no folds are pinned.
+pub fn compressed_final_fri_terminal_degree(family: HashFamily) -> usize {
     match family {
-        "blake3" | "Poseidon1" | "Poseidon2" => true,
-        fam => panic!("Unknown hash family: {fam}"),
-    }
-}
-
-/// Merkle levels a flat `vadcop_final_compressed` proof carries outright (a multiproof carries none:
-/// it shares the tree tops already), and the FRI terminal domain where no folds are pinned.
-pub fn compressed_final_last_level_verification(family: &str) -> Option<usize> {
-    match family {
-        "blake3" => Some(6),
-        "Poseidon1" | "Poseidon2" => Some(6),
-        fam => panic!("Unknown hash family: {fam}"),
-    }
-}
-pub fn compressed_final_fri_terminal_degree(family: &str) -> usize {
-    match family {
-        "blake3" => 8,
-        "Poseidon1" | "Poseidon2" => 10,
-        fam => panic!("Unknown hash family: {fam}"),
-    }
-}
-
-/// Whether the `vadcop_final_compressed` proof is built with STIR when no test is asked for.
-/// Fibonacci: blake3 249,359 B against 274,719 FRI (both multiproofs), Poseidon2 201,826 against 254,826.
-pub fn compressed_final_stir(family: &str) -> bool {
-    match family {
-        "blake3" | "Poseidon1" | "Poseidon2" => true,
-        fam => panic!("Unknown hash family: {fam}"),
+        Blake3 => 8,
+        Poseidon1 | Poseidon2 => 10,
     }
 }
 
 /// FRI folds of the `vadcop_final_compressed` proof, picked for multiproof size at the (air size,
 /// blowup) given; under other parameters, or `None`, the solver's schedule. blake3 at 2^18: 272,927 B mean against
 /// 277,812 for [4,4,4,3].
-pub fn compressed_final_fri_folds(family: &str) -> Option<((usize, usize), Vec<usize>)> {
+pub fn compressed_final_fri_folds(family: HashFamily) -> Option<((usize, usize), Vec<usize>)> {
     match family {
-        "blake3" => Some(((18, 5), vec![4, 3, 3, 3, 3])),
-        "Poseidon1" | "Poseidon2" => None,
-        fam => panic!("Unknown hash family: {fam}"),
+        Blake3 => Some(((18, 5), vec![4, 3, 3, 3, 3])),
+        Poseidon1 | Poseidon2 => None,
     }
 }
 
@@ -288,23 +284,21 @@ pub type StirSchedule = ((usize, usize), Vec<usize>, Vec<usize>);
 /// against 277,015 B for the generic [4,4,4,3] and 295,511 for FRI. Round 2 keeps 26 queries from 26
 /// to 29 bits. Round 3 grinds 23: 22 queries, 264,935 B (27 bits would keep it at 21, 264,359 B).
 /// The first entry is the (air size, blowup) it was measured at; under others the generic one is used.
-pub fn compressed_final_stir_schedule(family: &str) -> Option<StirSchedule> {
+pub fn compressed_final_stir_schedule(family: HashFamily) -> Option<StirSchedule> {
     match family {
-        "blake3" => Some(((18, 5), vec![4, 3, 3], vec![27, 26, 23])),
+        Blake3 => Some(((18, 5), vec![4, 3, 3], vec![27, 26, 23])),
         // At 2^15 with the family's 22 bits a round: the smallest of 1–4 rounds of 1–7 bits, flat or multiproof.
-        "Poseidon1" | "Poseidon2" => Some(((15, 4), vec![3, 4], vec![22, 22])),
-        fam => panic!("Unknown hash family: {fam}"),
+        Poseidon1 | Poseidon2 => Some(((15, 4), vec![3, 4], vec![22, 22])),
     }
 }
 
 /// blake3 lanes of the `vadcop_final_compressed` air, or `None` for the air's default.
 ///
 /// It verifies one proof rather than the final air's two, so half the lanes hold it at 2^18.
-pub fn compressed_final_blake3_lanes(family: &str) -> Option<usize> {
+pub fn compressed_final_blake3_lanes(family: HashFamily) -> Option<usize> {
     match family {
-        "blake3" => Some(2),
-        "Poseidon1" | "Poseidon2" => None,
-        fam => panic!("Unknown hash family: {fam}"),
+        Blake3 => Some(2),
+        Poseidon1 | Poseidon2 => None,
     }
 }
 
@@ -315,21 +309,19 @@ pub fn compressed_final_blake3_lanes(family: &str) -> Option<usize> {
 /// exactly `arity` times recursive1's, and it alone decides the air's size. Poseidon absorbs a third
 /// proof cheaply -- arity-4 Merkle paths, and a permutation that is not the bulk of the circuit --
 /// so it keeps 3. Callers may override; both values stay valid for both families.
-pub fn default_aggregation_arity(family: &str) -> usize {
+pub fn default_aggregation_arity(family: HashFamily) -> usize {
     match family {
-        "blake3" => 2,
-        "Poseidon1" | "Poseidon2" => 3,
-        fam => panic!("Unknown hash family: {fam}"),
+        Blake3 => 2,
+        Poseidon1 | Poseidon2 => 3,
     }
 }
 
 /// Proof-of-work bits the query phase grinds for. Per family because the prover searches `2^bits`,
 /// so what one affords tracks how fast it hashes; the bits come off the query count.
-pub fn default_grinding_bits(family: &str) -> usize {
+pub fn default_grinding_bits(family: HashFamily) -> usize {
     match family {
-        "Poseidon1" | "Poseidon2" => 16,
-        "blake3" => 24,
-        fam => panic!("Unknown hash family: {fam}"),
+        Poseidon1 | Poseidon2 => 16,
+        Blake3 => 24,
     }
 }
 
@@ -346,26 +338,26 @@ pub fn default_grinding_bits(family: &str) -> usize {
 /// next query comes off at 23. blake3 takes its own family default of 24.
 ///
 /// Changing this changes the proof shape, and with it every proving key already built.
-pub fn recursive_grinding_bits(family: &str) -> usize {
+pub fn recursive_grinding_bits(family: HashFamily) -> usize {
     match family {
-        "Poseidon1" | "Poseidon2" => 21,
-        "blake3" => 24,
-        fam => panic!("Unknown hash family: {fam}"),
+        Poseidon1 | Poseidon2 => 21,
+        Blake3 => 24,
     }
 }
 
 /// Whether the family's final SNARK wraps a BN128 recursivef: the poseidon families', which any final
 /// SNARK (PLONK, FFLONK, pilfflonk) takes. blake3's recursivef is a Goldilocks STARK of the key
 /// (setup-recursivef), whose verifier only the pilfflonk wrap has.
-pub fn has_bn128_recursivef(family: &str) -> bool {
-    // Listed rather than `!= "blake3"`: this is a guard, so an unrecognised family has to fail
-    // closed. The `!=` form its neighbours use is fine for a preference, not for a refusal.
-    matches!(family, "Poseidon1" | "Poseidon2")
+pub fn has_bn128_recursivef(family: HashFamily) -> bool {
+    match family {
+        Poseidon1 | Poseidon2 => true,
+        Blake3 => false,
+    }
 }
 
 /// Fiat-Shamir transcript arity: the transcript squeezes through the same
 /// sponge/compression as the trees, so it shares the Merkle arity.
-pub fn transcript_arity(family: &str) -> u64 {
+pub fn transcript_arity(family: HashFamily) -> u64 {
     merkle_tree_arity(family)
 }
 
@@ -399,22 +391,15 @@ pub fn transcript_out_size(arity: u64) -> u64 {
     DIGEST_SIZE * arity
 }
 
-/// Families with streaming-commit slot kernels (stream_commit.cu). The C side
-/// re-checks via get_hash_family() and returns -15 on mismatch, so this list
-/// must stay in sync with commit_witness_streaming_gpu's family gate.
-pub fn supports_stream_commit(family: &str) -> bool {
-    matches!(family, "Poseidon1" | "Poseidon2" | "blake3")
-}
-
 /// True when the family's kernels support exactly one tree geometry
-pub fn has_forced_tree_geometry(family: &str) -> bool {
-    family == "blake3"
+pub fn has_forced_tree_geometry(family: HashFamily) -> bool {
+    family == Blake3
 }
 
 // (gate template name, role, owning family). `None` for family-agnostic gates.
-const GATES: &[(&str, GateRole, Option<&str>)] = &[
-    ("Poseidon1_16", GateRole::PoseidonSponge, Some("Poseidon1")),
-    ("CustPoseidon1_16", GateRole::PoseidonCompression, Some("Poseidon1")),
+const GATES: &[(&str, GateRole, Option<HashFamily>)] = &[
+    ("Poseidon1_16", GateRole::PoseidonSponge, Some(Poseidon1)),
+    ("CustPoseidon1_16", GateRole::PoseidonCompression, Some(Poseidon1)),
     // TreeSelector's number is the gate's RADIX, not a hash arity: TreeSelector(nLevels, eSize)
     // selects one of 2^nLevels values by nLevels BINARY key bits, and TreeSelector4/8 just collapse
     // two or three levels of that binary tree into one gate. eSize is 3 -- extension elements, for
@@ -424,57 +409,41 @@ const GATES: &[(&str, GateRole, Option<&str>)] = &[
     // check in to_plonk. Tagging them by family would make a blake3 r1cs that uses either radix look
     // like it mixed two families.
     ("TreeSelector8", GateRole::TreeSelector, None),
-    ("Poseidon2_16", GateRole::PoseidonSponge, Some("Poseidon2")),
-    ("CustPoseidon2_16", GateRole::PoseidonCompression, Some("Poseidon2")),
+    ("Poseidon2_16", GateRole::PoseidonSponge, Some(Poseidon2)),
+    ("CustPoseidon2_16", GateRole::PoseidonCompression, Some(Poseidon2)),
     ("TreeSelector4", GateRole::TreeSelector, None),
     ("CMul", GateRole::CMul, None),
     ("FFT4", GateRole::Fft4, None),
     ("EvPol4", GateRole::EvPol4, None),
     ("SelectValueArity4", GateRole::SelectValArity4, None),
     ("SelectValueArity2", GateRole::SelectValArity2, None),
-    ("Blake3Node", GateRole::Blake3Node, Some("blake3")),
-    ("Blake3Compress", GateRole::Blake3Compress, Some("blake3")),
-    // `PoseidonT(t)`: circom mints one gate id per width t, as for FFT4's parameters.
-    ("PoseidonT", GateRole::PoseidonT, Some(BN128_WRAP_FAMILY)),
+    ("Blake3Node", GateRole::Blake3Node, Some(Blake3)),
+    ("Blake3Compress", GateRole::Blake3Compress, Some(Blake3)),
+    // `PoseidonT(t)`: circom mints one gate id per width t, as for FFT4's parameters. The BN128
+    // wraps' gates are of no STARK family.
+    ("PoseidonT", GateRole::PoseidonT, None),
     // `Num2Bytes(nBits)`: one gate id per nBits, as for PoseidonT. Of no family: the wraps of every
     // hash range-check with it.
     ("Num2Bytes", GateRole::RangeCheck, None),
 ];
 
-pub fn lookup_gate(name: &str) -> Option<(GateRole, Option<&'static str>)> {
+pub fn lookup_gate(name: &str) -> Option<(GateRole, Option<HashFamily>)> {
     GATES.iter().find(|(n, _, _)| *n == name).map(|(_, r, f)| (*r, *f))
 }
 
-pub fn is_known_family(id: &str) -> bool {
-    FAMILIES.contains(&id)
-}
-
-/// Whether this family can be emitted as a native Rust verifier.
-///
-/// The generated verifier hashes through `proofman_fields::Hash`, which is a fixed-width sponge:
-/// WIDTH / RATE / CAPACITY and an in-place permutation over a `[F; WIDTH]` state. Every Poseidon
-/// variant is that shape. BLAKE3 is not -- it consumes a variable-length run of field elements and
-/// produces four, which is why the C++ side reaches it through `Blake3Goldilocks::linearHash` and
-/// `merkletree` rather than through the permutation interface. Supporting it here means
-/// generalising that trait and the verifier template, not adding an impl, so until then a blake3
-/// proving key is written without this artifact.
-pub fn supports_native_rust_verifier(family: &str) -> bool {
-    is_known_family(family)
-}
-
-pub fn rust_hash_type(family: &str, arity: u64) -> &'static str {
+pub fn rust_hash_type(family: HashFamily, arity: u64) -> &'static str {
     match (family, arity * 4) {
-        ("Poseidon1", 8) => "Poseidon1_8",
-        ("Poseidon1", 12) => "Poseidon1_12",
-        ("Poseidon1", 16) => "Poseidon1_16",
-        ("Poseidon2", 4) => "Poseidon2_4",
-        ("Poseidon2", 8) => "Poseidon2_8",
-        ("Poseidon2", 12) => "Poseidon2_12",
-        ("Poseidon2", 16) => "Poseidon2_16",
+        (Poseidon1, 8) => "Poseidon1_8",
+        (Poseidon1, 12) => "Poseidon1_12",
+        (Poseidon1, 16) => "Poseidon1_16",
+        (Poseidon2, 4) => "Poseidon2_4",
+        (Poseidon2, 8) => "Poseidon2_8",
+        (Poseidon2, 12) => "Poseidon2_12",
+        (Poseidon2, 16) => "Poseidon2_16",
         // BLAKE3 has one width and it is the block, not a sponge width: eight field elements is a
         // 64-byte block, and at arity 2 a node is exactly two four-element digests. The arity is
         // still checked, because any other would mean a node the block cannot hold.
-        ("blake3", 8) => "Blake3_8",
+        (Blake3, 8) => "Blake3_8",
         (fam, width) => panic!("Unsupported hash type: {fam}_{width} (arity {arity})"),
     }
 }
@@ -486,268 +455,149 @@ pub fn rust_hash_type(family: &str, arity: u64) -> &'static str {
 /// BLAKE3's absorbs eight words per compression with the state in the chaining value. Naming the
 /// hash and wrapping it in a sponge produced different challenges from the prover's -- every
 /// challenge, from the first squeeze -- which is why this returns the construction instead.
-pub fn rust_transcript_type(family: &str, arity: u64) -> String {
+pub fn rust_transcript_type(family: HashFamily, arity: u64) -> String {
     match family {
-        "blake3" => "Blake3Transcript<Goldilocks>".to_string(),
-        _ => format!("Transcript<Goldilocks, {}>", rust_hash_type(family, arity)),
+        Blake3 => "Blake3Transcript<Goldilocks>".to_string(),
+        Poseidon1 | Poseidon2 => format!("Transcript<Goldilocks, {}>", rust_hash_type(family, arity)),
     }
 }
 
 /// Type names `rust_transcript_type` needs imported, so the generator does not have to parse it.
-pub fn rust_transcript_imports(family: &str, arity: u64) -> Vec<&'static str> {
+pub fn rust_transcript_imports(family: HashFamily, arity: u64) -> Vec<&'static str> {
     match family {
-        "blake3" => vec!["Blake3Transcript"],
-        _ => vec!["Transcript", rust_hash_type(family, arity)],
+        Blake3 => vec!["Blake3Transcript"],
+        Poseidon1 | Poseidon2 => vec!["Transcript", rust_hash_type(family, arity)],
     }
 }
 
-pub fn rust_grinding_type(family: &str) -> &'static str {
+pub fn rust_grinding_type(family: HashFamily) -> &'static str {
     match family {
-        "Poseidon1" => "Poseidon1_8",
-        "Poseidon2" => "Poseidon2_8",
-        "blake3" => "Blake3_8",
-        fam => panic!("Unsupported grinding hash family: {fam}"),
+        Poseidon1 => "Poseidon1_8",
+        Poseidon2 => "Poseidon2_8",
+        Blake3 => "Blake3_8",
     }
 }
 
 #[cfg(test)]
 mod tests {
-    /// Recursion grinds harder than the basic airs, and blake3 harder than poseidon: a query is
-    /// expensive to verify in-circuit while the grinding costs the verifier one hash.
-    ///
-    /// Poseidon's 21 is asserted because it sets the query count, so moving it invalidates every
-    /// proving key already built.
-    #[test]
-    fn recursive_grinding_bits_exceed_the_basic_defaults() {
-        assert_eq!(super::recursive_grinding_bits("blake3"), 24);
-        assert_eq!(super::recursive_grinding_bits("Poseidon1"), 21);
-        assert_eq!(super::recursive_grinding_bits("Poseidon2"), 21);
-        for f in super::FAMILIES {
-            assert!(
-                super::recursive_grinding_bits(f) >= super::default_grinding_bits(f),
-                "{f} would grind less in recursion than in its basic airs"
-            );
-        }
-    }
-
-    /// Changing the pin means regenerating every verifier in `verifier/src/<family>/`.
-    #[test]
-    fn the_final_air_is_pinned_only_where_a_committed_verifier_encodes_it() {
-        assert_eq!(super::final_n_bits("blake3"), Some(18));
-        for f in ["Poseidon1", "Poseidon2"] {
-            assert_eq!(super::final_n_bits(f), None, "{f}");
-        }
-    }
-
-    /// The final stage grinds harder than the recursion for poseidon (22 vs 21) and the same for
-    /// blake3 (24), and every family grinds at least as hard as its basic airs.
-    #[test]
-    fn final_grinding_bits_are_pinned_per_family() {
-        assert_eq!(super::final_grinding_bits("blake3"), 27);
-        assert_eq!(super::final_grinding_bits("Poseidon1"), 22);
-        assert_eq!(super::final_grinding_bits("Poseidon2"), 22);
-        for f in super::FAMILIES {
-            assert!(super::final_grinding_bits(f) >= super::default_grinding_bits(f), "{f}");
-        }
-    }
-
-    /// The blowup is per family, and whatever it is must still carry degree 5 -- the floor the final
-    /// air's own constraints need -- so the degree cap never becomes the thing that forces it.
-    #[test]
-    fn final_blowup_is_per_family_and_carries_the_degree() {
-        assert_eq!(super::final_blowup_factor("blake3"), 4);
-        assert_eq!(super::final_blowup_factor("Poseidon2"), 4);
-        for f in super::FAMILIES {
-            let b = super::final_blowup_factor(f);
-            assert!(super::max_constraint_degree_for_blowup(b) >= 5, "{f} at blowup {b} cannot carry degree 5");
-        }
-    }
-
-    /// The degree follows the blowup, capped at the repo's 8. Blowup 2 lands on 5, which is what the
-    /// recursion already compiles at -- so this changes nothing there and everything above it.
-    #[test]
-    fn max_constraint_degree_follows_the_blowup() {
-        assert_eq!(super::max_constraint_degree_for_blowup(1), 3);
-        assert_eq!(super::max_constraint_degree_for_blowup(2), 5);
-        assert_eq!(super::max_constraint_degree_for_blowup(3), 8);
-        assert_eq!(super::max_constraint_degree_for_blowup(4), 8);
-        assert_eq!(super::max_constraint_degree_for_blowup(10), 8, "capped");
-    }
-
-    /// blake3 skips the compressed final because it measured a 2% saving for a whole extra layer;
-    /// poseidon keeps it. Neither is unavailable -- the standalone subcommand adds it either way.
-    #[test]
-    fn compressed_final_is_on_for_every_family() {
-        assert!(super::compressed_final_by_default("blake3"));
-        assert!(super::compressed_final_by_default("Poseidon1"));
-        assert!(super::compressed_final_by_default("Poseidon2"));
-    }
-
-    /// blake3's recursion settles at 2^19 against poseidon's 2^17: reading poseidon's number for
-    /// blake3 makes every air demand a compressor it does not need.
-    #[test]
-    fn recursive_bits_threshold_is_the_family_recursion_size() {
-        assert_eq!(super::recursive_bits_threshold("blake3"), 19);
-        assert_eq!(super::recursive_bits_threshold("Poseidon1"), 17);
-        assert_eq!(super::recursive_bits_threshold("Poseidon2"), 17);
-    }
-
-    /// blake3 aggregates two proofs, poseidon three: recursive2's BLAKE3 gate count is `arity` times
-    /// recursive1's, and for blake3 that count is what sizes the air.
-    #[test]
-    fn default_aggregation_arity_is_two_for_blake3_and_three_for_poseidon() {
-        assert_eq!(super::default_aggregation_arity("blake3"), 2);
-        assert_eq!(super::default_aggregation_arity("Poseidon1"), 3);
-        assert_eq!(super::default_aggregation_arity("Poseidon2"), 3);
-        for f in super::FAMILIES {
-            let a = super::default_aggregation_arity(f);
-            assert!(crate::global_info::is_valid_aggregation_arity(a), "{f} defaults to an invalid arity {a}");
-        }
-    }
-
     use super::*;
 
+    /// Per-family knobs every key is built with, pinned: moving one invalidates every key of the family.
     #[test]
-    fn blake3_gates_are_registered_to_the_blake3_family() {
-        assert_eq!(lookup_gate("Blake3Node"), Some((GateRole::Blake3Node, Some("blake3"))));
-        assert_eq!(lookup_gate("Blake3Compress"), Some((GateRole::Blake3Compress, Some("blake3"))));
-    }
-
-    /// `to_plonk.rs`'s `lookup_gate` panics on an unregistered name, so a family in `FAMILIES`
-    /// with no gates cannot be packed at all -- which is what blocked blake3 recursion.
-    /// A single air's gate set must resolve to exactly ONE family, because `to_plonk` panics with
-    /// "r1cs mixes multiple hash families" otherwise.
-    ///
-    /// This is why TreeSelector4/8 are family-agnostic. Their number is the gate's radix over a
-    /// binary selection tree, not a hash arity, so any family may use either; tagging TreeSelector4
-    /// as Poseidon2 made a blake3 r1cs that used radix 4 look like it mixed blake3 with Poseidon2.
-    /// The hash gates alone still identify the family, which is the property that has to hold.
-    #[test]
-    fn a_families_gate_set_resolves_to_exactly_one_family() {
-        let plausible: &[(&str, &[&str])] = &[
-            (
-                "Poseidon1",
-                &["Poseidon1_16", "CustPoseidon1_16", "TreeSelector8", "CMul", "FFT4", "EvPol4", "SelectValueArity4"],
-            ),
-            (
-                "Poseidon2",
-                &["Poseidon2_16", "CustPoseidon2_16", "TreeSelector4", "CMul", "FFT4", "EvPol4", "SelectValueArity4"],
-            ),
-            // blake3 is arity 2, and it uses radix 4 for the FRI selection tree
-            (
-                "blake3",
-                &["Blake3Node", "Blake3Compress", "TreeSelector4", "CMul", "FFT4", "EvPol4", "SelectValueArity2"],
-            ),
-            // the other radix must be just as usable by any family
-            ("blake3", &["Blake3Node", "TreeSelector8", "CMul"]),
-            ("Poseidon2", &["Poseidon2_16", "TreeSelector8", "CMul"]),
-        ];
-
-        for (expected, gates) in plausible {
-            let mut seen: Vec<&str> = Vec::new();
-            for name in *gates {
-                let (_, family) = lookup_gate(name).unwrap_or_else(|| panic!("unregistered gate {name}"));
-                if let Some(f) = family {
-                    if !seen.contains(&f) {
-                        seen.push(f);
-                    }
-                }
-            }
-            assert_eq!(seen, vec![*expected], "gate set {gates:?} does not resolve to {expected} alone");
-        }
-    }
-
-    /// The wrap's hash gate is its family's, and its range check of no family; the wrap families
-    /// are no STARK's: a `--hash`, a proof or a globalInfo naming one is refused as any unknown
-    /// family is.
-    #[test]
-    fn the_gates_of_the_bn128_wrap_are_of_its_family_which_is_no_stark_family() {
-        assert_eq!(lookup_gate("PoseidonT"), Some((GateRole::PoseidonT, Some(BN128_WRAP_FAMILY))));
-        assert_eq!(lookup_gate("Num2Bytes"), Some((GateRole::RangeCheck, None)));
-        for family in [BN128_WRAP_FAMILY, BLAKE3_BN128_WRAP_FAMILY] {
-            assert!(!is_known_family(family));
-            assert!(!has_bn128_recursivef(family));
-        }
-    }
-
-    #[test]
-    fn every_family_has_at_least_one_gate() {
-        for fam in FAMILIES {
-            assert!(
-                GATES.iter().any(|(_, _, f)| *f == Some(*fam)),
-                "family {fam} is in FAMILIES but has no gate in GATES"
+    fn per_family_knobs_are_pinned() {
+        // (family, ffi id, grinding basic/recursive/final, compressed blowup/grinding, recursive bits, final bits, bn128)
+        for (f, ffi, (basic, rec, fin), compressed, rec_bits, final_bits, bn128) in [
+            (Poseidon1, 1, (16, 21, 22), (4, 22), 17, None, true),
+            (Poseidon2, 2, (16, 21, 22), (4, 22), 17, None, true),
+            (Blake3, 3, (24, 24, 27), (5, 27), 19, Some(18), false),
+        ] {
+            assert_eq!(f.ffi_id(), ffi, "{f}");
+            assert_eq!(
+                (default_grinding_bits(f), recursive_grinding_bits(f), final_grinding_bits(f)),
+                (basic, rec, fin)
+            );
+            assert!(basic <= rec && rec <= fin, "{f}");
+            assert_eq!((compressed_final_blowup_factor(f), compressed_final_grinding_bits(f)), compressed, "{f}");
+            assert_eq!(
+                (recursive_bits_threshold(f), final_n_bits(f), has_bn128_recursivef(f)),
+                (rec_bits, final_bits, bn128)
             );
         }
     }
 
+    /// The final blowup must carry degree 5, the floor of the final air's own constraints.
     #[test]
-    fn discriminating_gate_names_are_unique_per_family() {
-        for (i, (name, role, fam)) in GATES.iter().enumerate() {
-            if fam.is_none() {
-                continue;
-            }
-            if !matches!(role, GateRole::PoseidonSponge | GateRole::PoseidonCompression | GateRole::TreeSelector) {
-                continue;
-            }
-            for (other_name, _, other_fam) in &GATES[i + 1..] {
-                if name == other_name {
-                    panic!("gate {name:?} claimed by both {fam:?} and {other_fam:?}");
-                }
-            }
+    fn final_blowup_carries_the_degree() {
+        assert_eq!((final_blowup_factor(Blake3), final_blowup_factor(Poseidon2)), (4, 4));
+        for f in HashFamily::ALL {
+            let b = final_blowup_factor(f);
+            assert!(max_constraint_degree_for_blowup(b) >= 5, "{f} at blowup {b} cannot carry degree 5");
         }
     }
 
     #[test]
-    fn rust_hash_type_tracks_arity_width() {
-        // width = arity * 4; must match the committed generated verifier files.
-        assert_eq!(rust_hash_type("Poseidon2", 4), "Poseidon2_16");
-        assert_eq!(rust_hash_type("Poseidon2", 2), "Poseidon2_8");
-        assert_eq!(rust_hash_type("Poseidon1", 4), "Poseidon1_16");
-        assert_eq!(rust_hash_type("Poseidon1", 3), "Poseidon1_12");
-        assert_eq!(rust_hash_type("Poseidon1", 2), "Poseidon1_8");
+    fn max_constraint_degree_follows_the_blowup() {
+        let degrees = [1, 2, 3, 4, 10].map(max_constraint_degree_for_blowup);
+        assert_eq!(degrees, [3, 5, 8, 8, 8], "capped at 8");
     }
 
-    /// Every family needs a default, and the cheap-to-hash one grinds harder.
     #[test]
-    fn every_family_has_grinding_bits_and_blake3_grinds_hardest() {
-        for family in FAMILIES {
-            assert!(default_grinding_bits(family) > 0, "{family} has no grinding default");
+    fn default_aggregation_arity_is_valid_and_pinned() {
+        for (f, arity) in [(Blake3, 2), (Poseidon1, 3), (Poseidon2, 3)] {
+            assert_eq!(default_aggregation_arity(f), arity, "{f}");
+            assert!(crate::global_info::is_valid_aggregation_arity(arity), "{f}");
         }
-        assert_eq!(default_grinding_bits("Poseidon1"), default_grinding_bits("Poseidon2"));
-        assert!(default_grinding_bits("blake3") > default_grinding_bits("Poseidon1"));
     }
 
-    /// The node hash absorbs every child in one permutation, so the width must be exactly
-    /// `arity * DIGEST_SIZE` -- `merkletreeReduce` asserts the same thing in C++.
+    /// Hash gates each own one family and every other gate is family-agnostic, so a gate set can only
+    /// mix families by mixing hash gates (`to_plonk` panics on that).
     #[test]
-    fn the_sponge_width_fits_one_node_of_children() {
-        for arity in [2, 3, 4] {
-            assert_eq!(sponge_width(arity), arity * DIGEST_SIZE);
-            assert_eq!(sponge_rate(arity), sponge_width(arity) - DIGEST_SIZE);
+    fn gates_are_owned_by_their_hash_family_or_by_none() {
+        for (name, family) in [
+            ("Poseidon1_16", Poseidon1),
+            ("CustPoseidon1_16", Poseidon1),
+            ("Poseidon2_16", Poseidon2),
+            ("CustPoseidon2_16", Poseidon2),
+            ("Blake3Node", Blake3),
+            ("Blake3Compress", Blake3),
+        ] {
+            assert_eq!(lookup_gate(name).map(|(_, f)| f), Some(Some(family)), "{name}");
         }
-        // The measured geometry: arity 4 is a width-16 sponge absorbing 12 per block.
+        // TreeSelector4/8 are radices, not arities: tagging them made blake3 r1cs look mixed
+        for name in [
+            "TreeSelector4",
+            "TreeSelector8",
+            "CMul",
+            "FFT4",
+            "EvPol4",
+            "SelectValueArity2",
+            "SelectValueArity4",
+            "PoseidonT",
+            "Num2Bytes",
+        ] {
+            assert_eq!(lookup_gate(name).map(|(_, f)| f), Some(None), "{name}");
+        }
+        assert_eq!(lookup_gate("Nope"), None);
+    }
+
+    /// `lookup_gate` takes the first entry of a name, so a duplicate would hide the other.
+    #[test]
+    fn gate_names_are_unique() {
+        let names: std::collections::HashSet<_> = GATES.iter().map(|(name, ..)| name).collect();
+        assert_eq!(names.len(), GATES.len());
+    }
+
+    #[test]
+    fn hash_geometry() {
+        // width = arity * 4
+        for (f, arity, name) in [
+            (Poseidon2, 4, "Poseidon2_16"),
+            (Poseidon2, 2, "Poseidon2_8"),
+            (Poseidon1, 4, "Poseidon1_16"),
+            (Poseidon1, 3, "Poseidon1_12"),
+            (Poseidon1, 2, "Poseidon1_8"),
+        ] {
+            assert_eq!(rust_hash_type(f, arity), name);
+        }
         assert_eq!((sponge_width(4), sponge_rate(4)), (16, 12));
-    }
-
-    /// The transcript buffers one rate's worth before permuting and drains the full state.
-    #[test]
-    fn transcript_sizes_match_the_native_transcript() {
         assert_eq!((transcript_pending_size(4), transcript_out_size(4)), (12, 16));
         assert_eq!((transcript_pending_size(2), transcript_out_size(2)), (4, 8));
     }
 
-    /// The BN128 recursivef is poseidon-only; blake3's is a Goldilocks STARK of its key.
+    /// Names parse exactly (unknown or differently-cased ones are refused) and serde uses the same names.
     #[test]
-    fn only_the_poseidon_families_have_a_bn128_recursivef() {
-        assert!(!super::has_bn128_recursivef("blake3"));
-        assert!(super::has_bn128_recursivef("Poseidon1"));
-        assert!(super::has_bn128_recursivef("Poseidon2"));
-        // A guard fails closed: a family this build does not know cannot be wrapped either.
-        assert!(!super::has_bn128_recursivef("Keccak"));
-    }
-
-    #[test]
-    fn default_hash_id_is_registered() {
-        assert!(is_known_family(DEFAULT_HASH_ID));
+    fn parses_exact_names_only() {
+        for f in HashFamily::ALL {
+            let json = format!("\"{}\"", f.as_str());
+            assert_eq!(f.as_str().parse::<HashFamily>().unwrap(), f);
+            assert_eq!(f.is_blake3(), f == Blake3);
+            assert_eq!(serde_json::to_string(&f).unwrap(), json);
+            assert_eq!(serde_json::from_str::<HashFamily>(&json).unwrap(), f);
+        }
+        for bad in ["Blake3", "poseidon1", "POSEIDON2", "", "sha2", "Keccak"] {
+            let e = bad.parse::<HashFamily>().unwrap_err();
+            assert!(e.contains("Poseidon1") && e.contains("blake3"), "error must list valid names: {e}");
+            assert!(serde_json::from_str::<HashFamily>(&format!("\"{bad}\"")).is_err(), "{bad}");
+        }
     }
 }

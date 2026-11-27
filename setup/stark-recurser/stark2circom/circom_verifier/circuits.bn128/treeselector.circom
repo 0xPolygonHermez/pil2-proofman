@@ -21,7 +21,7 @@ template TreeSelector(nLevels, eSize) {
     for (var i=0; i<nLevels; i++) {
         for (var j=0; j<levelN; j++) {
             for (var k=0; k<eSize; k++) {
-                //If key[i] === 0, select the even positions, otherwise pick the even ones
+                //If key[i] === 0, select the even positions, otherwise pick the odd ones
                 if (i==0) { //If i == 0, we get the values from the values array
                     im[o+j][k] <== key[i]*(values[2*j+1][k]  - values[2*j][k])  + values[2*j][k];
                 } else {

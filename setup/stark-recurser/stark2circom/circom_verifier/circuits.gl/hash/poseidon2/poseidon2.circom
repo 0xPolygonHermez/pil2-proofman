@@ -2,6 +2,7 @@ pragma circom 2.1.0;
 pragma custom_templates;
 
 include "poseidon2_constants.circom";
+include "../node_children.circom";
 
 // (5 7 1 3) (a)
 // (4 6 1 1) (b)
@@ -51,172 +52,61 @@ function matmul_external_16(in) {
     return out;
 }
 
-// Custom gate that calculates Poseidon hash of three inputs using Neptune optimization
-template custom extern_c Poseidon2_16() {
+// The Poseidon2 permutation of width 16 (arity 4): 4 full rounds, 22 partial, 4 full.
+function poseidon2_16(in) {
     var arity = 4;
-    signal input in[arity * 4];
-    signal output out[arity * 4];
-
     var st[arity * 4];
     st = in;
 
     st = matmul_external_16(st);
-
-    for(var r = 0; r < 4; r++) {
-        for(var t=0; t < arity * 4; t++) {
-            st[t] = st[t] + CONSTANTS(arity, arity*4*r + t);
+    for (var r = 0; r < 4; r++) {
+        for (var t = 0; t < arity * 4; t++) {
+            st[t] = st[t] + CONSTANTS(arity, arity * 4 * r + t);
             st[t] = st[t] ** 7;
         }
         st = matmul_external_16(st);
     }
 
-    
-    for(var i = 0; i < 22; i++) {
-        st[0] += CONSTANTS(arity, 4*(arity*4) + i);
+    for (var r = 0; r < 22; r++) {
+        st[0] += CONSTANTS(arity, 4 * arity * 4 + r);
         st[0] = st[0] ** 7;
 
         var sum = 0;
-        for(var j = 0; j < arity * 4; j++) {
-            sum += st[j];
-        }
-        
-        for(var j = 0; j < arity * 4; j++) {
+        for (var j = 0; j < arity * 4; j++) { sum += st[j]; }
+        for (var j = 0; j < arity * 4; j++) {
             st[j] = st[j] * MATRIX_DIAGONAL(arity, j);
             st[j] += sum;
         }
-        
-        if(i == 10 || i == 21) {
-        }
     }
 
-    for(var r = 0; r < 4; r++) {
-        for(var t=0; t < arity * 4; t++) {
-            st[t] = st[t] + CONSTANTS(arity, 4*arity*4 + 22 + arity*4*r + t);
+    for (var r = 0; r < 4; r++) {
+        for (var t = 0; t < arity * 4; t++) {
+            st[t] = st[t] + CONSTANTS(arity, 4 * arity * 4 + 22 + arity * 4 * r + t);
             st[t] = st[t] ** 7;
         }
-
         st = matmul_external_16(st);
-
-        // Only the last round's state leaves the gate; the rest is recomputed when the
-        // trace is filled (see pil2-stark/src/starkpil/gate_bands.hpp).
-        if(r == 3) {
-            out <-- st;
-        }
     }
+    return st;
 }
 
-// Custom gate that calculates Poseidon hash of two inputs using Neptune optimization
-// The two inputs are sent unordered and the key that determines its position is also sent as an input
+// Custom gate: the permutation of in. Only the last round's state leaves the gate; the rest is
+// recomputed when the trace is filled (see pil2-stark/src/starkpil/gate_bands.hpp).
+template custom extern_c Poseidon2_16() {
+    signal input in[16];
+    signal output out[16];
+
+    out <-- poseidon2_16(in);
+}
+
+// Custom gate: a Merkle node's hash, its four children ordered by key (nodeChildrenInOrder).
 template custom extern_c CustPoseidon2_16() {
-    var arity = 4;
-    signal input in[arity * 4];
+    signal input in[16];
     signal input key[2];
-    signal output out[arity * 4];
+    signal output out[16];
 
-    assert(key[0]*(key[0] - 1) == 0);
-    assert(key[1]*(key[1] - 1) == 0);
-
-    var initialSt[arity * 4];
-    
-    // Order the inputs of the Poseidon hash according to the key bit.
-    if(key[0] == 0 && key[1] == 0) {
-        initialSt = in;
-    } else if (key[0] == 1 && key[1] == 0) {
-        initialSt[0]  = in[4];
-        initialSt[1]  = in[5];
-        initialSt[2]  = in[6];
-        initialSt[3]  = in[7];
-        initialSt[4]  = in[0];
-        initialSt[5]  = in[1];
-        initialSt[6]  = in[2];
-        initialSt[7]  = in[3];
-        initialSt[8]  = in[8];
-        initialSt[9]  = in[9];
-        initialSt[10] = in[10];
-        initialSt[11] = in[11];
-        initialSt[12] = in[12];
-        initialSt[13] = in[13];
-        initialSt[14] = in[14];
-        initialSt[15] = in[15];
-    } else if (key[0] == 0 && key[1] == 1) {
-        initialSt[0]  = in[4];
-        initialSt[1]  = in[5];
-        initialSt[2]  = in[6];
-        initialSt[3]  = in[7];
-        initialSt[4]  = in[8];
-        initialSt[5]  = in[9];
-        initialSt[6]  = in[10];
-        initialSt[7]  = in[11];
-        initialSt[8]  = in[0];
-        initialSt[9]  = in[1];
-        initialSt[10] = in[2];
-        initialSt[11] = in[3];
-        initialSt[12] = in[12];
-        initialSt[13] = in[13];
-        initialSt[14] = in[14];
-        initialSt[15] = in[15];
-    } else {
-        initialSt[0]  = in[4];
-        initialSt[1]  = in[5];
-        initialSt[2]  = in[6];
-        initialSt[3]  = in[7];
-        initialSt[4]  = in[8];
-        initialSt[5]  = in[9];
-        initialSt[6]  = in[10];
-        initialSt[7]  = in[11];
-        initialSt[8]  = in[12];
-        initialSt[9]  = in[13];
-        initialSt[10] = in[14];
-        initialSt[11] = in[15];
-        initialSt[12] = in[0];
-        initialSt[13] = in[1];
-        initialSt[14] = in[2];
-        initialSt[15] = in[3];
-    }
-    
-
-    var st[arity * 4] = initialSt;
-
-    st = matmul_external_16(st);
-    for(var r = 0; r < 4; r++) {
-        for(var t=0; t < arity * 4; t++) {
-            st[t] = st[t] + CONSTANTS(arity, arity*4*r + t);
-            st[t] = st[t] ** 7;
-        }
-        st = matmul_external_16(st);
-    }
-
-   
-
-    for(var r = 0; r < 22; r++) {
-        st[0] += CONSTANTS(arity, 4*arity*4 + r);
-        st[0] = st[0] ** 7;
-
-        var sum = 0;
-        for(var j = 0; j < arity * 4; j++) {
-            sum += st[j];
-        }
-
-        for(var j = 0; j < arity * 4; j++) {
-            st[j] = st[j] * MATRIX_DIAGONAL(arity, j);
-            st[j] += sum;
-        }
-
-    }
-
-    for(var r = 0; r < 4; r++) {
-        for(var t=0; t < arity * 4; t++) {
-            st[t] = st[t] + CONSTANTS(arity, 4*arity*4 + 22 + arity*4*r + t);
-            st[t] = st[t] ** 7;
-        }
-
-        st = matmul_external_16(st);
-        // Only the last round's state leaves the gate; the rest is recomputed when the
-        // trace is filled (see pil2-stark/src/starkpil/gate_bands.hpp).
-        if(r == 3) {
-            out <-- st;
-        }
-    }
+    assert(key[0] * (key[0] - 1) == 0);
+    assert(key[1] * (key[1] - 1) == 0);
+    out <-- poseidon2_16(nodeChildrenInOrder(in, key));
 }
 
 // Calculate Poseidon2 Hash of 3 inputs (2 in + capacity) in GL field (each element has at most 63 bits)

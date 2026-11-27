@@ -75,9 +75,10 @@ pub fn security_from_error(epsilon: f64) -> f64 {
     -epsilon.log2()
 }
 
-/// ε ↦ ε · 2^-g. exp2 of an integer is exact, so no precision is lost.
+/// ε ↦ ε · 2^-g · 2^64/p: the verifier accepts a Goldilocks element below 2^(64-g), as in `check::exact`.
 pub fn apply_grinding(epsilon: f64, grinding_bits: u32) -> f64 {
-    epsilon * f64::exp2(-(grinding_bits as f64))
+    const GOLDILOCKS: f64 = 0xFFFF_FFFF_0000_0001u64 as f64;
+    epsilon * f64::exp2(-(grinding_bits as f64)) * (f64::exp2(64.0) / GOLDILOCKS)
 }
 
 /// Hashes to verify one Merkle path in a tree of `n_leafs` leaves.

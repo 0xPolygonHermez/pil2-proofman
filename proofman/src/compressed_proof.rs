@@ -1,6 +1,7 @@
 //! A compressed proof's wire form: a multiproof when its key says so, the flat proof otherwise.
 
-use proofman_common::{hash_family, ProofmanError, ProofmanResult, StarkInfo};
+use proofman_common::hash_family::{self, HashFamily};
+use proofman_common::{ProofmanError, ProofmanResult, StarkInfo};
 use proofman_fields::{
     Blake3Transcript, Blake3_8, Goldilocks, Poseidon1_16, Poseidon1_8, Poseidon2_16, Poseidon2_8, Transcript,
 };
@@ -26,7 +27,7 @@ type CodecFn = fn(&[u64], &[u64], &ProofLayout) -> Option<Vec<u64>>;
 
 /// `prune_proof` and `expand_proof` over the hashes the key's generated verifier uses
 /// (`hash_family::rust_hash_type` / `rust_transcript_type`).
-fn codec(hash: &str, stark_info: &StarkInfo) -> ProofmanResult<(CodecFn, CodecFn)> {
+fn codec(hash: HashFamily, stark_info: &StarkInfo) -> ProofmanResult<(CodecFn, CodecFn)> {
     type P1 = Transcript<Goldilocks, Poseidon1_16>;
     type P2 = Transcript<Goldilocks, Poseidon2_16>;
     type B3 = Blake3Transcript<Goldilocks>;
@@ -37,12 +38,11 @@ fn codec(hash: &str, stark_info: &StarkInfo) -> ProofmanResult<(CodecFn, CodecFn
             "no multiproof codec for {hash} at tree arity {mta}, transcript arity {ta}"
         )));
     }
-    match hash {
-        "blake3" => Ok((prune_proof::<B3>, expand_proof::<Blake3_8, Blake3_8, B3>)),
-        "Poseidon1" => Ok((prune_proof::<P1>, expand_proof::<Poseidon1_8, Poseidon1_8, P1>)),
-        "Poseidon2" => Ok((prune_proof::<P2>, expand_proof::<Poseidon2_8, Poseidon2_8, P2>)),
-        fam => Err(ProofmanError::InvalidProof(format!("has_multiproof_codec lists {fam} but proofman has no types"))),
-    }
+    Ok(match hash {
+        HashFamily::Blake3 => (prune_proof::<B3>, expand_proof::<Blake3_8, Blake3_8, B3>),
+        HashFamily::Poseidon1 => (prune_proof::<P1>, expand_proof::<Poseidon1_8, Poseidon1_8, P1>),
+        HashFamily::Poseidon2 => (prune_proof::<P2>, expand_proof::<Poseidon2_8, Poseidon2_8, P2>),
+    })
 }
 
 /// The proof (`[n_publics, publics…, proof…]`) as it goes on the wire.
@@ -50,7 +50,7 @@ pub fn prune_compressed_proof(
     proof: &[u64],
     stark_info: &StarkInfo,
     verkey: &[u64],
-    hash: &str,
+    hash: HashFamily,
 ) -> ProofmanResult<Vec<u64>> {
     if !stark_info.multiproof {
         return Ok(proof.to_vec());
@@ -70,7 +70,7 @@ pub fn expand_compressed_proof(
     proof: &[u64],
     stark_info: &StarkInfo,
     verkey: &[u64],
-    hash: &str,
+    hash: HashFamily,
 ) -> ProofmanResult<Vec<u64>> {
     match (stark_info.multiproof, is_multiproof(proof)) {
         (false, false) => Ok(proof.to_vec()),

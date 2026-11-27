@@ -38,7 +38,7 @@
 //! - **`Q`.** `Q(X) = Σ_{i<n} std_vc^(n−1−i)·c_i(X)/Z_{D_i}(X)` over the `n` terms of the fold: the
 //!   pilout's constraints in its order, then, if the setup chose im pols, one term
 //!   `im_k − e_k` for each of them in the order given (the STARK's fold,
-//!   `pil-info/src/pil/{constraint_poly,im_polynomials}.rs`). With im pols, every operand that
+//!   `pil-info/src/core/fold.rs`, `pil-info/src/emit/prover.rs`). With im pols, every operand that
 //!   refers to the expression of an im pol reads its column instead, the interpolant of the
 //!   expression's values on `H`; the expression `e_k` of its own term does not.
 //!   - `q_at` computes it at a point `z ∉ H`, from the barycentric evaluations and `Z_D(z)` in
@@ -62,9 +62,9 @@
 //!     computed yet has no values, and reading one is an error.
 //!   - `im_airval` computes an air value, which v1 has none of: the oracle does not compute it.
 //!
-//! The im pols are given as the indices of their expressions in the pilout (`expId` of the
-//! `imPol` entries of `cmPolsMap`, in their order there), which assumes that the setup numbers the
-//! pilout's expressions as the pilout does.
+//! The im pols are given as the indices of their expressions in the pilout. The setup's `expId`
+//! (of the `imPol` entries of `cmPolsMap`) is the core's canonical numbering: map it back with
+//! `pil_info::core::from_pilout::pilout_expr_index`.
 //!
 //! **Indices** are the pilout's: witness column `idx` of stage `s` is
 //! `Values::witness[s − 1][idx]`, challenge `idx` of stage `s` is `Values::challenges[s − 1][idx]`,

@@ -1,90 +1,65 @@
-//! Rust port of `get_sha256_inputs.circom.ejs`.
-//!
-//! Generates the `getSha256Inputs` circom template that packs public inputs
-//! into SHA-256 and returns a single field element output.
-//!
-//! Implementation: builds per-definition rows + cumulative bit offsets in Rust
-//! and delegates the Circom shape to a Tera template.
+//! The data of `GetSha256Inputs` (static, `helper_circuits/mains/sha256_inputs.circom`): publics_info's
+//! definitions as the final circuit's `vadcop_DEFS()`.
 
-use serde::Serialize;
+use anyhow::{bail, Context, Result};
+use proofman_common::PublicsInfo;
+use serde::Deserialize;
 use serde_json::Value;
-use tera::Context as TeraCtx;
 
-const GET_SHA256_INPUTS_TMPL: &str = include_str!("tera/get_sha256_inputs.circom.tera");
-
-#[derive(Serialize)]
-struct Sha256Def<'a> {
-    name: &'a str,
-    initial_pos: usize,
-    bits_offset: usize,
-    n_values: usize,
-    n_chunks: usize,
-    bits_per_chunk: usize,
-    eff_bits: usize,
-    is_vk: bool,
-    avoid_alias: bool,
-    single_chunk: bool,
+/// The program verification key in the publics: its `initialPos`, and whether it is the first
+/// definition (else it is the last).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ProgramVk {
+    pub pos: usize,
+    pub first: bool,
 }
 
-/// Generate the `getSha256Inputs` circom template (standalone file for `include`).
-///
-/// * `publics` — the publics info JSON (`publics_info.json` or `--publics-info` arg).
-///   Must contain `.nPublics: usize` and `.definitions: [...]`.
-/// * `custom_templates` — whether the circuit's verifier uses circom custom templates
-///   ([`uses_custom_templates`]). Its `LessThanGoldilocks` is then the one of
-///   `custom/lessthangl.circom`, with Num2Bytes gates, which the publics' range checks take too:
-///   circom refuses a template defined twice.
-///
-/// Returns a circom fragment (without the `pragma` header, just the template body
-/// and any `include` lines) suitable for inclusion at the top-level of another circom.
-///
-/// [`uses_custom_templates`]: crate::stark2circom::circom_verifier::bn128::uses_custom_templates
-pub fn gen_get_sha256_inputs(publics: &Value, custom_templates: bool) -> String {
-    let n_publics = publics["nPublics"].as_u64().unwrap_or(0) as usize;
+/// A validated publics_info as the final circuit and the Solidity verifier read it.
+#[derive(Debug)]
+pub struct Sha256Defs {
+    pub n_publics: usize,
+    pub n_defs: usize,
+    /// `function vadcop_DEFS() { return [..]; }`.
+    pub defs: String,
+    pub vk: Option<ProgramVk>,
+}
 
-    let empty = Vec::new();
-    let defs_json = publics["definitions"].as_array().unwrap_or(&empty);
-
-    let mut defs: Vec<Sha256Def<'_>> = Vec::with_capacity(defs_json.len());
-    let mut offset: usize = 0;
-    for d in defs_json {
-        let name = d["name"].as_str().unwrap_or("unknown");
-        let initial_pos = d["initialPos"].as_u64().unwrap_or(0) as usize;
-        let n_values = d["nValues"].as_u64().unwrap_or(0) as usize;
-        let n_chunks = d["chunks"].as_array().and_then(|a| a.first()).and_then(|v| v.as_u64()).unwrap_or(1) as usize;
-        let bits_per_chunk =
-            d["chunks"].as_array().and_then(|a| a.get(1)).and_then(|v| v.as_u64()).unwrap_or(64) as usize;
-        let avoid_alias = d["avoidAlias"].as_bool().unwrap_or(false);
-        let is_vk = d["verificationKey"].as_bool().unwrap_or(false);
-        let single_chunk = n_chunks == 1;
-        let eff_bits = if avoid_alias && single_chunk { bits_per_chunk - 1 } else { bits_per_chunk };
-
-        defs.push(Sha256Def {
-            name,
-            initial_pos,
-            bits_offset: offset,
-            n_values,
-            n_chunks,
-            bits_per_chunk,
-            eff_bits,
-            is_vk,
-            avoid_alias,
-            single_chunk,
-        });
-
-        offset += n_values * n_chunks * bits_per_chunk;
+/// The [`Sha256Defs`] of a publics_info (`None` or null: no publics). FinalSnark binds and Solidity
+/// packs only a single 4-word VK that is the first or the last definition, so any other is refused.
+pub fn sha256_defs(publics: Option<&Value>) -> Result<Sha256Defs> {
+    let info = match publics {
+        None | Some(Value::Null) => None,
+        Some(p) => Some(PublicsInfo::deserialize(p).context("publics info")?),
+    };
+    let defs = info.as_ref().map_or(&[][..], |i| i.definitions.as_slice());
+    let (mut v, mut vk) = (Vec::with_capacity(6 * defs.len()), None);
+    for (k, d) in defs.iter().enumerate() {
+        // An aggregate's VK is bound to rootC words, which need all 64 bits.
+        if d.avoid_alias {
+            bail!("publics definition {}: avoidAlias is not supported", d.name);
+        }
+        if d.verification_key {
+            if vk.is_some() {
+                bail!("publics definition {}: a second verificationKey", d.name);
+            }
+            if k != 0 && k + 1 != defs.len() {
+                bail!("publics definition {}: the verificationKey must be the first or the last definition", d.name);
+            }
+            if d.n_values != 4 || d.chunks != [1, 64] {
+                bail!("publics definition {}: the program VK needs nValues 4 and chunks [1, 64]", d.name);
+            }
+            vk = Some(ProgramVk { pos: d.initial_pos, first: k == 0 });
+        }
+        v.extend([d.initial_pos, d.n_values, d.chunks[0], d.chunks[1], 0, usize::from(d.verification_key)]);
     }
-    let final_offset = offset;
-    let total_bits = offset + 256; // + rootCVadcopFinal (4×64 bits)
-
-    let mut ctx = TeraCtx::new();
-    ctx.insert("custom_templates", &custom_templates);
-    ctx.insert("n_publics", &n_publics);
-    ctx.insert("total_bits", &total_bits);
-    ctx.insert("final_offset", &final_offset);
-    ctx.insert("defs", &defs);
-
-    super::templates::render(GET_SHA256_INPUTS_TMPL, &ctx).expect("get_sha256_inputs template render")
+    let list: Vec<String> = v.iter().map(usize::to_string).collect();
+    let body = if list.is_empty() { "0".to_string() } else { list.join(", ") };
+    Ok(Sha256Defs {
+        n_publics: info.as_ref().map_or(0, |i| i.n_publics),
+        n_defs: defs.len(),
+        defs: format!("function vadcop_DEFS() {{ return [{body}]; }}\n"),
+        vk,
+    })
 }
 
 #[cfg(test)]
@@ -92,133 +67,47 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    fn run(publics: Value) -> String {
-        gen_get_sha256_inputs(&publics, false)
+    fn vk_def(pos: usize) -> Value {
+        json!({ "name": "vk", "initialPos": pos, "nValues": 4, "chunks": [1, 64], "verificationKey": true })
     }
 
+    /// A VK first or last; chunks default to one 64-bit word.
     #[test]
-    fn single_chunk_def_no_vk() {
-        let publics = json!({
-            "nPublics": 4,
-            "definitions": [
-                {
-                    "name": "myField",
-                    "initialPos": 0,
-                    "nValues": 4,
-                    "chunks": [1, 64],
-                    "avoidAlias": false,
-                    "verificationKey": false
-                }
-            ]
-        });
-        let out = run(publics);
-        assert!(out.contains("template getSha256Inputs()"));
-        assert!(out.contains("signal input publics[4]"));
-        assert!(out.contains("component myFieldBits[4]"));
-        assert!(out.contains("myFieldBits[i] = Num2Bits(64)"));
-        // standard (non-VK) byte-swapped indexing
-        assert!(out.contains("(j\\8)*8 + (7 - j%8)"));
-        // no big-endian VK form
-        assert!(!out.contains("64 - 1 - j"));
-        // no avoid_alias zero-pad
-        assert!(!out.contains("publicsHasher.in[myFieldBitsOffset] <== 0;"));
+    fn defs_in_template_order() {
+        let p = json!({ "nPublics": 6, "definitions": [{ "name": "a", "initialPos": 0, "nValues": 1, "chunks": [2, 32] }, vk_def(2)] });
+        let s = sha256_defs(Some(&p)).unwrap();
+        assert_eq!((s.n_publics, s.n_defs, s.vk), (6, 2, Some(ProgramVk { pos: 2, first: false })));
+        assert_eq!(s.defs, "function vadcop_DEFS() { return [0, 1, 2, 32, 0, 0, 2, 4, 1, 64, 0, 1]; }\n");
+        let p = json!({ "nPublics": 5, "definitions": [vk_def(0), { "name": "a", "initialPos": 4, "nValues": 1 }] });
+        let s = sha256_defs(Some(&p)).unwrap();
+        assert_eq!(s.vk, Some(ProgramVk { pos: 0, first: true }));
+        assert_eq!(s.defs, "function vadcop_DEFS() { return [0, 4, 1, 64, 0, 1, 4, 1, 1, 64, 0, 0]; }\n");
+        let s = sha256_defs(Some(&Value::Null)).unwrap();
+        assert_eq!(
+            (s.n_publics, s.n_defs, s.vk, s.defs.as_str()),
+            (0, 0, None, "function vadcop_DEFS() { return [0]; }\n")
+        );
     }
 
+    /// Only a single [1, 64] x 4 VK, first or last, without avoidAlias, is accepted.
     #[test]
-    fn single_chunk_vk_with_avoid_alias() {
-        let publics = json!({
-            "nPublics": 4,
-            "definitions": [
-                {
-                    "name": "vk",
-                    "initialPos": 0,
-                    "nValues": 4,
-                    "chunks": [1, 64],
-                    "avoidAlias": true,
-                    "verificationKey": true
-                }
-            ]
-        });
-        let out = run(publics);
-        // avoid_alias trims to bits_per_chunk - 1
-        assert!(out.contains("vkBits[i] = Num2Bits(63)"));
-        // big-endian VK indexing
-        assert!(out.contains("vkBitsOffset + i*64 + 64 - 1 - j"));
-        // zero-pad line at the BitsOffset slot
-        assert!(out.contains("publicsHasher.in[vkBitsOffset] <== 0;"));
-    }
-
-    #[test]
-    fn multi_chunk_def() {
-        let publics = json!({
-            "nPublics": 4,
-            "definitions": [
-                {
-                    "name": "multi",
-                    "initialPos": 0,
-                    "nValues": 2,
-                    "chunks": [2, 32],
-                    "avoidAlias": false,
-                    "verificationKey": false
-                }
-            ]
-        });
-        let out = run(publics);
-        assert!(out.contains("component multiBits[2][2]"));
-        assert!(out.contains("for (var k = 0; k < 2; k++)"));
-        assert!(out.contains("multiBits[k][i] = Num2Bits(32)"));
-        assert!(out.contains("multiBits[k][i].in <== publics[multiPos + k * 2 + i]"));
-        // no single-chunk form
-        assert!(!out.contains("component multiBits[2];"));
-    }
-
-    #[test]
-    fn full_template_skeleton() {
-        let publics = json!({
-            "nPublics": 8,
-            "definitions": [
-                {
-                    "name": "a",
-                    "initialPos": 0,
-                    "nValues": 1,
-                    "chunks": [1, 64],
-                    "avoidAlias": false,
-                    "verificationKey": false
-                },
-                {
-                    "name": "b",
-                    "initialPos": 1,
-                    "nValues": 1,
-                    "chunks": [1, 64],
-                    "avoidAlias": false,
-                    "verificationKey": true
-                }
-            ]
-        });
-        let out = run(publics);
-        assert!(out.contains("include \"lessthangl.circom\";"));
-        assert!(out.contains("include \"sha256/sha256.circom\";"));
-        assert!(out.contains("include \"bitify.circom\";"));
-        assert!(out.contains("template getSha256Inputs()"));
-        // total = 1*1*64 + 1*1*64 + 256 = 384
-        assert!(out.contains("var totalBits = 384;"));
-        assert!(out.contains("component publicsHasher = Sha256(totalBits);"));
-        // bits offsets: a at 0, b at 64, rootCVadcopFinal at 128
-        assert!(out.contains("var aBitsOffset = 0;"));
-        assert!(out.contains("var bBitsOffset = 64;"));
-        assert!(out.contains("var rootCVadcopFinalBitsOffset = 128;"));
-        assert!(out.contains("component rootCVadcopFinalBits[4]"));
-        assert!(out.contains("component b2nPublicsHash = Bits2Num(256);"));
-        assert!(out.contains("publicsHash <== b2nPublicsHash.out;"));
-    }
-
-    #[test]
-    fn publics_behind_a_custom_verifier_take_its_less_than_goldilocks() {
-        let publics = json!({ "nPublics": 1, "definitions": [] });
-        let custom = gen_get_sha256_inputs(&publics, true);
-        assert!(custom.starts_with("include \"custom/lessthangl.circom\";\n"), "out:\n{custom}");
-        // Only the include differs.
-        let stock = gen_get_sha256_inputs(&publics, false);
-        assert_eq!(custom.replacen("custom/lessthangl", "lessthangl", 1), stock);
+    fn refuses_a_vk_the_final_circuit_cannot_bind() {
+        let refused = |defs: Value, msg: &str| {
+            let err = sha256_defs(Some(&json!({ "nPublics": 9, "definitions": defs }))).unwrap_err().to_string();
+            assert!(err.contains(msg), "{err}");
+        };
+        let mut aliased = vk_def(0);
+        aliased["avoidAlias"] = json!(true);
+        refused(json!([aliased]), "avoidAlias");
+        refused(json!([{ "name": "x", "initialPos": 0, "nValues": 1, "avoidAlias": true }]), "avoidAlias");
+        refused(json!([vk_def(0), vk_def(4)]), "second verificationKey");
+        let x = json!({ "name": "x", "initialPos": 8, "nValues": 1 });
+        refused(json!([{ "name": "a", "initialPos": 0, "nValues": 1 }, vk_def(1), x]), "first or the last");
+        let mut halves = vk_def(0);
+        halves["chunks"] = json!([2, 32]);
+        refused(json!([halves]), "chunks [1, 64]");
+        let mut short = vk_def(0);
+        short["nValues"] = json!(1);
+        refused(json!([short]), "nValues 4");
     }
 }

@@ -1,3 +1,4 @@
+use proofman_common::hash_family::HashFamily;
 use proofman_common::{
     format_bytes, GlobalInfoAir, ProofmanError, ProofmanResult, ProofType, PublicsInfo, Setup, calculate_fixed_tree,
     calculate_fixed_tree_snark, load_const_pols_recursivef, load_const_pols_tree, MemoryHandlerRecursive, VerboseMode,
@@ -515,7 +516,8 @@ impl<F: PrimeField64> PoseidonWrap<F> {
     ) -> ProofmanResult<SnarkProof> {
         timer_start_info!(GENERATING_WRAPPER_SNARK_PROOF);
 
-        if !proofman_common::hash_family::has_bn128_recursivef(&vadcop_proof.hash) {
+        let family: HashFamily = vadcop_proof.hash.parse().map_err(ProofmanError::InvalidProof)?;
+        if !proofman_common::hash_family::has_bn128_recursivef(family) {
             return Err(ProofmanError::InvalidConfiguration(format!(
                 "{} proofs have no BN128 recursivef: their final SNARK is ProofMan::generate_final_snark_proof's",
                 vadcop_proof.hash
@@ -746,6 +748,8 @@ pub(crate) struct Blake3Wrap {
     setup_snark_path: PathBuf,
     pilfflonk_key: PathBuf,
     starkinfo: serde_json::Value,
+    /// The recursivef's publics, which every proof it wraps has.
+    n_publics: usize,
     verkey: serde_json::Value,
     publics_info: PublicsInfo,
     /// The vadcop_final's verkey, the root the recursivef verifies its proofs against unless another
@@ -774,12 +778,17 @@ impl Blake3Wrap {
                 .and_then(|text| serde_json::from_str(&text).map_err(|e| e.to_string()))
                 .map_err(|e| ProofmanError::InvalidSetup(format!("Failed to read {}: {e}", path.display())))
         }
-        let starkinfo = read(&proving_key_snark.join(RECURSIVEF_STARKINFO))?;
+        let starkinfo_path = proving_key_snark.join(RECURSIVEF_STARKINFO);
+        let bad = |why: String| ProofmanError::InvalidSetup(format!("{}: {why}", starkinfo_path.display()));
+        let starkinfo =
+            proofman_common::stark_info::check_key_version_file(&starkinfo_path).map_err(|e| bad(e.to_string()))?;
+        let n_publics = starkinfo["nPublics"].as_u64().ok_or_else(|| bad("no nPublics".into()))? as usize;
         let verkey = read(&proving_key_snark.join(RECURSIVEF_VERKEY))?;
         let mut wrap = Self {
             setup_snark_path,
             pilfflonk_key,
             starkinfo,
+            n_publics,
             verkey,
             publics_info: PublicsInfo::from_folder(proving_key_snark)?,
             vadcop_final_verkey: read(&proving_key_snark.join("vadcop_final.verkey.json"))?,
@@ -822,7 +831,7 @@ impl Blake3Wrap {
     ) -> ProofmanResult<SnarkProof> {
         timer_start_info!(GENERATING_WRAPPER_SNARK_PROOF);
         let _proving = self.proving.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-        let n_publics = self.starkinfo["nPublics"].as_u64().unwrap_or(0) as usize;
+        let n_publics = self.n_publics;
         if recursivef_proof.public_values.len() != n_publics {
             return Err(ProofmanError::InvalidProof(format!(
                 "a blake3 key's SNARK wraps its recursivef proof, of {n_publics} publics, and this proof has {}: \
@@ -1014,7 +1023,8 @@ pub fn generate_and_verify_recursivef<F: PrimeField64>(
 
     ensure_gpu_available(gpu)?;
 
-    if !proofman_common::hash_family::has_bn128_recursivef(&vadcop_proof.hash) {
+    let family: HashFamily = vadcop_proof.hash.parse().map_err(ProofmanError::InvalidProof)?;
+    if !proofman_common::hash_family::has_bn128_recursivef(family) {
         return Err(ProofmanError::InvalidConfiguration(format!(
             "{} proofs have no BN128 recursivef (setup-snark's): a blake3 key's recursivef is a STARK of its key",
             vadcop_proof.hash
@@ -1841,8 +1851,9 @@ mod snarkjs_verdict_tests {
             n_values: 3,
             chunks: [1, 64],
             verification_key: false,
+            avoid_alias: false,
         };
-        let info = PublicsInfo { n_publics: 3, definitions: vec![out], has_program_vk: false };
+        let info = PublicsInfo { n_publics: 3, definitions: vec![out] };
         let (publics, rootc) = ([1, 2, 3], [11, 12, 13, 14]);
         let digest = info.snark_public_digest(&publics, &rootc).unwrap();
         assert!(check_snark_public_digest(&info, &publics, &rootc, &digest).is_ok());

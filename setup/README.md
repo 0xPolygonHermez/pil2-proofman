@@ -2,6 +2,12 @@
 
 This directory contains the Rust-based proving-key generation pipeline for ProofMan, replacing the prior JavaScript-based setup toolchain. It is a Rust-native adaptation of the JavaScript implementation in [pil2-proofman-js](https://github.com/0xPolygonHermez/pil2-proofman-js) by PolygonHermez.
 
+## How it fits together
+
+![Thin setup: heuristics propose, a trusted kernel checks, and every verifier reads the same constraint DAG](thin-setup.svg)
+
+Code that may be wrong only proposes (im columns, FRI/STIR parameters, prover codegen, the circom templates rendered from the DAG, the plonk2pil generator); a small trusted kernel in `pil-info/src/core`, the template checker (`stark-recurser/stark2circom/check`) and the plonk2pil checker decide soundness. Verifiers read the constraints as data: `verifierinfo.json`'s `constraintDag` and `globalInfo`'s `globalConstraintDag`, through one Rust crate, `constraint-dag`.
+
 ## Layout
 
 - [circom/](circom/) — Vendored Circom compiler and embedded witness runtime used by the recursive setup.

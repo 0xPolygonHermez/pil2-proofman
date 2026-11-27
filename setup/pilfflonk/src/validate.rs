@@ -21,7 +21,7 @@
 use num_bigint::BigUint;
 use pil2_pilout::pilout::{self as pb, expression, global_expression, global_operand, operand};
 use pil_info::pil::gen_code::{ProcessedHint, ProcessedHintField};
-use pil_info::{FieldCfg, PilInfoResult};
+use pil_info::{FieldCfg, ShplonkResult};
 use proofman_pilfflonk::global_info::MAX_NBITS;
 
 use crate::error::SetupError;
@@ -259,7 +259,7 @@ struct ProverHint<'a> {
 /// - every column of stage 2 or above but the im pols is the reference of one hint exactly.
 ///
 /// `label` is what the errors call the AIR. [`validate`] has checked the hints' names.
-pub fn check_prover_hints(result: &PilInfoResult, label: &str) -> Result<(), SetupError> {
+pub fn check_prover_hints(result: &ShplonkResult, label: &str) -> Result<(), SetupError> {
     let setup = &result.setup;
     let cm_pols = &setup.cm_pols_map;
     let code = &result.pil_code.expressions_info.expressions_code;

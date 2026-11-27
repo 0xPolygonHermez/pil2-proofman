@@ -1,7 +1,7 @@
-//! The final SNARK wrap's family, PoseidonBN128 (`plonk2pil/setups/poseidon_bn128`), against
+//! The Poseidon1 BN128 wrap (`plonk2pil/gen/layouts.rs`), against
 //! pilfflonk, on circuits circom compiles for BN128 with the custom gates `PoseidonT(5)` and
-//! `Num2Bytes(nBits)`, set up with the family's knobs (`wrap::MAX_CONSTRAINT_DEGREE` in the PIL,
-//! `wrap::EXTRA_MULS`):
+//! `Num2Bytes(nBits)`, set up with the family's knobs (`wrap_knobs`: the degree in the PIL,
+//! the extra muls):
 //!
 //! 1. **The gate.** `fixtures/bn128/poseidon_chain.circom`, three permutations in a chain, on random
 //!    inputs (a fixed seed). `pilfflonk check` holds on the trace, whose bands are circom's own `in`,
@@ -41,11 +41,12 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 use num_bigint::BigUint;
 use pil2_stark_recurser::plonk2pil::field::modulus;
 use pil2_stark_recurser::plonk2pil::r1cs::types::{read_r1cs_header, PlonkOptions};
-use pil2_stark_recurser::plonk2pil::setups::poseidon_bn128::constants::ROUNDS;
-use pil2_stark_recurser::plonk2pil::setups::poseidon_bn128::wrap::{BAND_ROWS, RANGE_MUL_COLUMN};
-use pil2_stark_recurser::plonk2pil::{plonk2pil, PlonkResult};
+use pil2_stark_recurser::plonk2pil::gen::layouts::{BAND_ROWS, RANGE_MUL_COLUMN};
+use pil2_stark_recurser::plonk2pil::check::load::check_result;
+use pil2_stark_recurser::plonk2pil::consts::ROUNDS;
+use pil2_stark_recurser::plonk2pil::{plonk2pil, PlonkResult, SetupKind};
 use proofman_common::exec_format::{ExecFile, RANGE_CHECK_BAND_KIND, RANGE_CHECK_CHUNK_BITS, RANGE_CHECK_CHUNK_COLS};
-use proofman_common::hash_family::BN128_WRAP_FAMILY;
+use proofman_common::hash_family::HashFamily;
 use proofman_fields::{Bn128, Field, PrimeField, QuotientMap};
 use proofman_pilfflonk::{
     check, js_verifier, prove, AirInstanceRef, CheckOptions, CheckReport, FrBytes, InstanceWitness, JsonFile,
@@ -125,9 +126,13 @@ impl Wrap {
         let header = read_r1cs_header(&r1cs).unwrap();
         let n_publics = (header.n_outputs + header.n_pub_inputs) as usize;
 
-        let options = PlonkOptions { hash_id: BN128_WRAP_FAMILY.into(), ..Default::default() };
-        let res: PlonkResult<Bn128> = plonk2pil(&r1cs, "wrap", &options).unwrap();
+        let options = PlonkOptions { hash: HashFamily::Poseidon1, ..Default::default() };
+        let res: PlonkResult<Bn128> = plonk2pil(&r1cs, SetupKind::Wrap, &options).unwrap();
         let proving_key = set_up_key(&repo_root(), &scratch.0, &res);
+        // the trusted checker cross-checks the generator on a real compiled wrap
+        let pilout =
+            pil2_pilout::pilout_proxy::PilOutProxy::new(scratch.file("wrap.pilout").to_str().unwrap()).unwrap();
+        check_result(&r1cs, &res, &pilout.pilout).unwrap_or_else(|e| panic!("{name}: {e:#}"));
         Self { witness: read_wtns(&wtns), n_publics, res, proving_key, scratch }
     }
 

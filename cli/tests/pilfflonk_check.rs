@@ -64,6 +64,7 @@ mod sum_bus;
 mod witness_libraries;
 
 use std::collections::BTreeSet;
+use pil_info::core::from_pilout::pilout_expr_index;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -244,7 +245,6 @@ impl Rng {
         self.0.wrapping_mul(0x2545_f491_4f6c_dd1d) % bound
     }
 }
-
 #[test]
 #[ignore = "needs PIL2C_EXEC"]
 fn the_check_finds_what_the_oracle_does() {
@@ -752,7 +752,9 @@ fn checks_a_bus_with_fixed_challenges(
             let checked: Vec<Fr> =
                 columns.columns[p.stage as usize - 1][p.stage_pos as usize].iter().map(Fr::from).collect();
             let expected = if p.im_pol {
-                oracle.expression_rows(&values, p.exp_id.unwrap() as usize).unwrap()
+                oracle
+                    .expression_rows(&values, pilout_expr_index(&pilout, 0, 0, p.exp_id.unwrap() as u32).unwrap())
+                    .unwrap()
             } else {
                 values.witness[p.stage as usize - 1][p.stage_id as usize].clone()
             };

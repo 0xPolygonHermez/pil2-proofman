@@ -161,10 +161,6 @@ pub fn get_map_totaln_c(p_stark_info: *mut c_void) -> u64 {
     unsafe { get_map_total_n(p_stark_info) }
 }
 
-pub fn get_tree_size_c(p_stark_info: *mut c_void) -> u64 {
-    unsafe { get_tree_size(p_stark_info) }
-}
-
 pub fn get_map_totaln_custom_commits_fixed_c(p_stark_info: *mut c_void) -> u64 {
     unsafe { get_map_total_n_custom_commits_fixed(p_stark_info) }
 }
@@ -177,15 +173,12 @@ pub fn get_n_publics_c(p_stark_info: *mut c_void) -> u64 {
     unsafe { get_n_publics(p_stark_info) }
 }
 
-pub fn set_hash_family_c(family: &str) {
-    let fam: u8 = match family {
-        "Poseidon1" => 1,
-        "Poseidon2" => 2,
-        "blake3" => 3,
-        other => panic!(
-            "set_hash_family_c: unknown hash family {other:?} (expected \"Poseidon1\", \"Poseidon2\" or \"blake3\")"
-        ),
-    };
+pub fn get_proof_values_size_c(p_stark_info: *mut c_void) -> u64 {
+    unsafe { get_proof_values_size(p_stark_info) }
+}
+
+/// `fam` is `HashFamily::ffi_id()` (1 = Poseidon1, 2 = Poseidon2, 3 = blake3).
+pub fn set_hash_family_c(fam: u8) {
     unsafe { set_hash_family(fam) }
 }
 
@@ -233,10 +226,6 @@ pub fn load_const_pols_c(pConstPolsAddress: *mut u8, const_filename: &str, const
             const_size,
         );
     }
-}
-
-pub fn get_const_size_c(pStarkInfo: *mut c_void) -> u64 {
-    unsafe { get_const_size(pStarkInfo) }
 }
 
 pub fn get_const_tree_size_c(pStarkInfo: *mut c_void) -> u64 {
@@ -378,12 +367,22 @@ pub fn verify_root_bn128_from_tree_c(tree_filename: &str, expected_root: &str) -
     }
 }
 
-pub fn expressions_bin_new_c(filename: &str, global: bool, verify: bool) -> *mut c_void {
+pub fn expressions_bin_new_c(filename: &str, global: bool) -> *mut c_void {
     unsafe {
         let filename = CString::new(filename).unwrap();
 
-        expressions_bin_new(filename.as_ptr() as *mut std::os::raw::c_char, global, verify)
+        expressions_bin_new(filename.as_ptr() as *mut std::os::raw::c_char, global)
     }
+}
+
+/// Null when the verifierinfo is missing, pre-DAG or does not match the starkinfo.
+pub fn constraint_dag_new_c(filename: &str, p_stark_info: *mut c_void) -> *mut c_void {
+    let filename = CString::new(filename).unwrap();
+    unsafe { constraint_dag_new(filename.as_ptr() as *mut std::os::raw::c_char, p_stark_info) }
+}
+
+pub fn constraint_dag_free_c(p_constraint_dag: *mut c_void) {
+    unsafe { constraint_dag_free(p_constraint_dag) }
 }
 
 pub fn get_max_n_tmp1_c(p_expressions_bin: *mut c_void) -> u64 {
@@ -392,14 +391,6 @@ pub fn get_max_n_tmp1_c(p_expressions_bin: *mut c_void) -> u64 {
 
 pub fn get_max_n_tmp3_c(p_expressions_bin: *mut c_void) -> u64 {
     unsafe { get_max_n_tmp3(p_expressions_bin) }
-}
-
-pub fn get_max_n_args_c(p_expressions_bin: *mut c_void) -> u64 {
-    unsafe { get_max_args(p_expressions_bin) }
-}
-
-pub fn get_max_n_ops_c(p_expressions_bin: *mut c_void) -> u64 {
-    unsafe { get_max_ops(p_expressions_bin) }
 }
 
 pub fn get_operations_quotient_c(p_expressions_bin: *mut c_void, p_stark_info: *mut c_void) -> u64 {
@@ -655,10 +646,6 @@ pub fn calculate_witness_expressions_c(p_setup: *mut c_void, p_steps_params: *mu
     }
 }
 
-pub fn custom_commit_size_c(p_setup: *mut c_void, commit_id: u64) -> u64 {
-    unsafe { custom_commit_size(p_setup, commit_id) }
-}
-
 pub fn load_custom_commit_c(
     setup: *mut c_void,
     commit_id: u64,
@@ -813,25 +800,9 @@ pub fn verify_constraints_c(
     }
 }
 
-pub fn get_n_global_constraints_c(p_global_constraints_bin: *mut c_void) -> u64 {
-    unsafe { get_n_global_constraints(p_global_constraints_bin) }
-}
-
-pub fn get_global_constraints_lines_sizes_c(p_global_constraints_bin: *mut c_void, global_constraints_sizes: *mut u64) {
-    unsafe {
-        get_global_constraints_lines_sizes(p_global_constraints_bin, global_constraints_sizes);
-    }
-}
-
-pub fn get_global_constraints_lines_c(p_global_constraints_bin: *mut c_void, global_constraints_lines: *mut *mut u8) {
-    unsafe {
-        get_global_constraints_lines(p_global_constraints_bin, global_constraints_lines);
-    }
-}
-
 pub fn verify_global_constraints_c(
     global_info_file: &str,
-    p_global_constraints_bin: *mut c_void,
+    n_global_constraints: u64,
     publics: *mut u8,
     challenges: *mut u8,
     proof_values: *mut u8,
@@ -844,7 +815,7 @@ pub fn verify_global_constraints_c(
     unsafe {
         verify_global_constraints(
             global_info_file_ptr,
-            p_global_constraints_bin,
+            n_global_constraints,
             publics as *mut std::os::raw::c_void,
             challenges as *mut std::os::raw::c_void,
             proof_values as *mut std::os::raw::c_void,
@@ -1319,7 +1290,7 @@ pub fn stark_verify_c(
     verkey: &str,
     p_proof: *mut u64,
     p_stark_info: *mut c_void,
-    p_expressions_bin: *mut c_void,
+    p_constraint_dag: *mut c_void,
     p_publics: *mut u8,
     p_proof_values: *mut u8,
     p_challenges: *mut u8,
@@ -1331,7 +1302,7 @@ pub fn stark_verify_c(
         stark_verify(
             p_proof,
             p_stark_info,
-            p_expressions_bin,
+            p_constraint_dag,
             verkey_file_ptr,
             p_publics as *mut c_void,
             p_proof_values as *mut c_void,
@@ -1344,41 +1315,13 @@ pub fn stark_verify_bn128_c(
     verkey: &str,
     p_proof: *mut c_void,
     p_stark_info: *mut c_void,
-    p_expressions_bin: *mut c_void,
+    p_constraint_dag: *mut c_void,
     p_publics: *mut u8,
 ) -> bool {
     let verkey_file = CString::new(verkey).unwrap();
     let verkey_file_ptr = verkey_file.as_ptr() as *mut std::os::raw::c_char;
 
-    unsafe { stark_verify_bn128(p_proof, p_stark_info, p_expressions_bin, verkey_file_ptr, p_publics as *mut c_void) }
-}
-
-pub fn stark_verify_from_file_c(
-    verkey: &str,
-    proof: &str,
-    p_stark_info: *mut c_void,
-    p_expressions_bin: *mut c_void,
-    p_publics: *mut u8,
-    p_proof_values: *mut u8,
-    p_challenges: *mut u8,
-) -> bool {
-    let verkey_file = CString::new(verkey).unwrap();
-    let verkey_file_ptr = verkey_file.as_ptr() as *mut std::os::raw::c_char;
-
-    let proof_file = CString::new(proof).unwrap();
-    let proof_file_ptr = proof_file.as_ptr() as *mut std::os::raw::c_char;
-
-    unsafe {
-        stark_verify_from_file(
-            proof_file_ptr,
-            p_stark_info,
-            p_expressions_bin,
-            verkey_file_ptr,
-            p_publics as *mut c_void,
-            p_proof_values as *mut c_void,
-            p_challenges as *mut c_void,
-        )
-    }
+    unsafe { stark_verify_bn128(p_proof, p_stark_info, p_constraint_dag, verkey_file_ptr, p_publics as *mut c_void) }
 }
 
 pub fn write_fixed_cols_bin_c(
@@ -1399,16 +1342,6 @@ pub fn write_fixed_cols_bin_c(
     let air_name_ptr = air_name.as_ptr() as *mut std::os::raw::c_char;
     unsafe {
         write_fixed_cols_bin(binfile_name_ptr, airgroup_name_ptr, air_name_ptr, n, n_fixed_pols, fixed_pols_info);
-    }
-}
-
-pub fn get_omp_max_threads_c() -> u64 {
-    unsafe { get_omp_max_threads() }
-}
-
-pub fn set_omp_num_threads_c(num_threads: u64) {
-    unsafe {
-        set_omp_num_threads(num_threads);
     }
 }
 
@@ -1669,10 +1602,6 @@ pub fn acquire_first_gpu_buffer_c(d_buffers: *mut ::std::os::raw::c_void) {
 
 pub fn release_first_gpu_buffer_c(d_buffers: *mut ::std::os::raw::c_void) {
     unsafe { release_first_gpu_buffer(d_buffers) }
-}
-
-pub fn is_first_gpu_buffer_borrowed_c(d_buffers: *mut ::std::os::raw::c_void) -> bool {
-    unsafe { is_first_gpu_buffer_borrowed(d_buffers) != 0 }
 }
 
 /// Device of the first GPU (my_gpu_ids[0]); not always 0 (NUMA can reorder).
@@ -1990,12 +1919,6 @@ pub type GpuWitnessFillFn = unsafe extern "C" fn(
 /// Forget every registered kernel, so a later prover in the process does not inherit them.
 pub fn gpu_witness_clear_c(d_buffers: *mut c_void) {
     unsafe { gpu_witness_clear(d_buffers) }
-}
-
-/// Whether a kernel is registered for this air, i.e. the prover produces its witness on the
-/// device. The single source of truth for staging kernel inputs vs filling a trace.
-pub fn gpu_witness_is_registered_c(d_buffers: *mut c_void, airgroup_id: u64, air_id: u64) -> bool {
-    unsafe { gpu_witness_is_registered(d_buffers, airgroup_id, air_id) == 1 }
 }
 
 /// Declare that this air's stage-1 witness comes from `fill`, not a host upload.

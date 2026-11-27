@@ -119,7 +119,6 @@ void calculateTraceInstance(SetupCtx& setupCtx, gl64_t *d_aux_trace, uint32_t st
         airgroupValues : (Goldilocks::Element *)d_aux_trace + offsetAirgroupValues,
         airValues : (Goldilocks::Element *)d_aux_trace + offsetAirValues,
         evals : nullptr,
-        xDivXSub : nullptr,
         pConstPolsAddress: d_const_pols_unpacked,
         pConstPolsExtendedTreeAddress: nullptr,
         pCustomCommitsFixed,

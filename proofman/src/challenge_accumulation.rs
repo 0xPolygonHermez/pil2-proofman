@@ -70,7 +70,7 @@ where
             values_contributions[*instance_id].lock().expect("Missing values_contribution").clone();
         values_to_hash[4..8].copy_from_slice(&root_contribution[..4]);
 
-        let mut hash = new_transcript::<F>(&pctx.global_info.hash);
+        let mut hash = new_transcript::<F>(pctx.global_info.hash.as_str());
         hash.put(&values_to_hash);
         // The chain width, not the digest width: see TranscriptDyn::get_chain_state. For a
         // sponge these are the same; for BLAKE3 the chain is a whole XOF block.
@@ -94,7 +94,7 @@ where
             for j in 0..n_hashes {
                 let base = j * w;
                 state[..w].copy_from_slice(&values_row[base..base + w]);
-                hash_state(&pctx.global_info.hash, &mut state[..w]);
+                hash_state(pctx.global_info.hash.as_str(), &mut state[..w]);
                 values_row[(j + 1) * w..(j + 2) * w].copy_from_slice(&state[..w]);
             }
         }
@@ -139,7 +139,7 @@ where
         }
     }
 
-    let mut transcript = new_transcript::<F>(&pctx.global_info.hash);
+    let mut transcript = new_transcript::<F>(pctx.global_info.hash.as_str());
 
     transcript.put(&pctx.get_publics());
 

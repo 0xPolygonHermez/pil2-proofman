@@ -12,13 +12,6 @@ enum class HashFamily : uint8_t {
     Blake3    = 3,
 };
 
-inline HashFamily parseHashFamily(const std::string &id) {
-    if (id == "Poseidon1") return HashFamily::Poseidon1;
-    if (id == "Poseidon2") return HashFamily::Poseidon2;
-    if (id == "blake3") return HashFamily::Blake3;
-    throw std::runtime_error("unknown hash family: " + id);
-}
-
 inline const char *toString(HashFamily h) {
     switch (h) {
         case HashFamily::Poseidon1: return "Poseidon1";
@@ -29,7 +22,7 @@ inline const char *toString(HashFamily h) {
     return "Unknown";
 }
 
-// Only the real families cross the FFI; Undefined is purely internal.
+// The FFI id of Rust's `HashFamily::ffi_id`; Undefined is purely internal.
 inline HashFamily hashFamilyFromU8(uint8_t v) {
     switch (v) {
         case static_cast<uint8_t>(HashFamily::Poseidon1): return HashFamily::Poseidon1;
@@ -43,7 +36,7 @@ inline HashFamily hashFamilyFromU8(uint8_t v) {
 //
 // `inline` only deduplicates within one linked image — each main binary or
 // dlopen'd `.so` that links libstarksgpu.a gets its own copy. Every image
-// that calls `get_hash_family` must first call `set_hash_family_c` once; the
+// that calls `get_hash_family` must first call `set_hash_family` once; the
 // Undefined sentinel turns a missed init into a runtime error instead of a
 // silent Poseidon2 default.
 inline HashFamily g_hash_family = HashFamily::Undefined;

@@ -220,15 +220,15 @@ fn every_column_needs_its_symbol() {
     let mut pilout = offsets_pilout();
     pilout.symbols.retain(|s| s.name != "Offsets.L1");
     let err = setup_air(&pilout, 9).unwrap_err();
-    assert!(matches!(&err, SetupError::InvalidPilout(m) if m.contains("1 fixed columns, and symbols for 0")), "{err}");
+    assert!(
+        matches!(&err, SetupError::Passes(PilInfoError::InvalidPilout(m)) if m.contains("declares fixed columns")),
+        "{err}"
+    );
 
     let mut pilout = offsets_pilout();
     pilout.symbols.retain(|s| s.name != "Offsets.u");
     let err = setup_air(&pilout, 9).unwrap_err();
-    assert!(
-        matches!(&err, SetupError::InvalidPilout(m) if m.contains("3 witness columns, and symbols for 2")),
-        "{err}"
-    );
+    assert!(err.to_string().contains("witness columns"), "{err}");
 }
 
 /// The passes recurse over the expressions: a chain of 2000 of them overflows the 2 MiB stack of
@@ -254,7 +254,7 @@ fn what_the_passes_refuse_is_an_error() {
     let err = setup_air(&pilout, 9).unwrap_err();
     assert!(
         matches!(&err, SetupError::Passes(PilInfoError::InvalidPilout(m))
-            if m == "constraint 0 of air Offsets is expression 99, and there are 6"),
+            if m == "expression 99: constraint expression out of range"),
         "{err}"
     );
     assert!(err.to_string().starts_with("the symbolic passes (pil-info) failed: invalid pilout: "), "{err}");
@@ -272,7 +272,7 @@ fn expressions_in_a_cycle_are_an_error_not_a_stack_overflow() {
     let err = setup_air(&pilout, 9).unwrap_err();
     assert!(
         matches!(&err, SetupError::Passes(PilInfoError::InvalidPilout(m))
-            if m == "expression 6 refers to itself, through the references 6 → 7 → 6"),
+            if m == "expression 6 refers to itself through its references"),
         "{err}"
     );
 }
@@ -560,6 +560,8 @@ fn the_grouped_layout_fuses_the_offsets_pilout() {
         .pil_code
         .verifier_info
         .q_verifier
+        .as_ref()
+        .unwrap()
         .code
         .iter()
         .flat_map(|c| &c.src)

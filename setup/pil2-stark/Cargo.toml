@@ -21,6 +21,7 @@ default = []
 proofman-starks-lib-c = { workspace = true }
 proofman-fields = { workspace = true }
 proofman-common = { workspace = true }
+proofman-verifier = { workspace = true }
 pil2-stark-recurser = { workspace = true }
 pil2-pilout = { workspace = true }
 pil-info = { workspace = true }
@@ -39,6 +40,8 @@ tracing-subscriber = { workspace = true }
 indexmap = { version = "2", features = ["serde"] }
 tempfile = "3"
 rayon = { workspace = true }
+num-bigint = { workspace = true }
+num-traits = { workspace = true }
 clap = { version = "4.5.38", features = ["derive", "env"] }
 which = "6"
 

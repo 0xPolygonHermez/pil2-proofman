@@ -4,3 +4,9 @@ pub mod json;
 pub mod stark_info;
 pub mod verifier;
 pub mod witness_gen;
+#[cfg(test)]
+mod lowering_tests;
+#[cfg(test)]
+mod global_dag_tests;
+#[cfg(test)]
+pub(crate) mod test_support;

@@ -56,13 +56,9 @@ pub fn setup(pilout: &Path, build: &Path) -> Result<(), String> {
         recursive_jobs: 1,
         setup_jobs: 1,
         stats_output_path: None,
-        hash: proofman_common::hash_family::DEFAULT_HASH_ID.to_string(),
-        // Inert for a non-recursive setup -- there are no recursive airs to size or a final to
-        // compress -- but derived from the family rather than hardcoded, so this cannot drift if
-        // the default hash ever changes.
-        compressed_final: proofman_common::hash_family::compressed_final_by_default(
-            proofman_common::hash_family::DEFAULT_HASH_ID,
-        ),
+        hash: proofman_common::hash_family::HashFamily::DEFAULT,
+        // Inert for a non-recursive setup: there are no recursive airs to size or a final to compress.
+        compressed_final: true,
         recursive_n_bits: None,
         setup_version: None,
         gen_exps: false,
@@ -71,7 +67,7 @@ pub fn setup(pilout: &Path, build: &Path) -> Result<(), String> {
         exps_chunk: None,
         exps_stark_src: None,
         agg_arity: proofman_common::hash_family::default_aggregation_arity(
-            proofman_common::hash_family::DEFAULT_HASH_ID,
+            proofman_common::hash_family::HashFamily::DEFAULT,
         ),
     })
     .map_err(|e| format!("setup: {e}"))

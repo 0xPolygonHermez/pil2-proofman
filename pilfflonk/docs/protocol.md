@@ -25,7 +25,7 @@ For each AIR, with its `n` constraints `c_i` in the pilout's order:
 Q(X) = Σ_{i=0..n−1} std_vc^(n−1−i) · c_i(X) / Z_{D_i}(X)
 ```
 
-This is the STARK's Horner fold (`setup/pil2-stark/src/pil/constraint_poly.rs`): `acc = acc·std_vc +
+This is the STARK's Horner fold (`setup/pil-info/src/core/fold.rs`): `acc = acc·std_vc +
 c_i·(Z_H/Z_{D_i})`, divided by `Z_H` at the end. The first constraint gets the highest power.
 
 | Domain | `Z_D(X)` |
@@ -60,7 +60,7 @@ The setup chooses the im pols with the search of `pil-info` (`PilInfoCfg::bn128(
 result is the old system's: the Fibonacci gets one im pol and `qDeg = 1` (degree 2), not `qDeg = 2`
 without im pols (degree 3), which costs the same.
 
-The im pols go to the last stage of the AIR, as in the STARK (`im_polynomials.rs`). The prover
+The im pols go to the last stage of the AIR, as in the STARK (`setup/pil-info/src/core/layout.rs`). The prover
 computes them with the bytecode before it commits that stage, after the hint columns of the stage,
 which they may read. They are not the std's `im_col` columns, which come from hints.
 
