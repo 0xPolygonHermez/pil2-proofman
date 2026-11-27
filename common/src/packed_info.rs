@@ -26,6 +26,7 @@ impl PackedInfoFFI {
 pub struct PackedInfo {
     pub is_packed: bool,
     pub num_packed_words: u64,
+    /// Each column's bits in a packed row, in order.
     pub unpack_info: Vec<u64>,
     /// Per column source (0 = compact row, 1 = instruction table); empty if not indexed.
     pub col_source: Vec<u8>,

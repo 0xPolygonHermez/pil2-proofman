@@ -201,8 +201,11 @@ pub fn build_starkinfo_output(
                 .map(|(i, p)| {
                     let mut obj = serde_json::Map::new();
                     obj.insert("stage".to_string(), json!(p.stage.unwrap_or(0)));
-                    // Strip namespace prefix (e.g. "Rom.line" -> "line")
-                    let short_name = p.name.rsplit('.').next().unwrap_or(&p.name);
+                    // Strip the air prefix ("Rom.line" -> "line"), keeping a lane's ("Rom.x[0].line" -> "x[0].line").
+                    let short_name = match p.name.split_once('.') {
+                        Some((air, rest)) if air == setup.name => rest,
+                        _ => p.name.rsplit('.').next().unwrap_or(&p.name),
+                    };
                     obj.insert("name".to_string(), json!(short_name));
                     obj.insert("dim".to_string(), json!(p.dim));
                     obj.insert("polsMapId".to_string(), json!(i));

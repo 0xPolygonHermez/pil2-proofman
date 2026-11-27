@@ -72,7 +72,7 @@ pub fn unpacked_row_impl(name: &Ident, generic: &Option<Ident>, fields: &[TraceF
     }
 }
 
-fn get_unpacked_fields(fields: &[TraceField]) -> Vec<TokenStream> {
+pub(crate) fn get_unpacked_fields(fields: &[TraceField]) -> Vec<TokenStream> {
     let mut unpacked_fields = vec![];
 
     for f in fields.iter() {
@@ -92,7 +92,7 @@ fn get_unpacked_fields(fields: &[TraceField]) -> Vec<TokenStream> {
 }
 
 /// The accessors of the generic fields, and those of the typed ones, which need `PrimeField64`.
-fn get_unpacked_setters_getters(fields: &[TraceField]) -> (Vec<TokenStream>, Vec<TokenStream>) {
+pub(crate) fn get_unpacked_setters_getters(fields: &[TraceField]) -> (Vec<TokenStream>, Vec<TokenStream>) {
     let mut setter_getters = vec![];
     let mut typed_setter_getters = vec![];
 
@@ -289,7 +289,7 @@ fn generate_array_access(idents: &[Ident]) -> TokenStream {
     access
 }
 
-fn calculate_row_size(fields: &[TraceField]) -> usize {
+pub(crate) fn calculate_row_size(fields: &[TraceField]) -> usize {
     let mut size = 0;
     for field in fields {
         size += calculate_field_size(&field.ty);
@@ -307,7 +307,7 @@ fn calculate_field_size(ty: &BitType) -> usize {
     }
 }
 
-fn get_default_field_exprs(fields: &[TraceField]) -> Vec<TokenStream> {
+pub(crate) fn get_default_field_exprs(fields: &[TraceField]) -> Vec<TokenStream> {
     let mut default_exprs = vec![];
 
     for f in fields.iter() {

@@ -9,6 +9,7 @@ mod packed_row;
 mod unpacked_row;
 mod trait_row;
 mod indexed_trace_row;
+mod lanes;
 
 #[proc_macro]
 pub fn trace(input: TokenStream) -> TokenStream {
