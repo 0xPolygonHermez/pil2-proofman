@@ -224,10 +224,12 @@ fn random_systems_match_the_former_code() {
 #[test]
 fn fibonacci_square_matches_the_former_code() {
     let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../examples/fibonacci-square/build-a4/build.pilout");
-    let Ok(proxy) = pil2_pilout::pilout_proxy::PilOutProxy::new(path) else {
+    // PilOutProxy::new panics on a missing file: CI has no fibonacci-square build
+    if !std::path::Path::new(path).is_file() {
         eprintln!("skipped: no {path}");
         return;
-    };
+    }
+    let proxy = pil2_pilout::pilout_proxy::PilOutProxy::new(path).unwrap();
     let gs = global_from_pilout(&proxy.pilout, &FieldCfg::goldilocks()).unwrap();
     assert!(!gs.constraints.is_empty());
     assert_same_values(&gs, 0..8);
