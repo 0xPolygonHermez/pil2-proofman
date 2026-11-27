@@ -497,6 +497,11 @@ template StirVerifyRounds(arity, lastLevels, stirM, STIR_LOG_DOMAIN_SIZES, STIR_
     signal input finalPol[1 << stirFinalBits][3];
     signal input {binary} enable;
 
+    // Each round instantiates these with its own sizes (mixed component arrays). circom's C++ witness
+    // code addresses such a sub-component's input through its runtime lengths, and drops the
+    // parentheses when an access leaves trailing dimensions out: a[i][j] of a[.][L1][L2] lands at
+    // i*L1 + j*L2 instead of (i*L1 + j)*L2 (the wasm witness is right). Their inputs are therefore
+    // written one element at a time, every dimension indexed.
     component qb[M];
     component pts[M];
     component oracle[M];
@@ -530,8 +535,12 @@ template StirVerifyRounds(arity, lastLevels, stirM, STIR_LOG_DOMAIN_SIZES, STIR_
             oracle[r] = StirVirtualOracle(arity, LL, logL, logK, t, STIR_NUM_QUERIES[r - 1]);
             oracle[r].queries <== qb[r].queries;
             for (var q = 0; q < t; q++) {
-                for (var c = 0; c < K; c++) { oracle[r].vals[q][c] <== vals[vo + q * K + c]; }
-                for (var j = 0; j < ml; j++) { oracle[r].siblings[q][j] <== siblings[so + q * ml + j]; }
+                for (var c = 0; c < K; c++) {
+                    for (var e = 0; e < 3; e++) { oracle[r].vals[q][c][e] <== vals[vo + q * K + c][e]; }
+                }
+                for (var j = 0; j < ml; j++) {
+                    for (var k = 0; k < wordsPerLevel; k++) { oracle[r].siblings[q][j][k] <== siblings[so + q * ml + j][k]; }
+                }
                 // VERIFY-CONSTRAINTS: the unused path of an Empty tree is wired to constants.
                 if (ml == 0) { for (var k = 0; k < wordsPerLevel; k++) { oracle[r].siblings[q][0][k] <== 0; } }
             }
@@ -550,7 +559,9 @@ template StirVerifyRounds(arity, lastLevels, stirM, STIR_LOG_DOMAIN_SIZES, STIR_
         // VERIFY-CONSTRAINTS: round 0 folds here from copies of T_0's cosets (today inside the query batches).
         if (r == 0) {
             for (var q = 0; q < t; q++) {
-                for (var c = 0; c < K; c++) { fold[r].vals[q][c] <== vals[vo + q * K + c]; }
+                for (var c = 0; c < K; c++) {
+                    for (var e = 0; e < 3; e++) { fold[r].vals[q][c][e] <== vals[vo + q * K + c][e]; }
+                }
             }
         } else {
             fold[r].vals <== oracle[r].fx;
