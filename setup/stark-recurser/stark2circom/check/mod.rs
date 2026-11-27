@@ -1,6 +1,6 @@
 //! Trusted checker of the circom the setup generates: the constraint templates rendered from the constraint DAG
 //! (`ConstraintRoots<sfx>` and its parts per GL key, BN128 `ConstraintEval`, vadcop_final's `GlobalConstraints`)
-//! and the main's dispatch of its keys to them.
+//! and the main's data (`key_<name>(k)`, `vadcop_<name>()`).
 //!
 //! Inputs are artefacts only: the generated files, each key's starkinfo and verifierinfo, the globalInfo and how
 //! the circuit uses its keys; never the generator's structures. Per template:
@@ -13,12 +13,14 @@
 //!
 //! Trusted: circom, the static library, the wasm and C++ witness generators, `constraint-dag`.
 
+pub mod data;
 pub mod syntax;
 pub mod values;
 pub mod witness;
 #[cfg(test)]
 mod tests;
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
 use std::time::{Duration, Instant};
@@ -32,6 +34,7 @@ use crate::plonk2pil::field::PlonkField;
 use crate::plonk2pil::r1cs::types::R1csFile;
 use serde_json::Value;
 
+use data::KeyUse;
 use syntax::Block;
 use values::{limbs, Air, Global, Rng, Signal};
 use witness::{Backend, Circom, Compiled};
@@ -69,6 +72,7 @@ pub struct Circuit<'a> {
 /// Checks `circuit`, compiling in `work_dir`; how long each part took.
 pub fn check_circuit(circom: &Circom, work_dir: &Path, circuit: &Circuit) -> Result<Vec<(String, Duration)>> {
     let mut times = Vec::new();
+    let key_fns = syntax::data_functions(circuit.main, "key_")?;
     let suffixes = match circuit.field {
         Field::Goldilocks if !circuit.keys.is_empty() => syntax::roots_dispatch(circuit.main, circuit.keys.len())?,
         _ => vec![String::new(); circuit.keys.len()],
@@ -76,9 +80,13 @@ pub fn check_circuit(circom: &Circom, work_dir: &Path, circuit: &Circuit) -> Res
     for (k, (key, suffix)) in circuit.keys.iter().zip(&suffixes).enumerate() {
         let t = Instant::now();
         let name = key.verifier_file.file_name().map_or("?".into(), |n| n.to_string_lossy().into_owned());
-        check_key(circom, &work_dir.join(format!("key{k}")), circuit, k, suffix)
+        check_key(circom, &work_dir.join(format!("key{k}")), circuit, k, suffix, &key_fns)
             .with_context(|| format!("key {k} ({name})"))?;
         times.push((name, t.elapsed()));
+    }
+    if !circuit.global_info.is_null() {
+        let fns = syntax::data_functions(circuit.main, "vadcop_")?;
+        data::check_vadcop_data(&fns, &data::expected_vadcop_data(circuit.global_info, circuit.global_constraints)?)?;
     }
     if circuit.global_constraints {
         let t = Instant::now();
@@ -117,10 +125,25 @@ fn program(includes: &[&str], blocks: &[Block]) -> String {
     format!("pragma circom 2.1.0;\npragma custom_templates;\n{includes}\n{}\n", templates.join("\n"))
 }
 
-fn check_key(circom: &Circom, dir: &Path, circuit: &Circuit, k: usize, suffix: &str) -> Result<()> {
+fn check_key(
+    circom: &Circom,
+    dir: &Path,
+    circuit: &Circuit,
+    k: usize,
+    suffix: &str,
+    key_fns: &BTreeMap<String, syntax::DataFn>,
+) -> Result<()> {
     let (key, main) = (&circuit.keys[k], circuit.main);
     let si = StarkInfo::try_from_value(key.stark_info)?;
     let air = Air::new(&si, key.verifier_info)?;
+    let roots = (circuit.field == Field::Goldilocks).then_some((air.n_roots, air.first_root_dim));
+    let u = KeyUse {
+        const_root: key.const_root,
+        enable_input: key.enable_input,
+        input_challenges: key.input_challenges,
+        roots,
+    };
+    data::check_key_data(key_fns, k, &data::expected_key_data(&si, &u)?)?;
 
     let src = fs::read_to_string(key.verifier_file).with_context(|| key.verifier_file.display().to_string())?;
     let mut rng = Rng::new()?;

@@ -1,5 +1,7 @@
 //! Reading the generated circom: its template blocks, that they only constrain (`<==`, `===`), the main's key
-//! dispatch.
+//! dispatch and its data functions.
+
+use std::collections::BTreeMap;
 
 use anyhow::{bail, Context, Result};
 
@@ -113,6 +115,86 @@ fn without_tag(stmt: &str) -> String {
     stmt.to_string()
 }
 
+/// A data function's value: an integer or a list.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Val {
+    Int(i128),
+    List(Vec<Val>),
+}
+
+impl Val {
+    pub fn ints(v: &[i128]) -> Val {
+        if v.is_empty() {
+            // circom has no empty arrays
+            return Val::List(vec![Val::Int(0)]);
+        }
+        Val::List(v.iter().map(|&x| Val::Int(x)).collect())
+    }
+
+    fn parse(s: &str) -> Result<(Val, &str)> {
+        let s = s.trim_start();
+        if let Some(mut rest) = s.strip_prefix('[') {
+            let mut items = Vec::new();
+            loop {
+                let (v, r) = Val::parse(rest)?;
+                items.push(v);
+                let r = r.trim_start();
+                if let Some(r) = r.strip_prefix(',') {
+                    rest = r;
+                } else if let Some(r) = r.strip_prefix(']') {
+                    return Ok((Val::List(items), r));
+                } else {
+                    bail!("a list item followed by `{}`", r.chars().take(20).collect::<String>());
+                }
+            }
+        }
+        let end = s.find(|c: char| !(c.is_ascii_digit() || c == '-')).unwrap_or(s.len());
+        let n = s[..end].parse().with_context(|| format!("not an integer: `{}`", &s[..end.max(1).min(s.len())]))?;
+        Ok((Val::Int(n), &s[end..]))
+    }
+}
+
+/// `function <prefix><name>(<param>) { if (<param> == i) { return V; } ... return V; }`: the value per index and
+/// the last, unconditional one.
+#[derive(Debug)]
+pub struct DataFn {
+    pub at: BTreeMap<u64, Val>,
+    pub otherwise: Val,
+}
+
+impl DataFn {
+    pub fn value(&self, i: u64) -> &Val {
+        self.at.get(&i).unwrap_or(&self.otherwise)
+    }
+}
+
+/// The main's data functions whose name starts with `prefix`, by the rest of their name.
+pub fn data_functions(main: &str, prefix: &str) -> Result<BTreeMap<String, DataFn>> {
+    let mut out = BTreeMap::new();
+    for line in main.lines().filter(|l| l.starts_with(&format!("function {prefix}"))) {
+        let bad = || format!("data function `{}`", line.chars().take(80).collect::<String>());
+        let rest = &line["function ".len() + prefix.len()..];
+        let (name, rest) = rest.split_once('(').with_context(bad)?;
+        let (param, mut body) = rest.split_once(") { ").with_context(bad)?;
+        let mut at = BTreeMap::new();
+        while let Some(r) = body.strip_prefix(&format!("if ({param} == ")) {
+            let (i, r) = r.split_once(") { return ").with_context(bad)?;
+            let (v, r) = Val::parse(r).with_context(bad)?;
+            body = r.strip_prefix("; } ").with_context(bad)?;
+            at.insert(i.parse::<u64>().with_context(bad)?, v);
+        }
+        let r = body.strip_prefix("return ").with_context(bad)?;
+        let (otherwise, r) = Val::parse(r).with_context(bad)?;
+        if r != "; }" {
+            bail!("{}: trailing `{r}`", bad());
+        }
+        if out.insert(name.to_string(), DataFn { at, otherwise }).is_some() {
+            bail!("{} is defined twice", bad());
+        }
+    }
+    Ok(out)
+}
+
 /// The template `ConstraintRootsAt(k)` of a GL main must call for key `k`: `ConstraintRoots<suffix>`, with the
 /// static library's inputs. Returns each key's suffix, the block checked line by line.
 pub fn roots_dispatch(main: &str, n_keys: usize) -> Result<Vec<String>> {
@@ -190,10 +272,17 @@ mod tests {
     }
 
     #[test]
-    fn blocks() {
-        let src = "function key_nBits(k) { return 5; }\ntemplate A(n) {\n    signal input x;\n}\ntemplate parallel B() {\n}\n";
+    fn blocks_and_data() {
+        let src = "function key_nBits(k) { if (k == 0) { return 4; } return 5; }\n\
+                   function key_L(k) { return [1, -2, [3]]; }\n\
+                   template A(n) {\n    signal input x;\n}\ntemplate parallel B() {\n}\n";
         let b = template_blocks(src).unwrap();
         assert_eq!(b.iter().map(|b| b.name).collect::<Vec<_>>(), ["A", "B"]);
         assert_eq!(b[1].text, "template parallel B() {\n}\n");
+        let f = data_functions(src, "key_").unwrap();
+        assert_eq!(f["nBits"].value(0), &Val::Int(4));
+        assert_eq!(f["nBits"].value(1), &Val::Int(5));
+        let l = Val::List(vec![Val::Int(1), Val::Int(-2), Val::List(vec![Val::Int(3)])]);
+        assert_eq!(f["L"].value(7), &l);
     }
 }

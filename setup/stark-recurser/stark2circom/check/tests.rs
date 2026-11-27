@@ -233,6 +233,16 @@ fn a_dropped_root_is_refused() {
 }
 
 #[test]
+fn a_wrong_key_datum_is_refused() {
+    let vi = small_dag();
+    let (si, v, main) = gl_key(&vi);
+    let datum = "function key_nEvals(k) { return 7; }";
+    assert!(main.contains(datum), "{main}");
+    let broken = main.replace(datum, "function key_nEvals(k) { return 8; }");
+    refused(check_gl("datum", &si, &vi, &v.circom, &broken), "a wrong key_nEvals", "key_nEvals(0) is Int(8)");
+}
+
+#[test]
 fn a_dispatch_to_another_template_is_refused() {
     let vi = small_dag();
     let (si, v, main) = gl_key(&vi);
