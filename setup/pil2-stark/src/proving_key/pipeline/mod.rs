@@ -28,11 +28,38 @@ pub type PilInfoJson = (Value, Value, Value);
 /// (base field, extended field) intermediate polynomials of a pil_info run.
 pub type ImPolsInfo = (Vec<String>, Vec<String>);
 
-/// A setup another circuit reuses: its pil_info and the digest of the constraints it was made from.
+/// A setup another circuit reuses: its pil_info and the constraints it was made from.
 #[derive(Clone, Debug)]
 pub struct ReusedSetup {
     pub pil_info: PilInfoJson,
-    pub constraints: u64,
+    pub constraints: AirConstraints,
+}
+
+/// What a reused setup must match: the constraint DAG the kernel builds (root labels, which name the source
+/// air, cleared), the im choice it was built with, and the air's shape the starkinfo encodes.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AirConstraints {
+    pub dag: pil_info::core::dag::format::ConstraintDag,
+    pub im: pil_info::core::im::ImChoice,
+    pub shape: AirShape,
+}
+
+/// The air's tables a starkinfo is laid out from (names aside): rows, stages, column stages and dimensions,
+/// custom commits, challenges, publics and value stages (an airgroup value with its aggregation).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AirShape {
+    pub n_rows_bits: u32,
+    pub n_stages: u32,
+    /// Stage and dimension of each witness column.
+    pub witness: Vec<(u32, u32)>,
+    pub n_fixed: usize,
+    /// Name, public values and stage widths of each custom commit.
+    pub custom: Vec<(String, Vec<u32>, Vec<u32>)>,
+    pub challenges: Vec<(u32, u32, String)>,
+    pub n_publics: usize,
+    pub proof_values: Vec<u32>,
+    pub air_values: Vec<u32>,
+    pub airgroup_values: Vec<(u32, pil_info::core::pilout_core::AggType)>,
 }
 
 /// External tools and include paths the steps call.
@@ -131,8 +158,8 @@ pub struct PipelineCtx {
     /// The setup to reuse instead of running pil_info.
     pub reuse: Option<ReusedSetup>,
     pub pil_info: Option<PilInfoJson>,
-    /// Digest of the constraints the tail set up (or reused).
-    pub constraints: Option<u64>,
+    /// The constraints the tail set up (or reused).
+    pub constraints: Option<AirConstraints>,
     /// The tail's starkinfo is the const tree's input only, removed once it ran.
     pub temp_starkinfo: bool,
     /// (summary, im pols info) of the pil_info run.

@@ -24,6 +24,8 @@ pub struct PilInfoResult {
     pub prover_memory: String,
     /// Intermediate polynomial info: (base_field, extended_field) expression strings.
     pub im_pols_info: (Vec<String>, Vec<String>),
+    /// The im choice the constraint DAG was built with (a reusing air rebuilds its DAG with it).
+    pub im: pil_info::core::im::ImChoice,
 }
 
 /// The starkStruct must fit the air: its degree, and nBitsExt the low-degree test's first domain.

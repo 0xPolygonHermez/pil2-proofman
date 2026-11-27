@@ -302,7 +302,7 @@ pub fn gen_recursive_setup(
     let pil_info = ctx.pil_info.take().context("no starkinfo")?;
     Ok(RecursiveSetupResult {
         const_root: ctx.const_root.context("no const root")?,
-        setup: ReusedSetup { pil_info, constraints: ctx.constraints.context("no constraints digest")? },
+        setup: ReusedSetup { pil_info, constraints: ctx.constraints.take().context("no constraints")? },
         n_bits: plonk.n_bits,
         batch_size: ctx.batch_size,
     })

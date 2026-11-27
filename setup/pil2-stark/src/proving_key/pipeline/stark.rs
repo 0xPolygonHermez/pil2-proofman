@@ -6,8 +6,15 @@ use std::fs;
 use anyhow::{bail, Context, Result};
 use serde_json::Value;
 
+use pil_info::core::dag::build::build_dag;
+use pil_info::core::dag::format::ConstraintDag;
+use pil_info::core::from_pilout::from_pilout;
+use pil_info::core::im::ImChoice;
+use pil_info::core::ir::ConstraintSystem;
+use pil_info::{FieldCfg, Opening};
+
 use super::steps::{path_str, write_exec};
-use super::PipelineCtx;
+use super::{AirConstraints, AirShape, PipelineCtx};
 use crate::io::fixed_cols;
 use crate::output::json::to_json_string;
 use crate::proving_key::bctree;
@@ -25,10 +32,15 @@ pub(super) fn stark_tail(ctx: &mut PipelineCtx, reuse: bool, starkinfo_only: boo
     let air = &pilout.air_groups[ag].airs[ai];
     let starkinfo_path = ctx.file("starkinfo.json");
 
-    let constraints = constraint_digest(air);
+    // The system as the kernel reads it (the cheap part of pil_info: no im search).
+    let cs = from_pilout(&pilout, ag, ai, &FieldCfg::goldilocks(), Opening::Deep)
+        .map_err(|e| anyhow::anyhow!("{}: {e}", ctx.label))?;
+    let constraints;
     if reuse {
         let r = ctx.reuse.clone().context("StarkTail { reuse } without a setup to reuse")?;
-        // The reused starkinfo encodes another air's constraints: they must be this one's.
+        // The reused starkinfo encodes another air's constraints: this air's DAG, built by the kernel with the
+        // reused im choice, and its shape must be the same.
+        constraints = air_constraints(&cs, &r.constraints.im).with_context(|| ctx.label.clone())?;
         if r.constraints != constraints {
             bail!("{}: its constraints differ from those of the setup it reuses", ctx.label);
         }
@@ -66,6 +78,7 @@ pub(super) fn stark_tail(ctx: &mut PipelineCtx, reuse: bool, starkinfo_only: boo
             }
         };
         let r = crate::pil::stark_setup::stark_setup(&pilout, ag, ai, &stark_struct, &ctx.prepare, &ctx.key)?;
+        constraints = air_constraints(&cs, &r.im).with_context(|| ctx.label.clone())?;
         tracing::info!("{} low-degree test: {}", ctx.label, r.starkinfo.stark_struct.low_degree_test.describe());
         let si_json = to_json_string(&r.starkinfo)?;
         fs::write(&starkinfo_path, &si_json)?;
@@ -130,55 +143,79 @@ pub(super) fn write_verifier_rs(ctx: &mut PipelineCtx) -> Result<()> {
     )
 }
 
-/// A digest of the air's constraint system: what a reused starkinfo encodes (fixed values excluded).
-fn constraint_digest(air: &pil2_pilout::pilout::Air) -> u64 {
-    use prost::Message;
-    use std::hash::{Hash, Hasher};
-    let shape = pil2_pilout::pilout::Air {
-        num_rows: air.num_rows,
-        stage_widths: air.stage_widths.clone(),
-        expressions: air.expressions.clone(),
-        constraints: air.constraints.iter().map(without_debug_line).collect(),
-        air_values: air.air_values.clone(),
-        custom_commits: air.custom_commits.clone(),
-        ..Default::default()
-    };
-    let mut h = std::collections::hash_map::DefaultHasher::new();
-    (air.fixed_cols.len(), shape.encode_to_vec()).hash(&mut h);
-    h.finish()
+/// The kernel's DAG of `cs` with `im` (root labels, the source air's debug lines, cleared) and its shape.
+fn air_constraints(cs: &ConstraintSystem, im: &ImChoice) -> Result<AirConstraints> {
+    let mut dag: ConstraintDag = build_dag(cs, im).map_err(|e| anyhow::anyhow!("constraint DAG: {e:?}"))?;
+    dag.roots.iter_mut().for_each(|r| r.label.clear());
+    Ok(AirConstraints { dag, im: im.clone(), shape: air_shape(cs) })
 }
 
-// debug_line names the source air, so equal constraint systems would otherwise hash apart
-fn without_debug_line(c: &pil2_pilout::pilout::Constraint) -> pil2_pilout::pilout::Constraint {
-    use pil2_pilout::pilout::constraint::Constraint as C;
-    let mut c = c.clone();
-    match c.constraint.as_mut() {
-        Some(C::EveryRow(x)) => x.debug_line = None,
-        Some(C::FirstRow(x)) => x.debug_line = None,
-        Some(C::LastRow(x)) => x.debug_line = None,
-        Some(C::EveryFrame(x)) => x.debug_line = None,
-        None => {}
+fn air_shape(cs: &ConstraintSystem) -> AirShape {
+    let stages = |v: &[pil_info::core::ir::NamedValue]| v.iter().map(|x| x.stage).collect();
+    AirShape {
+        n_rows_bits: cs.n_rows_bits,
+        n_stages: cs.n_stages,
+        witness: cs.witness.iter().map(|c| (c.stage, c.dim)).collect(),
+        n_fixed: cs.fixed.len(),
+        custom: (cs.custom_commits.iter())
+            .map(|c| (c.name.clone(), c.public_values.clone(), c.stage_widths.clone()))
+            .collect(),
+        challenges: cs.challenges.clone(),
+        n_publics: cs.publics.len(),
+        proof_values: stages(&cs.proof_values),
+        air_values: stages(&cs.air_values),
+        airgroup_values: cs.airgroup_values.iter().map(|v| (v.stage, v.agg_type)).collect(),
     }
-    c
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::output::test_support::common::random_pilout;
+    use pil2_pilout::pilout::{constraint, PilOut};
 
+    fn constraints_of(p: &PilOut, im: &ImChoice) -> AirConstraints {
+        air_constraints(&from_pilout(p, 0, 0, &FieldCfg::goldilocks(), Opening::Deep).unwrap(), im).unwrap()
+    }
+
+    /// Debug lines aside, a reusing air must have the reused air's DAG (the same im choice) and shape.
     #[test]
-    fn constraint_digest_ignores_debug_lines_but_not_constraints() {
-        use pil2_pilout::pilout::{constraint, Air, Constraint};
-        let row = |idx: u32, line: &str| Constraint {
-            constraint: Some(constraint::Constraint::EveryRow(constraint::EveryRow {
-                expression_idx: Some(pil2_pilout::pilout::operand::Expression { idx }),
-                debug_line: Some(line.to_string()),
-            })),
-        };
-        let a = Air { constraints: vec![row(0, "a.pil:1")], ..Default::default() };
-        let b = Air { constraints: vec![row(0, "b.pil:9")], ..Default::default() };
-        let c = Air { constraints: vec![row(1, "a.pil:1")], ..Default::default() };
-        assert_eq!(constraint_digest(&a), constraint_digest(&b));
-        assert_ne!(constraint_digest(&a), constraint_digest(&c));
+    fn reuse_needs_the_same_dag_and_shape() {
+        let mut checked = 0;
+        for seed in 0..40 {
+            let p = random_pilout(seed).0;
+            let Ok((_, im, _)) = pil_info::pipeline::search(&p, 0, 0, &pil_info::PilInfoCfg::goldilocks(2)) else {
+                continue;
+            };
+            let reused = constraints_of(&p, &im);
+
+            let mut relabelled = p.clone();
+            for c in &mut relabelled.air_groups[0].airs[0].constraints {
+                match c.constraint.as_mut() {
+                    Some(constraint::Constraint::EveryRow(x)) => x.debug_line = Some("other.pil:1".into()),
+                    Some(constraint::Constraint::FirstRow(x)) => x.debug_line = Some("other.pil:2".into()),
+                    Some(constraint::Constraint::LastRow(x)) => x.debug_line = Some("other.pil:3".into()),
+                    Some(constraint::Constraint::EveryFrame(x)) => x.debug_line = Some("other.pil:4".into()),
+                    None => {}
+                }
+            }
+            assert_eq!(constraints_of(&relabelled, &im), reused, "seed {seed}: debug lines do not count");
+
+            let mut more = p.clone();
+            let first = more.air_groups[0].airs[0].constraints[0].clone();
+            more.air_groups[0].airs[0].constraints.push(first);
+            assert_ne!(constraints_of(&more, &im), reused, "seed {seed}: one more constraint");
+
+            // the shape: one more public, one more challenge
+            let cs = from_pilout(&p, 0, 0, &FieldCfg::goldilocks(), Opening::Deep).unwrap();
+            let mut publics = cs.clone();
+            publics.publics.push(Default::default());
+            assert_ne!(air_constraints(&publics, &im).unwrap(), reused, "seed {seed}: one more public");
+            let mut stages = cs;
+            stages.challenges.push((9, 0, "late".into()));
+            assert_ne!(air_constraints(&stages, &im).unwrap(), reused, "seed {seed}: one more challenge");
+            checked += 1;
+        }
+        assert!(checked >= 10, "only {checked} random pilouts searched");
     }
 }

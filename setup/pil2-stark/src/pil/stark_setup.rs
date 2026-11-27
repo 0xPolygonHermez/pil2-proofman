@@ -67,7 +67,7 @@ pub fn stark_setup(
 
     let stages: Vec<usize> = emitted.constraints.iter().map(|c| c.stage.unwrap_or(0)).collect();
     let (summary, prover_memory) = report(&view, &cs.name, &stages, emitted.arena.len(), stark_struct, options);
-    Ok(PilInfoResult { starkinfo, pil_code, summary, prover_memory, im_pols_info: emitted.im_pols_info })
+    Ok(PilInfoResult { starkinfo, pil_code, summary, prover_memory, im_pols_info: emitted.im_pols_info, im })
 }
 
 #[cfg(test)]
