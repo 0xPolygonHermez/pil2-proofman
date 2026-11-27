@@ -1,10 +1,10 @@
 //! The air's constraints at xi from the constraint DAG, one signal per operation node. GL:
-//! `ConstraintRoots<suffix>`, one root each (`lower_roots`); the fold, Zi and the Q check are the
-//! library's (`verifier/stark_verifier.circom`). BN128: `ConstraintEval`, the roots folded with
+//! `ConstraintRoots<suffix>`, one root each (`lower_roots`), its signals in part templates (`in_parts`); the
+//! fold, Zi and the Q check are the library's (`verifier/stark_verifier.circom`). BN128: `ConstraintEval`, the roots folded with
 //! `lower_to_code` in lazily reduced `GL*` templates (`verifier/stark_verifier_bn128.circom`).
 //! Global constraints: `GlobalConstraints` of vadcop_final from the global DAG, each root `=== 0`.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 
 use anyhow::{anyhow, bail, Result};
 use pil_info::core::dag::format::{ConstraintDag, DagNode};
@@ -65,47 +65,70 @@ fn gl_rhs(op: CodeOp, x: &str, dx: usize, y: &str, dy: usize) -> Option<String> 
     })
 }
 
-/// One instruction, in unroll_code's forms so the constraints are today's.
+/// The right-hand side of one instruction, in unroll_code's forms so the constraints are today's.
 // The former templated verifier's forms over lower_roots' stream (counts measured identical).
-fn gl_instr(i: &Instr) -> Result<String> {
+fn gl_instr_rhs(i: &Instr) -> Result<String> {
     let [a, b] = &i.src[..] else { bail!("tmp_{} has {} operands", i.dest, i.src.len()) };
     let (x, y) = (gl_operand(a)?, gl_operand(b)?);
-    let Some(rhs) = gl_rhs(i.op, &x, a.dim, &y, b.dim) else {
-        bail!("tmp_{}: no circom form for {:?} of dims {}, {}", i.dest, i.op, a.dim, b.dim)
-    };
-    let decl = if i.dim == 1 { format!("signal tmp_{}", i.dest) } else { format!("signal tmp_{}[3]", i.dest) };
-    Ok(format!("    {decl} <== {rhs};\n"))
+    gl_rhs(i.op, &x, a.dim, &y, b.dim)
+        .ok_or_else(|| anyhow!("tmp_{}: no circom form for {:?} of dims {}, {}", i.dest, i.op, a.dim, b.dim))
 }
 
-/// `template parallel ConstraintRoots{suffix}()`, fixed signature (empty inputs padded to one entry).
+const GL_INPUT_ARGS: &str = "evals, challenges, publics, proofvalues, airvalues, airgroupvalues";
+
+/// `template parallel ConstraintRoots{suffix}()`, fixed signature (empty inputs padded to one entry), its
+/// instructions in `ConstraintRoots{suffix}Part{k}` templates.
 pub(crate) fn constraint_roots(suffix: &str, dag: &ConstraintDag, ctx: &LowerCtx) -> Result<ConstraintRoots> {
     let (code, roots) = lower_roots(dag, ctx).map_err(|e| anyhow!("constraintDag: {e:?}"))?;
     let code = VerifierCode { tmp_used: code.len(), code };
     code.check_dims(3).map_err(|e| anyhow!("constraintDag: {e:?}"))?;
     let t = ctx.tables();
     let len1 = |n: usize| n.max(1);
-    let mut out = format!(
-        "// The constraints at xi, one root each; the fold, Zi and the Q check are verifier/stark_verifier.circom's.\n\
-         template parallel ConstraintRoots{suffix}() {{\n\
-         \x20   signal input evals[{}][3];\n\
+    let inputs = format!(
+        "    signal input evals[{}][3];\n\
          \x20   signal input challenges[{}][3];\n\
          \x20   signal input publics[{}];\n\
          \x20   signal input proofvalues[{}][3];\n\
          \x20   signal input airvalues[{}][3];\n\
-         \x20   signal input airgroupvalues[{}][3];\n\
-         \x20   signal output roots[{}][3];\n\n",
+         \x20   signal input airgroupvalues[{}][3];\n",
         t.ev_map.len(),
         len1(t.challenges.len()),
         len1(t.n_publics as usize),
         len1(t.proof_values_stage.len()),
         len1(t.air_values_stage.len()),
         len1(t.airgroup_values_stage.len()),
-        roots.len(),
     );
+
+    let step_of: HashMap<u32, usize> = code.code.iter().enumerate().map(|(s, i)| (i.dest, s)).collect();
+    let tmp_step = |src: &Src| match src.operand {
+        Operand::Tmp(k) => step_of.get(&k).copied().ok_or_else(|| anyhow!("tmp_{k} read before it is set")).map(Some),
+        _ => Ok(None),
+    };
+    let mut steps = Vec::with_capacity(code.code.len());
     for i in &code.code {
-        out += &gl_instr(i)?;
+        let mut reads = Vec::new();
+        for src in &i.src {
+            reads.extend(tmp_step(src)?);
+        }
+        steps.push(Step { name: format!("tmp_{}", i.dest), dim: i.dim, rhs: gl_instr_rhs(i)?, reads });
     }
-    out.push('\n');
+    let mut kept = Vec::new();
+    for r in &roots {
+        kept.extend(tmp_step(r)?);
+    }
+    let parts = in_parts(
+        &PartsOf { name: &format!("ConstraintRoots{suffix}Part"), params: "", inputs: &inputs, args: GL_INPUT_ARGS },
+        &steps,
+        &kept,
+    )?;
+
+    let mut out = parts.templates;
+    out += &format!(
+        "// The constraints at xi, one root each; the fold, Zi and the Q check are verifier/stark_verifier.circom's.\n\
+         template parallel ConstraintRoots{suffix}() {{\n{inputs}    signal output roots[{}][3];\n\n{}\n",
+        roots.len(),
+        parts.body
+    );
     for (k, r) in roots.iter().enumerate() {
         let x = gl_operand(r)?;
         out += &if r.dim == 3 {
@@ -117,6 +140,95 @@ pub(crate) fn constraint_roots(suffix: &str, dag: &ConstraintDag, ctx: &LowerCtx
     out += "}\n";
     let first_root_dim = roots.first().map_or(3, |r| r.dim);
     Ok(ConstraintRoots { template: out, n_roots: roots.len(), first_root_dim })
+}
+
+// ── Parts: a long straight-line body as templates of consecutive steps ────────
+
+/// One signal of the body: its name, dimension, right-hand side and the earlier steps it reads.
+struct Step {
+    name: String,
+    dim: usize,
+    rhs: String,
+    reads: Vec<usize>,
+}
+
+/// Steps per part template. The witness compiler emits one C++ function per template, and g++ takes far longer on
+/// one huge function: ZisK Keccakf's compressor, 16k steps in one template, did not compile in an hour. Its witness
+/// compiles in 63 s / 57 s / 59 s / 88 s at 50 / 200 / 400 / 999 steps a part; each part also copies the caller's
+/// inputs, so circom needs 21 / 12.7 / 11.3 / 10.4 GB.
+const PART_SIZE: usize = 200;
+
+/// The templates `{name}{k}({params})` share the caller's inputs: declared by `inputs`, passed as `args`.
+struct PartsOf<'a> {
+    name: &'a str,
+    params: &'a str,
+    inputs: &'a str,
+    args: &'a str,
+}
+
+/// The part templates and the caller's lines that declare their outputs and call them.
+struct Parts {
+    templates: String,
+    body: String,
+}
+
+fn in_parts(of: &PartsOf, steps: &[Step], kept: &[usize]) -> Result<Parts> {
+    in_parts_of(PART_SIZE, of, steps, kept)
+}
+
+/// `steps` in templates of `size` consecutive steps, in order. A part takes the earlier steps it reads and returns
+/// those a later part reads or the caller keeps (`kept`); the boundaries are signal equalities, which --O1 removes.
+fn in_parts_of(size: usize, of: &PartsOf, steps: &[Step], kept: &[usize]) -> Result<Parts> {
+    let n_parts = steps.len().div_ceil(size);
+    let (mut inputs, mut outputs) = (vec![BTreeSet::new(); n_parts], vec![BTreeSet::new(); n_parts]);
+    for (s, step) in steps.iter().enumerate() {
+        for &r in &step.reads {
+            if r >= s {
+                bail!("{} reads {}, not set before it", step.name, steps[r].name);
+            }
+            if r / size != s / size {
+                inputs[s / size].insert(r);
+                outputs[r / size].insert(r);
+            }
+        }
+    }
+    for &s in kept {
+        outputs[s / size].insert(s);
+    }
+
+    let decl = |io: &str, s: usize| {
+        format!("    signal {io}{}{};\n", steps[s].name, if steps[s].dim == 3 { "[3]" } else { "" })
+    };
+    let names = |set: &BTreeSet<usize>| set.iter().map(|&s| steps[s].name.as_str()).collect::<Vec<_>>();
+    let (mut templates, mut body) = (String::new(), String::new());
+    for (k, chunk) in steps.chunks(size).enumerate() {
+        if outputs[k].is_empty() {
+            bail!("{}{k} returns nothing: a step nothing reads", of.name);
+        }
+        templates += &format!("template {}{k}({}) {{\n{}", of.name, of.params, of.inputs);
+        templates += &inputs[k].iter().map(|&s| decl("input ", s)).collect::<String>();
+        templates += &outputs[k].iter().map(|&s| decl("output ", s)).collect::<String>();
+        for (s, step) in chunk.iter().enumerate().map(|(j, step)| (k * size + j, step)) {
+            templates += &if outputs[k].contains(&s) {
+                format!("    {}", step.name)
+            } else {
+                decl("", s).trim_end_matches(";\n").to_string()
+            };
+            templates += &format!(" <== {};\n", step.rhs);
+        }
+        templates += "}\n\n";
+
+        body += &outputs[k].iter().map(|&s| decl("", s)).collect::<String>();
+        let args: Vec<&str> = std::iter::once(of.args).chain(names(&inputs[k])).collect();
+        body += &format!(
+            "    ({}) <== {}{k}({})({});\n",
+            names(&outputs[k]).join(", "),
+            of.name,
+            of.params,
+            args.join(", ")
+        );
+    }
+    Ok(Parts { templates, body })
 }
 
 // ── Global constraints: `GlobalConstraints` ───────────────────────────────────
@@ -164,10 +276,6 @@ fn global_operand(leaf: &GlobalLeaf, t: &GlobalTables) -> Result<String> {
     })
 }
 
-/// Operation nodes per `GlobalConstraintsPart` template: one template of a few thousand signals takes the witness
-/// compiler three times as long (measured: 37 s against 13 s for 5000 nodes).
-const GLOBAL_PART_SIZE: usize = 50;
-
 const GLOBAL_INPUTS: &str = "    signal input airgroupvalues[nAg][maxAgg][3];
     signal input publics[nPub];
     signal input proofValues[nPV][3];
@@ -177,8 +285,7 @@ const GLOBAL_PARAMS: &str = "nAg, maxAgg, nPub, nPV, nCh";
 
 /// `vadcop_nGlobalChallenges()` and `template GlobalConstraints(nAg, maxAgg, nPub, nPV, nCh)` of globalInfo `gi`:
 /// each root of its `globalConstraintDag` `=== 0` (none without the key). The operation nodes, one signal each,
-/// are computed in `GlobalConstraintsPart{k}` templates of `GLOBAL_PART_SIZE` nodes, in node order; a part takes
-/// the earlier nodes it reads and returns those read after it.
+/// are computed in `GlobalConstraintsPart{k}` templates.
 pub(crate) fn global_constraints(gi: &serde_json::Value) -> Result<String> {
     let t = global_tables(gi)?;
     let f = pil_info::FieldCfg::goldilocks();
@@ -189,86 +296,42 @@ pub(crate) fn global_constraints(gi: &serde_json::Value) -> Result<String> {
     let Some(dag) = dag else { return Ok(out + &main_head + "}\n") };
     let leaves = t.resolve_all(&dag).map_err(|e| anyhow!("globalConstraintDag: {e:?}"))?;
 
-    // each node as (circom expression, dimension); an operation node is the signal `node_{i}`
-    let mut val: Vec<(String, usize)> = Vec::with_capacity(dag.nodes.len());
-    let mut lines: Vec<(usize, String)> = Vec::new(); // (operation node, its right-hand side)
+    // each node as (circom expression, dimension, its step if an operation node: the signal `node_{i}`)
+    let mut val: Vec<(String, usize, Option<usize>)> = Vec::with_capacity(dag.nodes.len());
+    let mut steps = Vec::new();
     for (i, (n, leaf)) in dag.nodes.iter().zip(&leaves).enumerate() {
         if let Some(l) = leaf {
-            val.push((global_operand(l, &t)?, t.dim(l)));
+            val.push((global_operand(l, &t)?, t.dim(l), None));
             continue;
         }
-        let zero = ("0".to_string(), 1);
-        let (op, (x, dx), (y, dy)) = match *n {
+        let zero = ("0".to_string(), 1, None);
+        let (op, x, y) = match *n {
             DagNode::Add { a, b } => (CodeOp::Add, &val[a as usize], &val[b as usize]),
             DagNode::Sub { a, b } => (CodeOp::Sub, &val[a as usize], &val[b as usize]),
             DagNode::Mul { a, b } => (CodeOp::Mul, &val[a as usize], &val[b as usize]),
             DagNode::Neg { a } => (CodeOp::Sub, &zero, &val[a as usize]),
             _ => bail!("node {i} is neither an operation nor a resolved leaf"),
         };
-        let rhs = gl_rhs(op, x, *dx, y, *dy).ok_or_else(|| anyhow!("node {i}: dims {dx}, {dy}"))?;
-        let dim = (*dx).max(*dy);
-        lines.push((i, rhs));
-        val.push((format!("node_{i}"), dim));
+        let rhs = gl_rhs(op, &x.0, x.1, &y.0, y.1).ok_or_else(|| anyhow!("node {i}: dims {}, {}", x.1, y.1))?;
+        let (name, dim) = (format!("node_{i}"), x.1.max(y.1));
+        steps.push(Step { name: name.clone(), dim, rhs, reads: [x.2, y.2].into_iter().flatten().collect() });
+        val.push((name, dim, Some(steps.len() - 1)));
     }
+    let kept: Vec<usize> = dag.roots.iter().filter_map(|r| val[r.node as usize].2).collect();
+    let args = "airgroupvalues, publics, proofValues, challenges";
+    let of = PartsOf { name: "GlobalConstraintsPart", params: GLOBAL_PARAMS, inputs: GLOBAL_INPUTS, args };
+    let parts = in_parts(&of, &steps, &kept)?;
 
-    // part of each operation node, and the parts' inputs and outputs
-    let mut part = vec![usize::MAX; dag.nodes.len()];
-    for (k, &(i, _)) in lines.iter().enumerate() {
-        part[i] = k / GLOBAL_PART_SIZE;
-    }
-    let n_parts = lines.len().div_ceil(GLOBAL_PART_SIZE);
-    let (mut inputs, mut outputs) = (vec![BTreeSet::new(); n_parts], vec![BTreeSet::new(); n_parts]);
-    for &(i, _) in &lines {
-        for c in dag.nodes[i].children() {
-            let c = c as usize;
-            if part[c] != usize::MAX && part[c] != part[i] {
-                inputs[part[i]].insert(c);
-                outputs[part[c]].insert(c);
-            }
-        }
-    }
+    let mut main = main_head + &parts.body + "\n";
     for r in &dag.roots {
-        let r = r.node as usize;
-        if part[r] != usize::MAX {
-            outputs[part[r]].insert(r);
-        }
-    }
-
-    let decl = |io: &str, i: usize| format!("    signal {io}node_{i}{};\n", if val[i].1 == 3 { "[3]" } else { "" });
-    let mut main = main_head;
-    for (k, chunk) in lines.chunks(GLOBAL_PART_SIZE).enumerate() {
-        if outputs[k].is_empty() {
-            bail!("global constraint part {k} returns nothing: a node no root reaches");
-        }
-        out += &format!("template GlobalConstraintsPart{k}({GLOBAL_PARAMS}) {{\n{GLOBAL_INPUTS}");
-        out += &inputs[k].iter().map(|&i| decl("input ", i)).collect::<String>();
-        out += &outputs[k].iter().map(|&i| decl("output ", i)).collect::<String>();
-        for (i, rhs) in chunk {
-            out += &if outputs[k].contains(i) {
-                format!("    node_{i}")
-            } else {
-                decl("", *i).trim_end_matches(";\n").to_string()
-            };
-            out += &format!(" <== {rhs};\n");
-        }
-        out += "}\n\n";
-
-        main += &outputs[k].iter().map(|&i| decl("", i)).collect::<String>();
-        let args = ["airgroupvalues", "publics", "proofValues", "challenges"].map(String::from);
-        let args: Vec<String> = args.into_iter().chain(inputs[k].iter().map(|i| format!("node_{i}"))).collect();
-        let outs: Vec<String> = outputs[k].iter().map(|i| format!("node_{i}")).collect();
-        main +=
-            &format!("    ({}) <== GlobalConstraintsPart{k}({GLOBAL_PARAMS})({});\n", outs.join(", "), args.join(", "));
-    }
-    main.push('\n');
-    for r in &dag.roots {
-        let (x, dim) = &val[r.node as usize];
+        let (x, dim, _) = &val[r.node as usize];
         main += &if *dim == 3 {
             format!("    {x}[0] === 0;\n    {x}[1] === 0;\n    {x}[2] === 0;\n")
         } else {
             format!("    {x} === 0;\n")
         };
     }
+    out += &parts.templates;
     Ok(out + &main + "}\n")
 }
 
@@ -434,7 +497,7 @@ mod tests {
         DagNode::Col { col: ColType::Witness, commit_id: None, id, offset: 0 }
     }
 
-    /// 3 op nodes, 2 roots: one signal per op node, the roots as the fixed-size output.
+    /// 3 op nodes, 2 roots: one signal per op node, the roots read from the part as the fixed-size output.
     #[test]
     fn one_signal_per_op_node() {
         let d = dag(
@@ -450,11 +513,18 @@ mod tests {
         );
         let r = constraint_roots("0", &d, &ctx()).unwrap();
         assert_eq!(r.n_roots, 2);
-        assert_eq!(r.template.matches(" <== ").count(), 3 + 2, "{}", r.template);
-        assert!(r.template.contains("signal tmp_0[3] <== CMul()(evals[0], evals[1]);"), "{}", r.template);
-        assert!(r.template.contains("signal output roots[2][3];"), "{}", r.template);
-        assert!(r.template.contains("roots[0] <== tmp_2;"), "{}", r.template);
-        assert!(r.template.contains("roots[1] <== tmp_0;"), "{}", r.template);
+        assert_eq!(r.template.matches(" <== ").count(), 3 + 1 + 2, "{}", r.template);
+        for l in [
+            "template ConstraintRoots0Part0() {\n    signal input evals[2][3];\n",
+            "    signal output tmp_0[3];\n    signal output tmp_2[3];\n    tmp_0 <== CMul()(evals[0], evals[1]);\n",
+            "    signal tmp_1[3] <== [tmp_0[0] + challenges[0][0], tmp_0[1] + challenges[0][1], tmp_0[2] + challenges[0][2]];",
+            "template parallel ConstraintRoots0() {",
+            "    signal output roots[2][3];",
+            "    (tmp_0, tmp_2) <== ConstraintRoots0Part0()(evals, challenges, publics, proofvalues, airvalues, airgroupvalues);",
+            "    roots[0] <== tmp_2;\n    roots[1] <== tmp_0;\n}\n",
+        ] {
+            assert!(r.template.contains(l), "missing `{l}`:\n{}", r.template);
+        }
         assert!(!r.template.contains("Zh") && !r.template.contains("Zfirst"), "{}", r.template);
     }
 
@@ -467,9 +537,89 @@ mod tests {
         );
         let r = constraint_roots("0", &d, &ctx()).unwrap();
         assert_eq!(r.first_root_dim, 1);
-        assert!(r.template.contains("signal tmp_0 <== publics[0] * airvalues[0][0];"), "{}", r.template);
+        assert!(r.template.contains("    tmp_0 <== publics[0] * airvalues[0][0];"), "{}", r.template);
         assert!(r.template.contains("roots[0] <== [tmp_0, 0, 0];"), "{}", r.template);
         assert!(r.template.contains("roots[1] <== evals[0];"), "{}", r.template);
+    }
+
+    /// The `tmp_` names in a line.
+    fn tmps(line: &str) -> Vec<&str> {
+        line.match_indices("tmp_")
+            .map(|(i, _)| {
+                let n = line[i + 4..].bytes().take_while(u8::is_ascii_digit).count();
+                &line[i..i + 4 + n]
+            })
+            .collect()
+    }
+
+    /// A random DAG of a few thousand nodes: every part reads only its own steps and its inputs, its inputs are
+    /// earlier parts' outputs, and each output is read by a later part or a root.
+    #[test]
+    fn a_big_dag_in_consistent_parts() {
+        let mut seed = 0x2545_f491_4f6c_dd1du64;
+        let mut rand = |n: usize| {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            (seed % n as u64) as usize
+        };
+        let mut nodes = vec![cm(0), cm(1), DagNode::Public { id: 0 }, DagNode::Challenge { stage: 2, stage_id: 0 }];
+        for i in nodes.len()..4000 {
+            // mostly recent operands, some far back: values cross several parts
+            let mut pick = || if rand(4) == 0 { rand(i) } else { i - 1 - rand(i.min(30)) } as u32;
+            let (a, b) = (pick(), pick());
+            nodes.push(match rand(3) {
+                0 => DagNode::Add { a, b },
+                1 => DagNode::Sub { a, b },
+                _ => DagNode::Mul { a, b },
+            });
+        }
+        let roots: Vec<u32> = (0..20).map(|k| 3999 - 150 * k).collect();
+        let r = constraint_roots("0", &dag(nodes, &roots), &ctx()).unwrap();
+        let out = &r.template;
+
+        let (mut defined, mut n_parts) = (BTreeSet::<String>::new(), 0);
+        let mut pending = BTreeSet::<String>::new(); // outputs not read yet
+        let parts = out.split("template ").skip(1).filter(|t| t.starts_with("ConstraintRoots0Part"));
+        for (k, t) in parts.enumerate() {
+            assert!(t.starts_with(&format!("ConstraintRoots0Part{k}() {{")), "{t}");
+            let (mut ins, mut outs, mut local) = (Vec::new(), Vec::new(), BTreeSet::new());
+            for l in t.lines() {
+                let names = tmps(l);
+                if l.starts_with("    signal input tmp_") {
+                    ins.push(names[0].to_string());
+                } else if l.starts_with("    signal output tmp_") {
+                    outs.push(names[0].to_string());
+                } else if let Some((lhs, rhs)) = l.split_once(" <== ") {
+                    for n in tmps(rhs) {
+                        assert!(local.contains(n) || ins.iter().any(|i| i == n), "part {k} reads {n}: {l}");
+                    }
+                    local.insert(tmps(lhs)[0].to_string());
+                }
+            }
+            assert!(local.len() <= PART_SIZE && !outs.is_empty(), "part {k}");
+            for i in &ins {
+                assert!(defined.contains(i), "part {k} takes {i}, not an earlier output");
+                pending.remove(i);
+            }
+            for o in &outs {
+                assert!(local.contains(o), "part {k} returns {o}, which it does not set");
+            }
+            let call = format!("    ({}) <== ConstraintRoots0Part{k}()({GL_INPUT_ARGS}", outs.join(", "));
+            let args: String = ins.iter().map(|i| format!(", {i}")).collect();
+            assert!(out.contains(&format!("{call}{args});\n")), "call of part {k}");
+            defined.extend(outs.iter().cloned());
+            pending.extend(outs);
+            n_parts += 1;
+        }
+        assert!(n_parts > 5, "{n_parts} parts");
+        for l in out.lines().filter(|l| l.starts_with("    roots[")) {
+            for n in tmps(l) {
+                assert!(defined.contains(n), "root reads {n}, which no part returns");
+                pending.remove(n);
+            }
+        }
+        assert!(pending.is_empty(), "returned but never read: {pending:?}");
     }
 
     #[test]
@@ -527,26 +677,26 @@ mod tests {
         assert_eq!(out.matches(" <== ").count(), 5, "{out}");
     }
 
-    /// 120 chained nodes over three parts: a part takes the earlier nodes it reads and returns the later-read ones.
+    /// 420 chained nodes over three parts: a part takes the earlier nodes it reads and returns the later-read ones.
     #[test]
     fn global_constraints_in_parts() {
         // node 0: public 0; node 1: public 1; node k >= 2: node k-1 * node 0 (k odd) or + node 1 (k even)
         let mut nodes = vec![serde_json::json!([7, 0]), serde_json::json!([7, 1])];
-        for k in 2..122u32 {
+        for k in 2..422u32 {
             let (op, other) = if k % 2 == 1 { (2, 0) } else { (0, 1) };
             nodes.push(serde_json::json!([op, other.min(k - 1), other.max(k - 1)]));
         }
-        let gi = global_info(serde_json::Value::Array(nodes), serde_json::json!([[121, 1, "chain"], [51, 1, "mid"]]));
+        let gi = global_info(serde_json::Value::Array(nodes), serde_json::json!([[421, 1, "chain"], [201, 1, "mid"]]));
         let out = global_constraints(&gi).unwrap();
         for l in [
             "template GlobalConstraintsPart2(nAg, maxAgg, nPub, nPV, nCh) {",
-            // part 0 holds nodes 2..51: node 51 is read by part 1 and is a root
-            "    (node_51) <== GlobalConstraintsPart0(nAg, maxAgg, nPub, nPV, nCh)(airgroupvalues, publics, proofValues, challenges);",
-            "    (node_101) <== GlobalConstraintsPart1(nAg, maxAgg, nPub, nPV, nCh)(airgroupvalues, publics, proofValues, challenges, node_51);",
-            "    (node_121) <== GlobalConstraintsPart2(nAg, maxAgg, nPub, nPV, nCh)(airgroupvalues, publics, proofValues, challenges, node_101);",
-            "    signal input node_51;\n    signal output node_101;\n",
-            "    signal node_52 <== publics[1] + node_51;",
-            "    node_121 === 0;\n    node_51 === 0;\n}\n",
+            // part 0 holds nodes 2..201: node 201 is read by part 1 and is a root
+            "    (node_201) <== GlobalConstraintsPart0(nAg, maxAgg, nPub, nPV, nCh)(airgroupvalues, publics, proofValues, challenges);",
+            "    (node_401) <== GlobalConstraintsPart1(nAg, maxAgg, nPub, nPV, nCh)(airgroupvalues, publics, proofValues, challenges, node_201);",
+            "    (node_421) <== GlobalConstraintsPart2(nAg, maxAgg, nPub, nPV, nCh)(airgroupvalues, publics, proofValues, challenges, node_401);",
+            "    signal input node_201;\n    signal output node_401;\n",
+            "    signal node_202 <== publics[1] + node_201;",
+            "    node_421 === 0;\n    node_201 === 0;\n}\n",
         ] {
             assert!(out.contains(l), "missing `{l}`:\n{out}");
         }

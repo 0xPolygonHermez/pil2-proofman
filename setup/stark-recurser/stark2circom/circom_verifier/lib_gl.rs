@@ -139,7 +139,12 @@ pub(crate) mod tests {
     fn per_key_output_is_data_and_constraints() {
         let v = gen_stark_verifier_gl(None, &stark_info(), &verifier_info(), &opts(HashFamily::Poseidon2)).unwrap();
         let templates: Vec<&str> = v.circom.lines().filter(|l| l.starts_with("template ")).collect();
-        assert_eq!(templates, ["template parallel ConstraintRoots() {"], "{}", v.circom);
+        assert_eq!(
+            templates,
+            ["template ConstraintRootsPart0() {", "template parallel ConstraintRoots() {"],
+            "{}",
+            v.circom
+        );
         assert!(!v.circom.contains("function "), "the verifier file holds no data:\n{}", v.circom);
         let out = render(&stark_info(), &opts(HashFamily::Poseidon2));
         assert_eq!(out.matches("function key_").count(), super::super::lib_params::FIELDS.len(), "{out}");
