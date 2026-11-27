@@ -668,7 +668,7 @@ mod tests {
         bn.validate(DagField::Bn128).unwrap();
         // BN128's r is out of range, r - 1 and a shorter value in range
         for (v, ok) in
-            [(DagField::Bn128.modulus(), false), (&BN_R_MINUS_ONE[..], true), ("9".repeat(76).as_str(), true)]
+            [(DagField::Bn128.modulus(), false), (BN_R_MINUS_ONE, true), ("9".repeat(76).as_str(), true)]
         {
             bn.nodes[0] = DagNode::Const { value: v.to_string() };
             assert_eq!(bn.validate(DagField::Bn128).is_ok(), ok, "{v}");
